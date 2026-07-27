@@ -56,6 +56,33 @@ const STATES: Record<string, { label: string; detail: string }> = {
     label: "Background delivery unavailable",
     detail: "Messages will only arrive while Reaper is open.",
   },
+
+  "network:off": {
+    label: "Not connected",
+    detail: "Tor has not been started.",
+  },
+  "network:starting": {
+    label: "Starting Tor",
+    detail: "Every connection goes through it, including the first.",
+  },
+  "network:connecting": {
+    label: "Building a circuit",
+    detail: "The first one takes longest. Later starts reuse what it learned.",
+  },
+  "network:outbound": {
+    label: "Connected, not yet reachable",
+    detail:
+      "You can reach other people. They cannot reach you until this " +
+      "device's address is published, which takes a moment longer.",
+  },
+  "network:reachable": {
+    label: "Reachable",
+    detail: "Your address is published. Peers can open a connection to you.",
+  },
+  "network:failed": {
+    label: "Tor could not start",
+    detail: "Nothing can be sent or received. Everything here needs it.",
+  },
 };
 
 function humanSize(bytes: number): string {
@@ -72,10 +99,17 @@ function draw(status: BootStatus): void {
 
   box.textContent = "";
 
-  for (const key of ["storage", "compression", "background"] as const) {
+  for (const key of ["storage", "compression", "background", "network"] as const) {
     const value = status[key];
     const state = STATES[`${key}:${value}`];
     if (!state) continue;
+
+    // The one place a number is worth showing: a first bootstrap can take a
+    // couple of minutes, and a label that never changes reads as a hang.
+    const suffix =
+      key === "network" && value === "connecting" && status.percent
+        ? ` — ${status.percent}%`
+        : "";
 
     const row = document.createElement("div");
     row.className = "row";
@@ -89,7 +123,7 @@ function draw(status: BootStatus): void {
 
     const what = document.createElement("div");
     what.className = "what";
-    what.textContent = state.label;
+    what.textContent = state.label + suffix;
     grow.appendChild(what);
 
     const detail = document.createElement("div");
@@ -112,10 +146,11 @@ function draw(status: BootStatus): void {
     lines.push(`Holding ${humanSize(status.bytesHeld)} in memory.`);
   }
 
-  lines.push(
-    "Networking is not connected yet — the transport needs the Tor client, " +
-    "which is the remaining piece. See docs/ios-port.md.",
-  );
+  if (status.onion) {
+    // Shown in full. It is this device's address, it has to be given to
+    // anybody who wants to reach you, and an abbreviated one cannot be.
+    lines.push(`You are at ${status.onion}`);
+  }
 
   note.textContent = lines.join(" ");
 }

@@ -48,8 +48,11 @@
       .row .detail { font-size: 12px; color: var(--dim); margin-top: 2px; }
 
       .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-      .dot.loading { background: var(--dim); }
-      .dot.ready, .dot.on { background: var(--good); }
+      .dot.loading, .dot.starting, .dot.connecting { background: var(--dim); }
+      .dot.ready, .dot.on, .dot.reachable { background: var(--good); }
+      /* Amber, not green: outbound works and inbound does not, which is a
+         real state and not a shade of "connected". */
+      .dot.outbound { background: #f0b232; }
       .dot.failed, .dot.unavailable { background: var(--bad); }
       .dot.off { background: var(--dim); }
 

@@ -1,5 +1,7 @@
 import { App } from "@capacitor/app";
 import { Keepalive } from "@reaper/keepalive";
+import { Socket } from "@reaper/socket";
+import { Tor, type TorEvent } from "@reaper/tor";
 
 import { flush, ready as filesystemReady, heldBytes } from "./shim/fs";
 import { ready as brotliReady } from "./shim/zlib";
@@ -24,6 +26,12 @@ import { ready as brotliReady } from "./shim/zlib";
  *      means the first time somebody switches away, the app suspends and stops
  *      receiving until it is opened again.
  *
+ *   4. **The listening socket, then Tor** — in that order, because Tor is told
+ *      which port to forward to and cannot be told a port that does not exist
+ *      yet. Starting Tor first would publish an onion service pointing at
+ *      nothing, and a peer connecting to it would be refused by a device that
+ *      is, as far as it is concerned, online.
+ *
  * Only then is there any point opening a store.
  */
 
@@ -31,6 +39,32 @@ export interface BootStatus {
   storage: "loading" | "ready" | "failed";
   compression: "loading" | "ready" | "failed";
   background: "off" | "on" | "unavailable";
+
+  /**
+   * How far Tor has got.
+   *
+   * Deliberately more than a boolean. "Connecting" and "unreachable" are
+   * different situations — the first resolves itself and the second does not —
+   * and there is a stage in between where outbound works and inbound does not,
+   * which is worth being able to say rather than showing a spinner.
+   */
+  network:
+    | "off"
+    | "starting"
+    | "connecting"
+    | "outbound"
+    | "reachable"
+    | "failed";
+
+  /** Bootstrap progress, while connecting. */
+  percent?: number;
+
+  /** This device's address, once Tor has published it. */
+  onion?: string;
+
+  /** The loopback port peers arrive on. */
+  listening?: number;
+
   error?: string;
   bytesHeld: number;
 }
@@ -39,6 +73,7 @@ const status: BootStatus = {
   storage: "loading",
   compression: "loading",
   background: "off",
+  network: "off",
   bytesHeld: 0,
 };
 
@@ -97,9 +132,87 @@ export async function boot(): Promise<BootStatus> {
   }
 
   announce();
+
+  // The network, last. Everything above it is local; this is the only part
+  // that talks to anybody, and it is pointless before there is a log to sync.
+  await startNetwork();
+
   watchLifecycle();
 
   return status;
+}
+
+/**
+ * Listen, then tell Tor where to forward.
+ *
+ * The order is the whole of it. `Socket.listen` binds a loopback port and
+ * returns the one it got; Tor then publishes an onion service pointing at that
+ * port. Doing it the other way round means an address that resolves to a
+ * closed port — the device looks online to every peer and refuses all of them.
+ */
+async function startNetwork(): Promise<void> {
+  let listening: number;
+
+  try {
+    // Port zero: the system picks. A fixed port collides with whatever else is
+    // using it, and the failure is a bind error at startup that reads as Tor
+    // being broken.
+    const bound = await Socket.listen({ port: 0 });
+    listening = bound.port;
+  } catch (error) {
+    status.network = "failed";
+    status.error = `listening: ${(error as Error).message}`;
+    announce();
+    return;
+  }
+
+  status.listening = listening;
+  status.network = "starting";
+  announce();
+
+  await Tor.addListener("tor", (event: TorEvent) => {
+    switch (event.state) {
+      case "starting":
+        status.network = "starting";
+        break;
+
+      case "bootstrapping":
+        status.network = "connecting";
+        status.percent = event.percent;
+        break;
+
+      case "ready":
+        // A circuit exists, so this device can reach others. It cannot yet be
+        // reached — the descriptor has not been published — and saying
+        // "connected" here would be a quarter true.
+        status.network = "outbound";
+        break;
+
+      case "published":
+        status.network = "reachable";
+        status.onion = event.onion;
+        break;
+
+      case "failed":
+        status.network = "failed";
+        status.error = event.error;
+        break;
+
+      case "stopped":
+        status.network = "off";
+        break;
+    }
+
+    announce();
+  });
+
+  try {
+    await Tor.start({ localPort: listening });
+  } catch (error) {
+    status.network = "failed";
+    status.error = `tor: ${(error as Error).message}`;
+    announce();
+  }
 }
 
 /**
