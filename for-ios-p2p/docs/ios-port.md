@@ -154,6 +154,7 @@ aliases in `vite.config.ts`, mirrored in `scripts/shim.mjs` for the tests.
 | `node:fs` | in-memory + Capacitor | Synchronous reads, debounced writes |
 | `node:path` | POSIX only | These are keys in a virtual tree |
 | `node:net` | `plugins/socket` | Network.framework, SOCKS5 to Tor |
+| the `tor` daemon | `plugins/tor` | Tor.framework, linked in rather than spawned |
 
 ### Why not WebCrypto
 
@@ -193,30 +194,47 @@ exactly like a network problem.
 
 ## What is not done
 
-### Tor
+### ~~Tor~~ — done, needs a device to confirm
 
-The largest remaining piece, and the one with a real decision in it.
+`plugins/tor` embeds [Tor.framework](https://github.com/iCepa/Tor.framework)
+(`pod 'Tor/GeoIP', '~> 409.11'`) — tor, libevent, OpenSSL and liblzma compiled
+for iOS and driven through a control port. The desktop build runs `tor` as a
+subprocess; iOS has no `fork` and forbids shipping a separate executable, so
+linking it in is the only route.
 
-Every Reaper address is an onion service. iOS cannot run a Tor daemon as a
-subprocess the way the desktop build does — there is no `fork`, and shipping an
-executable is not allowed — so Tor has to be linked into the app as a library.
+Two halves, and the second is the one that matters:
 
-Two routes:
+- **Reaching out** is a SOCKS port on loopback, which `plugins/socket` already
+  dials through — including passing onion addresses as names so this device
+  never resolves them.
+- **Being reachable** is an onion service. A phone has no routable address and
+  no port anybody can open; the service is what gives it one, and it is the
+  entire reason this app can work without a server.
 
-- **[Arti](https://gitlab.torproject.org/tpo/core/arti)**, the Rust
-  implementation. Cross-compiles to `aarch64-apple-ios` cleanly and exposes a
-  usable API. Onion *service* support (as opposed to client) reached usable
-  form comparatively recently, and hosting a service is exactly what Reaper
-  needs, so this wants verifying against the current release rather than
-  assuming.
-- **Tor.framework**, the C implementation as a CocoaPod, which Onion Browser
-  uses. Proven for hosting services; a heavier dependency and a C library
-  inside the app.
+`HiddenServiceDir` and `HiddenServicePort` are passed as *arguments* rather
+than options, because tor applies the port to whichever directory preceded it
+and option order is not preserved.
 
-Either way the socket plugin is already written against a local SOCKS5 proxy —
-`plugins/socket` implements the handshake, including domain-name addressing so
-the onion address is resolved by Tor rather than by this device. Whatever
-provides that proxy plugs in underneath without the layer above noticing.
+The private key in that directory **is** the address: lose it and every peer's
+saved contact stops resolving, leak it and somebody else can answer as you. It
+lives under Application Support at `0700`, excluded from iCloud backup — a key
+restored onto a second device would have two of them publishing the same
+address — and with file protection so it is unreadable while the device is
+locked, which matters because the app keeps running in a pocket.
+
+Startup order is load-bearing: `Socket.listen` binds a loopback port and
+returns it, *then* Tor publishes a service pointing at that port. The other way
+round publishes an address that resolves to a closed port, so the device looks
+online to every peer and refuses all of them.
+
+Progress is reported as events rather than awaited — `bootstrapping` with a
+percentage, then `ready` (outbound works), then `published` (peers can reach
+you). Those are genuinely different states and the startup screen shows them
+as such, amber for the middle one. A first bootstrap can take minutes.
+
+**Not yet confirmed on hardware.** Nothing here has run on a phone: Swift
+cannot be compiled in this environment, so it is careful code against a
+documented API rather than tested code. The first device run is the test.
 
 ### The interface
 
@@ -254,7 +272,8 @@ than a shim, which is why it is written here rather than half-built.
 
 ## Order of work
 
-1. Tor, via Arti, verified against a real onion service.
+1. Confirm Tor on a device — that it bootstraps, and that the onion service
+   publishes and accepts a connection from the desktop build.
 2. `window.p2p` over the shims, so the existing interface runs unmodified.
 3. The core into a Worker, with OPFS underneath it.
 4. Touch and layout.

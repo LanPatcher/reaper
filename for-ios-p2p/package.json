@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:plugins": "tsc -p plugins/keepalive && tsc -p plugins/socket",
+    "build:plugins": "tsc -p plugins/keepalive && tsc -p plugins/socket && tsc -p plugins/tor",
     "build": "npm run build:plugins && vite build",
     "sync": "npm run build && cap sync ios",
     "shim:test": "node scripts/shim.mjs",
@@ -20,6 +20,7 @@
     "@capacitor/preferences": "^8.0.1",
     "@reaper/keepalive": "file:plugins/keepalive",
     "@reaper/socket": "file:plugins/socket",
+    "@reaper/tor": "file:plugins/tor",
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",

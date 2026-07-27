@@ -118,6 +118,16 @@ workflows:
           # project directory that looks complete and cannot be built.
           cd ios/App
 
+          # Tor.framework ships as a dynamic framework, so the Podfile has to
+          # ask for frameworks rather than static libraries. Capacitor's
+          # template normally includes this; adding it if absent is cheaper
+          # than a twenty-minute build that ends in a linker error.
+          if [ -f Podfile ] && ! grep -q "use_frameworks!" Podfile; then
+            echo "adding use_frameworks! for Tor.framework"
+            printf '%s\n' "use_frameworks!" | cat - Podfile > Podfile.new
+            mv Podfile.new Podfile
+          fi
+
           if [ ! -f Podfile ]; then
             echo "No Podfile — this project was generated for SPM, so there is"
             echo "nothing for CocoaPods to do. Skipping."
@@ -153,7 +163,7 @@ workflows:
           echo "--- pods ---"
           grep -E "Reaper|Capacitor" ios/App/Podfile || true
 
-          for pod in ReaperKeepalive ReaperSocket; do
+          for pod in ReaperKeepalive ReaperSocket ReaperTor; do
             [ -f ios/App/Podfile ] || break
             if ! grep -q "$pod" ios/App/Podfile; then
               echo
