@@ -1,6 +1,5 @@
 import { App } from "@capacitor/app";
 import { Keepalive } from "@reaper/keepalive";
-import { Socket } from "@reaper/socket";
 import { Tor, type TorEvent } from "@reaper/tor";
 
 import { registerP2PHandlers } from "../../for-desktop-p2p/src/p2p/bridge";
@@ -154,47 +153,14 @@ export async function boot(): Promise<BootStatus> {
  * closed port — the device looks online to every peer and refuses all of them.
  */
 async function startNetwork(): Promise<void> {
-  let listening: number;
-
-  try {
-    // Port zero: the system picks. A fixed port collides with whatever else is
-    // using it, and the failure is a bind error at startup that reads as Tor
-    // being broken.
-    const bound = await Socket.listen({ port: 0 });
-    listening = bound.port;
-  } catch (error) {
-    // Named separately from a Tor failure. Both end with nothing arriving, and
-    // they are fixed in completely different places — one is a socket this app
-    // could not bind, the other is a network it could not reach.
-    status.network = "failed";
-    status.error = `could not open a local port: ${(error as Error).message}`;
-    announce();
-    return;
-  }
-
-  if (!listening) {
-    status.network = "failed";
-    status.error = "the local port came back as zero, so Tor has nowhere to forward to";
-    announce();
-    return;
-  }
-
-  status.listening = listening;
-  status.network = "starting";
-  announce();
-
-  // The core, before Tor rather than after.
-  //
-  // This is the desktop's own `registerP2PHandlers` — the whole seventeen
-  // hundred lines of it — running against the shims. It loads the identity,
-  // opens the index and installs every handler the interface will call. It has
-  // to happen before the page appears, because the page asks who it is on its
-  // first line.
+  // The core first. It loads the identity, opens the index and installs every
+  // handler the interface will call — and it has to be up before the page
+  // appears, because the page asks who it is on its first line.
   try {
     registerP2PHandlers();
   } catch (error) {
-    // Fatal, unlike a network failure: there is no identity and no history, so
-    // the interface would offer to make a new account over the top of one that
+    // Fatal, unlike a network failure: with no identity and no history the
+    // interface would offer to create an account over the top of one that
     // already exists.
     status.storage = "failed";
     status.error = `could not open the store: ${(error as Error).message}`;
@@ -202,16 +168,40 @@ async function startNetwork(): Promise<void> {
     return;
   }
 
-  // Listening for peers. The transport is created by the same handler the
-  // desktop uses, on the port bound above.
+  status.network = "starting";
+  announce();
+
+  // One listener, opened by the transport.
+  //
+  // This used to bind a port here and then let the transport bind another —
+  // and the second one landed on a port the first had only just released.
+  // Network.framework reports that as `.waiting` rather than an error, which
+  // never settles, so the whole of startup stopped on an await that could not
+  // finish. The screen sat on "Starting up…" with nothing to say.
+  //
+  // Asking the transport for its port instead means there is only ever one
+  // bind, and nothing to race against.
+  let listening: number;
+
   try {
-    await invoke("p2p:netStart", listening);
+    const started = await invoke("p2p:netStart", 0) as { port: number };
+    listening = started.port;
   } catch (error) {
     status.network = "failed";
     status.error = `could not start the transport: ${(error as Error).message}`;
     announce();
     return;
   }
+
+  if (!listening) {
+    status.network = "failed";
+    status.error = "the transport reported no port, so Tor has nowhere to forward to";
+    announce();
+    return;
+  }
+
+  status.listening = listening;
+  announce();
 
   await Tor.addListener("tor", (event: TorEvent) => {
     switch (event.state) {
@@ -226,14 +216,14 @@ async function startNetwork(): Promise<void> {
 
       case "ready":
         // A circuit exists, so this device can reach others. It cannot yet be
-        // reached — the descriptor has not been published — and saying
-        // "connected" here would be a quarter true.
+        // reached — the descriptor is not published — and calling that
+        // "connected" would be a quarter true.
         status.network = "outbound";
 
         // The port every outbound connection is dialled through. Until this
-        // arrives `net.ts` refuses to connect at all, which is deliberate: a
-        // socket opened to port zero fails in a way that reads as the peer
-        // being unreachable.
+        // arrives `net.ts` refuses to connect at all, deliberately: a socket
+        // opened to port zero fails in a way that reads as the peer being
+        // unreachable.
         if (event.socksPort) setProxyPort(event.socksPort);
         break;
 

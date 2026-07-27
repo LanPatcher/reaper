@@ -191,6 +191,21 @@ final class TcpSockets {
           userInfo: [NSLocalizedDescriptionKey: "listener was cancelled before it bound"]
         )))
 
+      case .waiting(let reason):
+        // Not an error, and that is the danger: Network.framework means "the
+        // port is busy, I will keep trying", and on a loopback port that is
+        // never freed it waits for ever. Nothing settles, and every `await`
+        // above this one stops permanently — which presents as an app frozen
+        // on its startup screen with no error anywhere.
+        //
+        // Treated as a failure, because for this caller it is one: the port
+        // was asked for and cannot be had.
+        settle(.failure(NSError(
+          domain: "chat.reaper.sockets", code: 3,
+          userInfo: [NSLocalizedDescriptionKey:
+            "could not bind the port: \(reason.localizedDescription)"]
+        )))
+
       default:
         break
       }
