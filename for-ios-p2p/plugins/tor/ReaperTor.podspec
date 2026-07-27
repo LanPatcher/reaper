@@ -19,10 +19,15 @@ Pod::Spec.new do |s|
   s.dependency 'Capacitor'
 
   # The embedded Tor client: tor, libevent, OpenSSL and liblzma compiled for
-  # iOS. `GeoIP` rather than the root spec because Tor needs the country
-  # database to pick entry guards sensibly, and the subspec installs it as a
-  # bundle with a build phase that fetches the current files.
-  s.dependency 'Tor/GeoIP', '~> 409.11'
+  # iOS.
+  #
+  # The root spec rather than `Tor/GeoIP`. The country database is only used
+  # for country-based node selection — circuits and onion services do not need
+  # it — and the subspec adds a build phase that downloads the files plus an
+  # `NSBundle` category whose Swift name could not be verified from here. Left
+  # out rather than guessed at on the critical path; it can be added once there
+  # is a device to check it against.
+  s.dependency 'Tor', '~> 409.11'
 
   s.swift_version = '5.1'
 end

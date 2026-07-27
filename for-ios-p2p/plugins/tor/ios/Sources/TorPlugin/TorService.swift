@@ -43,9 +43,9 @@ final class TorService {
 
     private let emit: Progress
 
-    private var thread: TORThread?
-    private var controller: TORController?
-    private var configuration: TORConfiguration?
+    private var thread: TorThread?
+    private var controller: TorController?
+    private var configuration: TorConfiguration?
 
     /// The loopback port tor forwards onion traffic to. The transport listens there.
     private var forwardTo: UInt16 = 0
@@ -77,15 +77,9 @@ final class TorService {
         lastError = nil
         forwardTo = localPort
 
-        let configuration = TORConfiguration()
-
-        // Ports chosen by tor rather than fixed. A hard-coded 9050 collides
-        // with anything else on the device using it, and the failure is a
-        // refusal to start that looks like Tor being broken.
-        configuration.socksURL = nil
+        let configuration = TorConfiguration()
         configuration.ignoreMissingTorrc = true
         configuration.cookieAuthentication = true
-        configuration.autoControlPort = true
 
         do {
             let dataDirectory = try Self.dataDirectory()
@@ -93,11 +87,13 @@ final class TorService {
 
             configuration.dataDirectory = dataDirectory
 
-            // The country database. Without it tor cannot weight entry guards
-            // properly, which is a real anonymity property rather than a
-            // nicety — see the GeoIP subspec in ReaperTor.podspec.
-            configuration.geoipFile = Bundle.geoIpBundle?.geoipFile
-            configuration.geoip6File = Bundle.geoIpBundle?.geoip6File
+            // A control socket at a path chosen here rather than asking tor to
+            // pick one. This is the arrangement in Tor.framework's own example,
+            // and it is used because it is the documented one — the control
+            // port is how everything below drives tor, so a guess here fails
+            // as "cannot connect" with nothing to point at.
+            configuration.controlSocket =
+                dataDirectory.appendingPathComponent("control_port")
 
             configuration.arguments = [
                 // Bound to loopback and to a port tor picks.
@@ -127,7 +123,7 @@ final class TorService {
 
             self.configuration = configuration
 
-            let thread = TORThread(configuration: configuration)
+            let thread = TorThread(configuration: configuration)
             self.thread = thread
             thread.start()
 
@@ -147,12 +143,12 @@ final class TorService {
     private func connectController() {
         guard let configuration = configuration else { return }
 
-        guard let controlURL = configuration.controlSocket ?? configuration.controlPortFile else {
-            fail("tor did not report a control port")
+        guard let controlURL = configuration.controlSocket else {
+            fail("no control socket — tor cannot be driven")
             return
         }
 
-        let controller = TORController(socketURL: controlURL)
+        let controller = TorController(socketURL: controlURL)
         self.controller = controller
 
         do {
