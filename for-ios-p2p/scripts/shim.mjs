@@ -34,6 +34,8 @@ const SHIM_ALIASES = {
   "node:zlib": join(HERE, "src/shim/zlib.ts"),
   "node:fs": join(HERE, "src/shim/fs.ts"),
   "node:path": join(HERE, "src/shim/path.ts"),
+  "node:net": join(HERE, "src/shim/net.ts"),
+  "node:events": join(HERE, "src/shim/events.ts"),
 };
 
 const TESTS = [
@@ -95,6 +97,17 @@ function explain(error) {
 `);
 }
 
+/** The same substitution as `vite.config.ts`, in esbuild's shape. */
+const iosTor = {
+  name: "ios-tor",
+  setup(build) {
+    build.onResolve({ filter: /^\.\/tor$/ }, (args) => {
+      if (!args.importer.includes("for-desktop-p2p")) return null;
+      return { path: join(HERE, "src/shim/tor.ts") };
+    });
+  },
+};
+
 /** Build one entry point into the temporary directory. */
 async function bundle(entry, name, options = {}) {
   const file = join(out, name);
@@ -126,6 +139,7 @@ try {
 
   const shimCore = await bundle("src/shim/core-entry.ts", "core-shim.mjs", {
     alias: SHIM_ALIASES,
+    plugins: [iosTor],
     packages: "external",
   });
 

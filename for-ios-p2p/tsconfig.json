@@ -13,7 +13,9 @@
       "node:crypto": ["./src/shim/crypto.ts"],
       "node:zlib": ["./src/shim/zlib.ts"],
       "node:fs": ["./src/shim/fs.ts"],
-      "node:path": ["./src/shim/path.ts"]
+      "node:path": ["./src/shim/path.ts"],
+      "node:net": ["./src/shim/net.ts"],
+      "node:events": ["./src/shim/events.ts"]
     }
   },
   "include": ["src", "scripts", "*.ts"]
