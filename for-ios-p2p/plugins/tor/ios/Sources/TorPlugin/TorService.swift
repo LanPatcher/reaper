@@ -53,6 +53,9 @@ final class TorService {
     /// Where tor writes the control port it chose. An ordinary file.
     private var controlPortFile: URL?
 
+    /// Where tor writes its own account of what went wrong.
+    private var logFile: URL?
+
     private(set) var running = false
     private(set) var bootstrapped = false
     private(set) var onion: String?
@@ -111,6 +114,10 @@ final class TorService {
             let portFile = dataDirectory.appendingPathComponent("controlport")
             self.controlPortFile = portFile
 
+            let logFile = dataDirectory.appendingPathComponent("tor.log")
+            self.logFile = logFile
+            try? FileManager.default.removeItem(at: logFile)
+
             // Not left over from a previous launch, or the first read would
             // return a port nothing is listening on.
             try? FileManager.default.removeItem(at: portFile)
@@ -133,13 +140,21 @@ final class TorService {
                 // retired and an old default would be silently insecure.
                 "--HiddenServiceVersion", "3",
 
-                // A phone moves between networks constantly. Without this, tor
-                // keeps trying circuits through an interface that is gone.
-                "--ClientOnly", "0",
+                // Never a relay. The default already, said out loud because a
+                // phone volunteering to carry other people's traffic would be
+                // a surprising thing to discover by accident.
+                "--ClientOnly", "1",
 
-                // Nothing to log to on a device, and a log file is a record of
-                // who was contacted when.
-                "--Log", "notice stdout",
+                // Logged to a file, and read back when something fails.
+                //
+                // This is the only way to find out what tor is unhappy about.
+                // There is no console on a device, tor reports configuration
+                // problems by writing a line and exiting, and every failure so
+                // far has been diagnosed by guessing — which has cost a build
+                // cycle each time. `SafeLogging` keeps addresses out of it, so
+                // the file says what went wrong without recording who was
+                // being contacted.
+                "--Log", "notice file \(logFile.path)",
                 "--SafeLogging", "1",
                 "--AvoidDiskWrites", "1",
             ]
@@ -376,9 +391,37 @@ final class TorService {
         emit("stopped", [:])
     }
 
+    /**
+     * Report a failure, with tor's own words attached.
+     *
+     * Every failure in this file so far has been a guess checked by rebuilding
+     * — and tor knew the answer the whole time. It writes a line saying exactly
+     * what it objected to and then exits, which from the outside looks like a
+     * control port that will not accept connections.
+     */
     private func fail(_ message: String) {
-        lastError = message
-        emit("failed", ["error": message])
+        var full = message
+
+        if let tail = Self.lastLogLines(logFile) {
+            full += "\n\ntor said:\n" + tail
+        }
+
+        lastError = full
+        emit("failed", ["error": full])
+    }
+
+    /// The end of tor's log — where it says why it stopped.
+    private static func lastLogLines(_ file: URL?, keep: Int = 12) -> String? {
+        guard
+            let file,
+            let text = try? String(contentsOf: file, encoding: .utf8)
+        else { return nil }
+
+        let lines = text
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .suffix(keep)
+
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
     }
 
     // ---- where things are kept ----------------------------------------------

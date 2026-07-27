@@ -202,6 +202,44 @@ workflows:
           echo "--- Info.plist ---"
           plutil -p "$PLIST"
 
+      - name: Install the app icon
+        script: |
+          set -e
+          cd for-ios-p2p
+
+          # Written into the generated project rather than committed, because
+          # `ios/` is regenerated on every build — so anything placed there by
+          # hand is gone by the time Xcode looks.
+          ICONSET="ios/App/App/Assets.xcassets/AppIcon.appiconset"
+          mkdir -p "$ICONSET"
+
+          # Xcode 14 and later take a single 1024×1024 image and derive every
+          # size it needs. The older catalogue, with twenty separate entries,
+          # is twenty more chances for one to be missing.
+          cp assets/AppIcon-1024.png "$ICONSET/AppIcon-1024.png"
+
+          cat > "$ICONSET/Contents.json" <<'JSON'
+          {
+            "images": [
+              {
+                "filename": "AppIcon-1024.png",
+                "idiom": "universal",
+                "platform": "ios",
+                "size": "1024x1024"
+              }
+            ],
+            "info": { "author": "xcode", "version": 1 }
+          }
+          JSON
+
+          # Heredocs inside an indented YAML block keep their indentation, and
+          # Xcode will not parse a Contents.json that starts with spaces.
+          sed -i '' 's/^          //' "$ICONSET/Contents.json"
+
+          echo "--- icon ---"
+          ls -la "$ICONSET"
+          plutil -lint "$ICONSET/Contents.json"
+
       - name: Build the archive
         script: |
           cd for-ios-p2p
