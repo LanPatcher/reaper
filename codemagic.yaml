@@ -91,10 +91,21 @@ workflows:
           # generation carried on to the next step and surfaced four steps
           # later as "App.xcworkspace does not exist" — which names a symptom
           # in a different part of the build from the cause.
+          # CocoaPods, explicitly.
+          #
+          # Capacitor 8 defaults to Swift Package Manager, which is why the
+          # last attempt produced no Podfile and no workspace at all. SPM would
+          # be fine on its own terms; it is the wrong choice here because
+          # Tor.framework — the embedded Tor client this app needs to reach
+          # anything — is distributed as a CocoaPod and has no SPM support.
+          # Choosing SPM now would mean migrating back the moment Tor lands.
+          #
+          # The flag is only read by `add`; `sync` follows whatever the
+          # existing project already is.
           if [ -d ios ]; then
             npx cap sync ios
           else
-            npx cap add ios
+            npx cap add ios --packagemanager CocoaPods
           fi
 
           # And then CocoaPods, explicitly.
@@ -106,6 +117,12 @@ workflows:
           # itself and quietly gives up if anything is off — which leaves a
           # project directory that looks complete and cannot be built.
           cd ios/App
+
+          if [ ! -f Podfile ]; then
+            echo "No Podfile — this project was generated for SPM, so there is"
+            echo "nothing for CocoaPods to do. Skipping."
+            exit 0
+          fi
 
           # Without `--repo-update` first: every pod here is a local `:path =>`
           # declaration, so there is nothing to look up remotely and updating
@@ -121,10 +138,10 @@ workflows:
           echo "--- ios/App ---"
           ls -la ios/App || true
 
-          if [ ! -d ios/App/App.xcworkspace ]; then
+          if [ ! -d ios/App/App.xcworkspace ] && [ ! -d ios/App/App.xcodeproj ]; then
             echo
-            echo "  App.xcworkspace was not created, so pod install did not"
-            echo "  finish. Everything below is the reason, not the symptom:"
+            echo "  Neither a workspace nor a project was created, so the"
+            echo "  generation step did not finish. Below is the reason:"
             echo
             cat ios/App/Podfile 2>/dev/null || echo "  (no Podfile — cap add ios did not complete)"
             exit 1
@@ -137,6 +154,7 @@ workflows:
           grep -E "Reaper|Capacitor" ios/App/Podfile || true
 
           for pod in ReaperKeepalive ReaperSocket; do
+            [ -f ios/App/Podfile ] || break
             if ! grep -q "$pod" ios/App/Podfile; then
               echo
               echo "  $pod is not in the Podfile, so Capacitor did not find it."
@@ -179,8 +197,19 @@ workflows:
           cd for-ios-p2p
           # No signing identity, so every signing step is switched off
           # explicitly. Xcode will otherwise stop and ask for a team.
+          # Workspace when CocoaPods produced one, project otherwise. Stated
+          # as a check rather than an assumption because the two are chosen
+          # several steps earlier, and a mismatch fails with "does not exist"
+          # — which names a missing file rather than the decision behind it.
+          if [ -d "$XCODE_WORKSPACE" ]; then
+            TARGET=(-workspace "$XCODE_WORKSPACE")
+          else
+            TARGET=(-project "ios/App/App.xcodeproj")
+          fi
+          echo "building: ${TARGET[*]}"
+
           xcodebuild \
-            -workspace "$XCODE_WORKSPACE" \
+            "${TARGET[@]}" \
             -scheme "$XCODE_SCHEME" \
             -configuration Release \
             -sdk iphoneos \

@@ -1,6 +1,18 @@
 node_modules/
 dist/
 build/
-ios/
 *.ipa
 .DS_Store
+
+# The generated Xcode project — and *only* that one.
+#
+# The leading slash matters. Written as a bare `ios/` this matched every
+# directory called `ios` at any depth, which included `plugins/keepalive/ios`
+# and `plugins/socket/ios` — the Swift source of both native plugins. They
+# were never committed, so the Mac clone had two plugins whose implementation
+# was entirely missing, and `cap add ios` failed trying to read a directory
+# that does not exist there.
+#
+# Nothing local shows this: the files are on disk here either way. It only
+# appears on a fresh clone.
+/ios/
