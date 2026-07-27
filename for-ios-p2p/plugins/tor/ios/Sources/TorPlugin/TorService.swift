@@ -250,23 +250,22 @@ final class TorService {
         let controller = TorController(socketHost: "127.0.0.1", port: port)
         self.controller = controller
 
-        do {
-            try controller.connect()
-        } catch {
-            guard attempt < 10 else {
-                fail(
-                    "could not reach tor's control port on 127.0.0.1:\(port) "
-                    + "after ten attempts — tor is running but will not be driven"
-                )
-                return
-            }
-
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
-                [weak self] in
-                self?.connectController(port: port, attempt: attempt + 1)
-            }
-            return
-        }
+        // Attempted, and a thrown result is not treated as failure.
+        //
+        // tor's own log settles this: every attempt produced
+        //
+        //     [notice] New control connection opened from 127.0.0.1.
+        //
+        // one line per retry. The socket connects and tor accepts it — and
+        // `connect` still returns NO with no error to explain itself, which
+        // Swift surfaces as `_GenericObjCError error 0`. Whatever that return
+        // value means in this version of Tor.framework, it does not mean the
+        // connection failed, and believing it meant retrying against a control
+        // port that was working the entire time.
+        //
+        // Authentication is the honest test, and it has a completion handler
+        // that reports a real error. So the outcome is decided there.
+        try? controller.connect()
 
         guard let cookie = configuration.cookie else {
             // Written into the data directory by tor at startup. Same race as
@@ -288,9 +287,16 @@ final class TorService {
             guard let self else { return }
 
             guard success else {
-                self.fail("authentication: \(error?.localizedDescription ?? "refused")")
+                // The first meaningful signal about the control connection. If
+                // it were genuinely not open, this is where that shows up.
+                self.fail(
+                    "tor accepted the control connection but refused "
+                    + "authentication: \(error?.localizedDescription ?? "no reason given")"
+                )
                 return
             }
+
+            self.emit("controlling", [:])
 
             // Progress, so the interface can say "connecting" honestly rather
             // than showing a spinner for two minutes with nothing behind it.
