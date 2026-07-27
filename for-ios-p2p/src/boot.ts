@@ -160,8 +160,18 @@ async function startNetwork(): Promise<void> {
     const bound = await Socket.listen({ port: 0 });
     listening = bound.port;
   } catch (error) {
+    // Named separately from a Tor failure. Both end with nothing arriving, and
+    // they are fixed in completely different places — one is a socket this app
+    // could not bind, the other is a network it could not reach.
     status.network = "failed";
-    status.error = `listening: ${(error as Error).message}`;
+    status.error = `could not open a local port: ${(error as Error).message}`;
+    announce();
+    return;
+  }
+
+  if (!listening) {
+    status.network = "failed";
+    status.error = "the local port came back as zero, so Tor has nowhere to forward to";
     announce();
     return;
   }
