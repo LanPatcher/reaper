@@ -1,4 +1,5 @@
-import { cpSync, existsSync, readdirSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 
 import { app, ipcMain } from "electron";
@@ -19,6 +20,16 @@ import { agree, deriveKey, isSealed, open as openSealed, seal } from "./crypto";
 import { brotliCompressSync, brotliDecompressSync, constants } from "node:zlib";
 
 import { BlobStore, blobId } from "./blobs";
+import {
+  CLAIM,
+  type Claim,
+  claimFor,
+  holds,
+  isClaim,
+  newDeviceId,
+  standing,
+} from "./devices";
+import { LinkService, type LinkProgress } from "./link";
 import { CommunityStore } from "./store";
 import {
   TorService,
@@ -81,6 +92,13 @@ const CHANNEL = {
   netStatsReset: "p2p:netStatsReset",
   exportIdentity: "p2p:exportIdentity",
   importIdentity: "p2p:importIdentity",
+  deviceInfo: "p2p:deviceInfo",
+  deviceName: "p2p:deviceName",
+  deviceTakeOver: "p2p:deviceTakeOver",
+  linkOpen: "p2p:linkOpen",
+  linkClose: "p2p:linkClose",
+  linkPeers: "p2p:linkPeers",
+  linkTo: "p2p:linkTo",
   putBlob: "p2p:putBlob",
   getBlob: "p2p:getBlob",
   hasBlob: "p2p:hasBlob",
@@ -109,6 +127,16 @@ export const P2P_REFUSED = "p2p:refused";
 
 /** Audio frame from a peer. */
 export const P2P_AUDIO = "p2p:audio";
+
+/**
+ * Something changed about this device's standing, or about linking.
+ *
+ * One channel rather than three, because the interface reacts to all of it in
+ * the same place: the overlay that says another device is answering, and the
+ * linking screen. Splitting them would mean three subscriptions that always
+ * have to be kept consistent with each other.
+ */
+export const P2P_DEVICES = "p2p:devices";
 
 /**
  * How an exported identity is wrapped.
@@ -352,6 +380,230 @@ function servesPeer(community: string, peerUserId: string | undefined): boolean 
   if (members.size < capacityOf(community)) return true;
 
   return members.has(peerUserId);
+}
+
+// ---- this device, and which of yours holds the address ----------------------
+
+interface DeviceRecord {
+  id: string;
+  name: string;
+}
+
+let device: DeviceRecord | undefined;
+let link: LinkService | undefined;
+
+/**
+ * Where the renderer can be reached from outside a handler.
+ *
+ * Linking and losing the address are both things that happen *to* the app
+ * rather than because it was asked, so they need a way to tell the window
+ * about it. Captured from whichever call came in most recently, which is the
+ * same window in every case — this app has one.
+ */
+let viewer: Electron.WebContents | undefined;
+
+function deviceFile(): string {
+  return join(root(), "device.json");
+}
+
+/**
+ * This install's id and name.
+ *
+ * Created on first use and never regenerated. It is not carried in an identity
+ * export on purpose: a restored backup is a *different* device, and if it
+ * inherited the id it could not take the address from the machine it was
+ * restored from — the two would be indistinguishable to the ledger.
+ */
+function thisDevice(): DeviceRecord {
+  if (device) return device;
+
+  try {
+    const read = JSON.parse(readFileSync(deviceFile(), "utf8")) as DeviceRecord;
+    if (read && typeof read.id === "string" && read.id) {
+      device = { id: read.id, name: read.name || defaultDeviceName() };
+      return device;
+    }
+  } catch {
+    // First run, or a file that says nothing usable. Either way, make one.
+  }
+
+  device = { id: newDeviceId(), name: defaultDeviceName() };
+  writeDevice(device);
+  return device;
+}
+
+function writeDevice(record: DeviceRecord): void {
+  device = record;
+  try {
+    writeFileSync(deviceFile(), JSON.stringify(record), { mode: 0o600 });
+  } catch (error) {
+    log("[p2p]", `could not record this device: ${String(error)}`);
+  }
+}
+
+function defaultDeviceName(): string {
+  // The machine's name, because it is the one label the user already
+  // recognises. Falls back to something honest rather than to "unknown", which
+  // would appear in a sentence like "signed in on unknown".
+  try {
+    return hostname() || `this ${process.platform} device`;
+  } catch {
+    return `this ${process.platform} device`;
+  }
+}
+
+/** Every claim recorded in the private index log. */
+function claimsHeld(): Claim[] {
+  try {
+    return storeFor(INDEX).events()
+      .filter((event) => event.type === CLAIM)
+      .map((event) => decryptPayload(INDEX, event.payload))
+      .filter(isClaim);
+  } catch {
+    return [];
+  }
+}
+
+/** Record a claim, unless this device already has that exact one. */
+function addClaim(claim: Claim): void {
+  if (!isClaim(claim)) return;
+
+  const known = claimsHeld();
+  if (known.some((held) => held.device === claim.device && held.n === claim.n)) return;
+
+  try {
+    storeFor(INDEX).append(CLAIM, claim);
+  } catch (error) {
+    log("[p2p]", `could not record a device claim: ${String(error)}`);
+  }
+}
+
+function deviceInfo() {
+  const me = thisDevice();
+  const claims = claimsHeld();
+
+  return {
+    device: me.id,
+    name: me.name,
+    standing: standing(claims, me.id),
+    claims: claims.sort((a, b) => b.n - a.n),
+    linking: !!link,
+    linkPort: link?.port ?? 0,
+    onion: tor?.address,
+  };
+}
+
+function announceDevices(extra: Record<string, unknown> = {}): void {
+  try {
+    viewer?.send(P2P_DEVICES, { ...deviceInfo(), ...extra });
+  } catch {
+    // The window has gone. Nothing to tell.
+  }
+}
+
+/**
+ * Publish the onion service, but only if this device is the one that should.
+ *
+ * The alternative — publishing always and letting Tor sort it out — is what
+ * this whole mechanism exists to avoid. Tor does not sort it out; it keeps the
+ * newest descriptor, so two devices take turns being reachable and neither is
+ * reliably so.
+ */
+async function publishIfHolding(): Promise<string | undefined> {
+  if (!tor) return undefined;
+
+  const me = thisDevice();
+
+  if (!holds(claimsHeld(), me.id)) {
+    if (tor.running) {
+      log("[tor]", "another of your devices holds the address — not publishing");
+      tor.stop();
+    }
+    return undefined;
+  }
+
+  if (tor.running) return tor.address;
+
+  try {
+    const onion = await tor.start();
+    log("[tor]", `onion service published: ${onion}`);
+    return onion;
+  } catch (error) {
+    log("[tor]", (error as Error).message);
+    return undefined;
+  }
+}
+
+/** Start listening and announcing for other devices of yours. */
+async function openLink(): Promise<number> {
+  if (link) return link.port;
+
+  if (!identity) throw new Error("p2p: identity not initialised");
+  const me = thisDevice();
+
+  const service = new LinkService({
+    identity,
+    device: me.id,
+    name: me.name,
+
+    // Everything, private logs included. That is the difference between this
+    // and the peer transport, and it is the reason the handshake has to be
+    // exact — see `link.ts`.
+    communities: () => {
+      const dir = join(root(), "communities");
+      const onDisk = existsSync(dir)
+        ? readdirSync(dir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name)
+        : [];
+
+      return [...new Set([...onDisk, ...stores.keys(), INDEX])];
+    },
+
+    summary: (community) => storeFor(community).summary(),
+    missingForSummary: (community, summary) =>
+      [...storeFor(community).missingForSummary(summary)],
+
+    merge: (community, events) => {
+      const result = storeFor(community).merge(events);
+
+      if (result.accepted.length) {
+        try {
+          viewer?.send(P2P_EVENT, community, result.accepted.map(forRenderer));
+        } catch { /* window gone */ }
+      }
+
+      return result.accepted.length;
+    },
+
+    blobIds: (community) => blobsFor(community).ids(),
+    readBlob: (community, id) => blobsFor(community).read(id),
+
+    // `accept` rather than `write`: it re-hashes and refuses anything that
+    // does not match the name it arrived under. The link already checks that,
+    // and checking twice at the point of writing costs nothing and means the
+    // store's own guarantee does not depend on its caller being careful.
+    writeBlob: (community, id, bytes) => { blobsFor(community).accept(id, bytes); },
+
+    claims: claimsHeld,
+    addClaim,
+  });
+
+  service.on("log", (line: string) => log("[link]", line));
+  service.on("peers", () => announceDevices());
+
+  service.on("synced", (progress: LinkProgress) => {
+    log("[link]", `synced with ${progress.name}: ${progress.events} events, ${progress.files} files`);
+
+    // A device that has just been handed the account may have been displaced
+    // while it was away, and this is the moment it finds out.
+    void publishIfHolding().then(() => announceDevices({ synced: progress }));
+  });
+
+  service.on("failed", (reason: string) => announceDevices({ failed: reason }));
+
+  link = service;
+  return service.open();
 }
 
 function blobsFor(community: string): BlobStore {
@@ -834,14 +1086,27 @@ export function registerP2PHandlers(): void {
 
     tor.on("log", (line: string) => log("[tor]", line));
 
-    let onion: string | undefined;
-    try {
-      onion = await tor.start();
-      log("[tor]", `onion service published: ${onion}`);
-    } catch (error) {
-      log("[tor]", (error as Error).message);
+    // Published only if this device is the one that should be.
+    //
+    // Starting Tor unconditionally is what the app used to do, and it is wrong
+    // the moment an identity exists on more than one machine: both publish a
+    // descriptor for the same address, the directory keeps the newer one, and
+    // which device a peer reaches changes without warning. Nothing errors.
+    // Messages simply arrive somewhere else.
+    //
+    // A device that is not holding stays outbound-only. It can still read
+    // everything and still reach people it dials; what it does not do is claim
+    // to be the place to answer.
+    const onion = await publishIfHolding();
+
+    if (!onion) {
+      const state = standing(claimsHeld(), thisDevice().id);
+      if (state.state === "displaced") {
+        log("[tor]", `${state.by.name} holds this account's address`);
+      }
     }
 
+    announceDevices();
     return { port: listening, peers: [], onion };
   });
 
@@ -1459,16 +1724,107 @@ export function registerP2PHandlers(): void {
       if (parsed.index && parsed.index.length) {
         const store = storeFor(INDEX);
         store.merge(parsed.index);
-        // Closed rather than left open: the merge has to reach disk before
-        // the app is restarted, and a restart is the expected next step.
         store.close();
         stores.delete(INDEX);
       }
+
+      // Restoring an account onto a device means answering here from now on.
+      //
+      // Appended after the index has been merged, so the counter is computed
+      // against the claims that came with the backup rather than against an
+      // empty ledger — a claim of `n = 1` on top of an existing `n = 4` would
+      // lose, and this device would restore the account and then quietly
+      // refuse to publish.
+      //
+      // The device it came from finds out the next time the two are linked,
+      // and goes read-only then. Until that happens both may publish, which is
+      // the one case this design cannot prevent: they have no way to reach
+      // each other, precisely because they share the address in dispute.
+      const me = thisDevice();
+      addClaim(claimFor(claimsHeld(), me.id, me.name));
+
+      storeFor(INDEX).close();
+      stores.delete(INDEX);
 
       log("[p2p]", `identity replaced with ${parsed.identity.userId}`);
       return { userId: parsed.identity.userId, onion };
     },
   );
+
+  // ---- your own devices -------------------------------------------------
+  //
+  // An identity has one onion address, because an onion address *is* a
+  // keypair. Two devices holding it both publish, and peers reach whichever
+  // published last — so the account works, unpredictably, in a way that reads
+  // as a bad connection. See `devices.ts` for how one of them is chosen.
+  //
+  // Everything below exists to make that survivable rather than to pretend it
+  // is not true: a device knows whether it holds the address, can take it
+  // over, and can copy the whole account across the local network first, so
+  // that taking over does not mean starting from nothing.
+
+  ipcMain.handle(CHANNEL.deviceInfo, (event) => {
+    viewer = event.sender;
+    return deviceInfo();
+  });
+
+  ipcMain.handle(CHANNEL.deviceName, (_, name: string) => {
+    const trimmed = String(name ?? "").trim().slice(0, 60);
+    if (!trimmed) throw new Error("a device needs a name");
+
+    writeDevice({ ...thisDevice(), name: trimmed });
+    return deviceInfo();
+  });
+
+  /**
+   * Take the address for this device.
+   *
+   * This is the Reconnect button, and it is also what an identity import does
+   * on the way in. Deliberately the same act: both mean "answer here from now
+   * on", and having two ways to express that would eventually mean two
+   * different results.
+   */
+  ipcMain.handle(CHANNEL.deviceTakeOver, async (event) => {
+    viewer = event.sender;
+
+    const device = thisDevice();
+    const claim = claimFor(claimsHeld(), device.id, device.name);
+    addClaim(claim);
+
+    // Publishing now, rather than after a restart. The address is already
+    // configured; what was missing was permission to announce it.
+    await publishIfHolding();
+
+    announceDevices();
+    return deviceInfo();
+  });
+
+  ipcMain.handle(CHANNEL.linkOpen, async (event) => {
+    viewer = event.sender;
+    return { port: await openLink() };
+  });
+
+  ipcMain.handle(CHANNEL.linkClose, () => {
+    link?.close();
+    link = undefined;
+    return true;
+  });
+
+  ipcMain.handle(CHANNEL.linkPeers, () => link?.peers() ?? []);
+
+  ipcMain.handle(CHANNEL.linkTo, async (event, host: string, port: number) => {
+    viewer = event.sender;
+
+    await openLink();
+    const progress = await link!.connect(host, port);
+
+    // The other device may have taken the address while this one was away, and
+    // the claims it just sent are how that is discovered.
+    await publishIfHolding();
+    announceDevices();
+
+    return progress;
+  });
 
   // ---- attachments ------------------------------------------------------
   //

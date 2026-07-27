@@ -424,6 +424,32 @@
       }
 
       /* call overlay */
+      /* Another of your devices holds the address.
+
+         Above the call overlay, because it is the more fundamental statement:
+         a device that is not answering cannot be in a call either, and showing
+         both would leave two overlays arguing about what is happening.
+
+         Not opaque. The history stays legible behind it on purpose — the whole
+         difference between this and a disconnection is that everything you
+         have is still here. */
+      #deviceOverlay {
+        position: fixed; inset: 0; z-index: 70; display: flex;
+        align-items: center; justify-content: center;
+        background: rgba(9,9,9,.78); backdrop-filter: blur(3px);
+      }
+      #deviceOverlay.hide { display: none; }
+      #deviceCard {
+        background: var(--side); border: 1px solid var(--line); border-radius: 12px;
+        padding: 26px 28px; max-width: 460px; text-align: center;
+        display: flex; flex-direction: column; gap: 12px;
+        box-shadow: 0 18px 60px rgba(0,0,0,.5);
+      }
+      #deviceTitle { font-size: 18px; font-weight: 700; }
+      #deviceSub { color: var(--dim); font-size: 13px; line-height: 1.5; }
+      #deviceNote { color: var(--dim); font-size: 11px; line-height: 1.5; }
+      #deviceBtns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+
       #callOverlay {
         position: fixed; inset: 0; z-index: 60; display: none;
         background: rgba(9,9,9,.92); backdrop-filter: blur(6px);
@@ -655,6 +681,24 @@
       <div id="callSub"></div>
       <div id="callNotice"></div>
       <div id="callBtns"></div>
+    </div>
+
+    <!--
+      Another of your devices is answering at your address.
+
+      Not an error screen, and deliberately not styled like one. The account is
+      fine, the history below is readable, and nothing has gone wrong — one
+      identity has one onion address, so one device answers at it and the
+      others wait. Presenting that as a connection failure would send people
+      looking for a problem with their network.
+    -->
+    <div id="deviceOverlay" class="hide">
+      <div id="deviceCard">
+        <div id="deviceTitle"></div>
+        <div id="deviceSub"></div>
+        <div id="deviceBtns"></div>
+        <div id="deviceNote"></div>
+      </div>
     </div>
 
     <div id="modal"><div id="modalCard"></div></div>
@@ -1264,6 +1308,27 @@
             "Discarded": "Descartado",
             "Do not disturb": "No molestar",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "No uses la misma identidad en dos máquinas a la vez — ambas firmarían como la misma persona, y eso ya no se puede deshacer.",
+            "Signed in on {name}": "Sesión iniciada en {name}",
+            "another device": "otro dispositivo",
+            "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable.": "Tu cuenta solo puede responder en un dispositivo a la vez, así que este no está recibiendo. Todo lo que ya está aquí se puede seguir leyendo.",
+            "Use this device": "Usar este dispositivo",
+            "Taking over…": "Tomando el relevo…",
+            "This device is answering now": "Ahora responde este dispositivo",
+            "Copy from the other device first": "Copiar primero desde el otro dispositivo",
+            "{name} keeps answering until the two are on the same network again. Copy across first if it has messages this device has never seen.": "{name} seguirá respondiendo hasta que ambos vuelvan a estar en la misma red. Copia primero si tiene mensajes que este dispositivo nunca ha visto.",
+            "the other device": "el otro dispositivo",
+            "Link a device": "Vincular un dispositivo",
+            "Open this on both devices, on the same network. They will find each other and copy across every conversation, file, setting and queued message — including the things no peer ever sees.": "Abre esto en ambos dispositivos, en la misma red. Se encontrarán y copiarán cada conversación, archivo, ajuste y mensaje en cola — incluido lo que ningún par ve nunca.",
+            "Looking for your other devices. Nothing yet — they have to be on the same network with this screen open.": "Buscando tus otros dispositivos. Nada todavía — tienen que estar en la misma red con esta pantalla abierta.",
+            "Copy across": "Copiar",
+            "Copying…": "Copiando…",
+            "Copied {events} events and {files} files from {name}.": "Copiados {events} eventos y {files} archivos desde {name}.",
+            "This device is {name}, listening on port {port}.": "Este dispositivo es {name}, escuchando en el puerto {port}.",
+            "this device": "este dispositivo",
+            "Your account has one address, so one device answers at it. Any of them can take over, and linking them over the local network copies everything across first.": "Tu cuenta tiene una sola dirección, así que responde un solo dispositivo. Cualquiera puede tomar el relevo, y vincularlos por la red local copia todo antes.",
+            "This device is called": "Este dispositivo se llama",
+            "Right now {name} is the one answering.": "Ahora mismo responde {name}.",
+            "Right now this device is the one answering.": "Ahora mismo responde este dispositivo.",
             "Your address travels with it, so your friend code keeps working on the device you restore onto.": "Tu dirección viaja con él, así que tu código de amigo seguirá funcionando en el dispositivo al que lo restaures.",
             "Your address is not in this file yet — Tor has not published one on this device. Export again once it has, or your friend code will not work after a restore.": "Tu dirección todavía no está en este archivo — Tor aún no ha publicado ninguna en este dispositivo. Vuelve a exportar cuando lo haya hecho, o tu código de amigo no funcionará tras una restauración.",
             "This device takes over the address in the file, so your existing friend code keeps working. Stop using the old device once you have done this — two devices answering at one address will each interrupt the other.": "Este dispositivo toma la dirección del archivo, así que tu código de amigo actual sigue funcionando. Deja de usar el dispositivo antiguo en cuanto hagas esto — dos dispositivos respondiendo en una misma dirección se interrumpirán mutuamente.",
@@ -1897,6 +1962,27 @@
             "Discarded": "Abandonné",
             "Do not disturb": "Ne pas déranger",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "N'utilisez pas la même identité sur deux machines à la fois — les deux signeraient comme la même personne, et rien ne peut le démêler ensuite.",
+            "Signed in on {name}": "Connecté sur {name}",
+            "another device": "un autre appareil",
+            "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable.": "Votre compte ne peut répondre que sur un appareil à la fois, donc celui-ci ne reçoit rien. Tout ce qui est déjà ici reste lisible.",
+            "Use this device": "Utiliser cet appareil",
+            "Taking over…": "Reprise en cours…",
+            "This device is answering now": "Cet appareil répond désormais",
+            "Copy from the other device first": "Copier d'abord depuis l'autre appareil",
+            "{name} keeps answering until the two are on the same network again. Copy across first if it has messages this device has never seen.": "{name} continue de répondre jusqu'à ce que les deux soient de nouveau sur le même réseau. Copiez d'abord s'il contient des messages que cet appareil n'a jamais vus.",
+            "the other device": "l'autre appareil",
+            "Link a device": "Associer un appareil",
+            "Open this on both devices, on the same network. They will find each other and copy across every conversation, file, setting and queued message — including the things no peer ever sees.": "Ouvrez ceci sur les deux appareils, sur le même réseau. Ils se trouveront et copieront chaque conversation, fichier, réglage et message en attente — y compris ce qu'aucun pair ne voit jamais.",
+            "Looking for your other devices. Nothing yet — they have to be on the same network with this screen open.": "Recherche de vos autres appareils. Rien pour l'instant — ils doivent être sur le même réseau avec cet écran ouvert.",
+            "Copy across": "Copier",
+            "Copying…": "Copie en cours…",
+            "Copied {events} events and {files} files from {name}.": "{events} événements et {files} fichiers copiés depuis {name}.",
+            "This device is {name}, listening on port {port}.": "Cet appareil est {name}, à l'écoute sur le port {port}.",
+            "this device": "cet appareil",
+            "Your account has one address, so one device answers at it. Any of them can take over, and linking them over the local network copies everything across first.": "Votre compte a une seule adresse, donc un seul appareil y répond. N'importe lequel peut reprendre la main, et les associer sur le réseau local copie tout au préalable.",
+            "This device is called": "Cet appareil s'appelle",
+            "Right now {name} is the one answering.": "En ce moment, c'est {name} qui répond.",
+            "Right now this device is the one answering.": "En ce moment, c'est cet appareil qui répond.",
             "Your address travels with it, so your friend code keeps working on the device you restore onto.": "Votre adresse voyage avec lui, donc votre code d'ami continuera de fonctionner sur l'appareil que vous restaurez.",
             "Your address is not in this file yet — Tor has not published one on this device. Export again once it has, or your friend code will not work after a restore.": "Votre adresse n'est pas encore dans ce fichier — Tor n'en a pas encore publié sur cet appareil. Exportez à nouveau une fois que ce sera fait, sinon votre code d'ami ne fonctionnera pas après une restauration.",
             "This device takes over the address in the file, so your existing friend code keeps working. Stop using the old device once you have done this — two devices answering at one address will each interrupt the other.": "Cet appareil reprend l'adresse contenue dans le fichier, donc votre code d'ami actuel continue de fonctionner. Cessez d'utiliser l'ancien appareil une fois que c'est fait — deux appareils répondant à une même adresse s'interrompent mutuellement.",
@@ -2530,6 +2616,27 @@
             "Discarded": "Verworfen",
             "Do not disturb": "Bitte nicht stören",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "Verwende dieselbe Identität nicht auf zwei Rechnern gleichzeitig — beide würden als dieselbe Person signieren, und das lässt sich danach nicht mehr entwirren.",
+            "Signed in on {name}": "Angemeldet auf {name}",
+            "another device": "einem anderen Gerät",
+            "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable.": "Dein Konto kann immer nur auf einem Gerät antworten, deshalb empfängt dieses nichts. Alles, was schon hier ist, bleibt lesbar.",
+            "Use this device": "Dieses Gerät verwenden",
+            "Taking over…": "Wird übernommen…",
+            "This device is answering now": "Jetzt antwortet dieses Gerät",
+            "Copy from the other device first": "Zuerst vom anderen Gerät kopieren",
+            "{name} keeps answering until the two are on the same network again. Copy across first if it has messages this device has never seen.": "{name} antwortet weiter, bis beide wieder im selben Netzwerk sind. Kopiere vorher, wenn dort Nachrichten liegen, die dieses Gerät nie gesehen hat.",
+            "the other device": "das andere Gerät",
+            "Link a device": "Gerät verbinden",
+            "Open this on both devices, on the same network. They will find each other and copy across every conversation, file, setting and queued message — including the things no peer ever sees.": "Öffne das auf beiden Geräten im selben Netzwerk. Sie finden einander und kopieren jede Unterhaltung, Datei, Einstellung und wartende Nachricht — auch das, was kein Peer je zu sehen bekommt.",
+            "Looking for your other devices. Nothing yet — they have to be on the same network with this screen open.": "Suche nach deinen anderen Geräten. Noch nichts — sie müssen im selben Netzwerk sein und diesen Bildschirm offen haben.",
+            "Copy across": "Kopieren",
+            "Copying…": "Wird kopiert…",
+            "Copied {events} events and {files} files from {name}.": "{events} Ereignisse und {files} Dateien von {name} kopiert.",
+            "This device is {name}, listening on port {port}.": "Dieses Gerät ist {name} und lauscht auf Port {port}.",
+            "this device": "dieses Gerät",
+            "Your account has one address, so one device answers at it. Any of them can take over, and linking them over the local network copies everything across first.": "Dein Konto hat eine Adresse, also antwortet genau ein Gerät. Jedes kann übernehmen, und sie über das lokale Netzwerk zu verbinden kopiert vorher alles hinüber.",
+            "This device is called": "Dieses Gerät heißt",
+            "Right now {name} is the one answering.": "Im Moment antwortet {name}.",
+            "Right now this device is the one answering.": "Im Moment antwortet dieses Gerät.",
             "Your address travels with it, so your friend code keeps working on the device you restore onto.": "Deine Adresse reist mit, also funktioniert dein Freundescode auch auf dem Gerät, auf das du wiederherstellst.",
             "Your address is not in this file yet — Tor has not published one on this device. Export again once it has, or your friend code will not work after a restore.": "Deine Adresse ist noch nicht in dieser Datei — Tor hat auf diesem Gerät noch keine veröffentlicht. Exportiere erneut, sobald das geschehen ist, sonst funktioniert dein Freundescode nach einer Wiederherstellung nicht.",
             "This device takes over the address in the file, so your existing friend code keeps working. Stop using the old device once you have done this — two devices answering at one address will each interrupt the other.": "Dieses Gerät übernimmt die Adresse aus der Datei, dein bisheriger Freundescode funktioniert also weiter. Benutze das alte Gerät danach nicht mehr — zwei Geräte unter einer Adresse unterbrechen sich gegenseitig.",
@@ -3163,6 +3270,27 @@
             "Discarded": "Descartado",
             "Do not disturb": "Não incomodar",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "Não uses a mesma identidade em duas máquinas ao mesmo tempo — ambas assinariam como a mesma pessoa, e isso não se desfaz depois.",
+            "Signed in on {name}": "Sessão iniciada em {name}",
+            "another device": "outro dispositivo",
+            "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable.": "A tua conta só pode responder num dispositivo de cada vez, por isso este não está a receber. Tudo o que já está aqui continua legível.",
+            "Use this device": "Usar este dispositivo",
+            "Taking over…": "A assumir…",
+            "This device is answering now": "Agora é este dispositivo que responde",
+            "Copy from the other device first": "Copiar primeiro do outro dispositivo",
+            "{name} keeps answering until the two are on the same network again. Copy across first if it has messages this device has never seen.": "{name} continua a responder até os dois estarem outra vez na mesma rede. Copia primeiro se tiver mensagens que este dispositivo nunca viu.",
+            "the other device": "o outro dispositivo",
+            "Link a device": "Ligar um dispositivo",
+            "Open this on both devices, on the same network. They will find each other and copy across every conversation, file, setting and queued message — including the things no peer ever sees.": "Abre isto nos dois dispositivos, na mesma rede. Vão encontrar-se e copiar todas as conversas, ficheiros, definições e mensagens em fila — incluindo o que nenhum par vê.",
+            "Looking for your other devices. Nothing yet — they have to be on the same network with this screen open.": "À procura dos teus outros dispositivos. Nada ainda — têm de estar na mesma rede com este ecrã aberto.",
+            "Copy across": "Copiar",
+            "Copying…": "A copiar…",
+            "Copied {events} events and {files} files from {name}.": "Copiados {events} eventos e {files} ficheiros de {name}.",
+            "This device is {name}, listening on port {port}.": "Este dispositivo é {name}, à escuta na porta {port}.",
+            "this device": "este dispositivo",
+            "Your account has one address, so one device answers at it. Any of them can take over, and linking them over the local network copies everything across first.": "A tua conta tem um único endereço, por isso responde um só dispositivo. Qualquer um pode assumir, e ligá-los pela rede local copia tudo antes.",
+            "This device is called": "Este dispositivo chama-se",
+            "Right now {name} is the one answering.": "Neste momento é {name} que responde.",
+            "Right now this device is the one answering.": "Neste momento é este dispositivo que responde.",
             "Your address travels with it, so your friend code keeps working on the device you restore onto.": "O teu endereço viaja com ele, por isso o teu código de amigo continua a funcionar no dispositivo para onde restaurares.",
             "Your address is not in this file yet — Tor has not published one on this device. Export again once it has, or your friend code will not work after a restore.": "O teu endereço ainda não está neste ficheiro — o Tor ainda não publicou nenhum neste dispositivo. Exporta outra vez quando isso acontecer, ou o teu código de amigo não funcionará depois de uma restauração.",
             "This device takes over the address in the file, so your existing friend code keeps working. Stop using the old device once you have done this — two devices answering at one address will each interrupt the other.": "Este dispositivo assume o endereço do ficheiro, por isso o teu código de amigo atual continua a funcionar. Deixa de usar o dispositivo antigo assim que fizeres isto — dois dispositivos a responder num mesmo endereço interrompem-se um ao outro.",
@@ -10083,6 +10211,200 @@
         });
       }
 
+      // ===================================================================
+      // Your own devices
+      //
+      // An onion address is a keypair, and an identity has one of them. Two
+      // devices holding it both publish a descriptor for the same address, and
+      // the directory keeps whichever published last — so peers reach one of
+      // them, changing over time, with nothing anywhere reporting a problem.
+      //
+      // So one device holds the address and the others wait. That is a
+      // constraint of the design rather than a policy, and everything here
+      // exists to make it visible and reversible instead of mysterious: you
+      // can see which device is answering, take it over, and copy the whole
+      // account across the local network first so that taking over does not
+      // mean starting empty.
+      // ===================================================================
+
+      var devices = null;
+
+      function deviceOverlay() {
+        var box = $("deviceOverlay");
+        if (!box) return;
+
+        // Nothing known yet, or this device is the one answering. The second
+        // is by far the common case and must cost nothing.
+        if (!devices || !devices.standing ||
+            devices.standing.state !== "displaced") {
+          box.className = "hide";
+          return;
+        }
+
+        var by = devices.standing.by || {};
+        box.className = "";
+
+        $("deviceTitle").textContent =
+          t("Signed in on {name}", { name: by.name || t("another device") });
+
+        $("deviceSub").textContent =
+          t("Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable.");
+
+        var btns = $("deviceBtns");
+        btns.textContent = "";
+
+        var take = document.createElement("button");
+        take.textContent = t("Use this device");
+        take.onclick = async function () {
+          take.disabled = true;
+          take.textContent = t("Taking over…");
+          try {
+            devices = await window.p2p.deviceTakeOver();
+            deviceOverlay();
+            flash(t("This device is answering now"));
+          } catch (e) {
+            take.disabled = false;
+            take.textContent = t("Use this device");
+            flash(String((e && e.message) || e));
+          }
+        };
+        btns.appendChild(take);
+
+        var sync = document.createElement("button");
+        sync.className = "ghost";
+        sync.textContent = t("Copy from the other device first");
+        sync.onclick = linkDialog;
+        btns.appendChild(sync);
+
+        // Said out loud, because it is the consequence people are actually
+        // going to hit: the other device does not find out until they meet.
+        $("deviceNote").textContent =
+          t("{name} keeps answering until the two are on the same network again. Copy across first if it has messages this device has never seen.", { name: by.name || t("the other device") });
+      }
+
+      async function refreshDevices() {
+        try {
+          devices = await window.p2p.deviceInfo();
+        } catch (e) {
+          // An older build of the core, or none. Not worth an error: the app
+          // works exactly as it did before any of this existed.
+          devices = null;
+        }
+        deviceOverlay();
+      }
+
+      /**
+       * Link another of your devices, and copy the account across.
+       *
+       * Announcing is on only while this is open, on both devices. That is the
+       * whole of the privacy argument for putting anything on the local
+       * network at all — see link.ts — so closing this must actually stop it,
+       * which is why every path out of here calls linkClose.
+       */
+      function linkDialog() {
+        var stop = function () {
+          window.p2p.linkClose().catch(function () {});
+        };
+
+        modal(t("Link a device"), function (card) {
+          var note = document.createElement("div");
+          note.className = "muted";
+          note.textContent =
+            t("Open this on both devices, on the same network. They will find each other and copy across every conversation, file, setting and queued message — including the things no peer ever sees.");
+          card.appendChild(note);
+
+          var mine = document.createElement("div");
+          mine.className = "muted";
+          mine.style.fontSize = "11px";
+          card.appendChild(mine);
+
+          var list = document.createElement("div");
+          card.appendChild(list);
+
+          var status = document.createElement("div");
+          status.className = "muted";
+          card.appendChild(status);
+
+          var timer = null;
+          var busy = false;
+
+          function draw(peers) {
+            list.textContent = "";
+
+            if (!peers.length) {
+              var none = document.createElement("div");
+              none.className = "muted";
+              none.style.fontSize = "12px";
+              none.textContent =
+                t("Looking for your other devices. Nothing yet — they have to be on the same network with this screen open.");
+              list.appendChild(none);
+              return;
+            }
+
+            peers.forEach(function (peer) {
+              var row = document.createElement("div");
+              row.className = "listitem";
+
+              var name = document.createElement("div");
+              name.className = "grow";
+              name.textContent = peer.name;
+              row.appendChild(name);
+
+              var go = document.createElement("button");
+              go.className = "ghost";
+              go.textContent = t("Copy across");
+              go.onclick = async function () {
+                if (busy) return;
+                busy = true;
+                go.disabled = true;
+                status.textContent = t("Copying…");
+
+                try {
+                  var done = await window.p2p.linkTo(peer.host, peer.port);
+                  status.textContent = t("Copied {events} events and {files} files from {name}.", {
+                    events: done.events, files: done.files, name: done.name,
+                  });
+                  // The claims travelled too, so this device may have just
+                  // learned it is no longer the one answering.
+                  await refreshDevices();
+                } catch (e) {
+                  status.textContent = String((e && e.message) || e);
+                }
+
+                busy = false;
+                go.disabled = false;
+              };
+              row.appendChild(go);
+
+              list.appendChild(row);
+            });
+          }
+
+          window.p2p.linkOpen().then(function (open) {
+            mine.textContent =
+              t("This device is {name}, listening on port {port}.", {
+                name: (devices && devices.name) || t("this device"),
+                port: open.port,
+              });
+
+            var poll = function () {
+              window.p2p.linkPeers().then(draw).catch(function () {});
+            };
+
+            poll();
+            timer = setInterval(poll, 1500);
+          }).catch(function (e) {
+            mine.textContent = String((e && e.message) || e);
+          });
+
+          buttons(card, t("Done"), function () {
+            if (timer) clearInterval(timer);
+            stop();
+            closeModal();
+          });
+        });
+      }
+
       function myFriendCode() {
         // The encryption public key travels too, so the other side can derive
         // the DM key by agreement. Nothing secret is in here: a shared key is
@@ -11827,6 +12149,45 @@
           impb.textContent = t("Import identity");
           impb.onclick = importIdentityDialog;
           br.appendChild(impb);
+
+          // ---- your own devices ----------------------------------------
+          var dvl = document.createElement("label");
+          dvl.textContent = t("Devices");
+          card.appendChild(dvl);
+
+          var dvn = document.createElement("div");
+          dvn.className = "muted";
+          dvn.style.fontSize = "11px";
+          dvn.textContent =
+            t("Your account has one address, so one device answers at it. Any of them can take over, and linking them over the local network copies everything across first.");
+          card.appendChild(dvn);
+
+          var dvname = textRow(card, t("This device is called"),
+            (devices && devices.name) || "", "");
+
+          dvname.onchange = async function () {
+            if (!dvname.value.trim()) return;
+            try {
+              devices = await window.p2p.deviceName(dvname.value);
+            } catch (e) { /* keeps the old name */ }
+          };
+
+          var dvwho = document.createElement("div");
+          dvwho.className = "muted";
+          dvwho.style.fontSize = "11px";
+
+          if (devices && devices.standing) {
+            dvwho.textContent = devices.standing.state === "displaced"
+              ? t("Right now {name} is the one answering.", { name: devices.standing.by.name })
+              : t("Right now this device is the one answering.");
+          }
+          card.appendChild(dvwho);
+
+          var dvb = document.createElement("button");
+          dvb.className = "ghost";
+          dvb.textContent = t("Link a device");
+          dvb.onclick = linkDialog;
+          card.appendChild(dvb);
 
           card.appendChild(br);
 
@@ -16326,6 +16687,27 @@
             handleRefusal(from, community, reason);
           });
         }
+
+        // Losing the address is something that happens *to* this device — a
+        // link with another one hands it over — so it arrives rather than
+        // being asked for. Guarded because an older core does not send it, and
+        // the app worked before any of this existed.
+        if (window.p2p.onDevices) {
+          window.p2p.onDevices(function (info) {
+            devices = info;
+            deviceOverlay();
+
+            if (info.synced && info.synced.done) {
+              flash(t("Copied {events} events and {files} files from {name}.", {
+                events: info.synced.events,
+                files: info.synced.files,
+                name: info.synced.name,
+              }));
+            }
+          });
+        }
+
+        if (window.p2p.deviceInfo) refreshDevices();
 
         // Anything owed to somebody who has just appeared. The sweep would get
         // there within twenty seconds anyway; doing it on arrival is what

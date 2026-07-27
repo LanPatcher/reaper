@@ -27,6 +27,7 @@ const STREAMS = {
   onAudio: "p2p:audio",
   onDelivered: "p2p:delivered",
   onRefused: "p2p:refused",
+  onDevices: "p2p:devices",
 } as const;
 
 /**
@@ -44,6 +45,8 @@ const METHODS = [
   "exportCommunity", "importCommunity", "communities", "sharedWith", "compact",
   "torStatus", "exportIdentity", "importIdentity",
   "putBlob", "getBlob", "hasBlob", "wantBlob", "sweepBlobs", "forgetBlob",
+  "deviceInfo", "deviceName", "deviceTakeOver",
+  "linkOpen", "linkClose", "linkPeers", "linkTo",
 ] as const;
 
 type Surface = Record<string, unknown>;
