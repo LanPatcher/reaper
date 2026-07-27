@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build:plugins": "tsc -p plugins/keepalive && tsc -p plugins/socket",
+    "build": "npm run build:plugins && vite build",
     "sync": "npm run build && cap sync ios",
     "shim:test": "node scripts/shim.mjs",
     "ios:build": "node scripts/remote-build.mjs",

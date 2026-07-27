@@ -1424,7 +1424,7 @@
             "Only the owner can moderate": "Solo el propietario puede moderar",
             "Only transmit while speaking": "Transmitir solo al hablar",
             "Open": "Abrir",
-            "Opens a .mayhemserver file. Every event in it is signature-checked the same way events from a peer are, so a tampered file cannot smuggle anything in.": "Abre un archivo .mayhemserver. Cada evento se verifica por firma igual que los que llegan de un par, así que un archivo manipulado no puede colar nada.",
+            "Opens a .reaperserver file. Every event in it is signature-checked the same way events from a peer are, so a tampered file cannot smuggle anything in.": "Abre un archivo .reaperserver. Cada evento se verifica por firma igual que los que llegan de un par, así que un archivo manipulado no puede colar nada.",
             "Opus segments during a call": "Segmentos Opus durante una llamada",
             "Other apps keep delivering and only hide the alert. If you want that, leave it unmuted and use Follow in background instead — that reduces traffic without silencing mentions.": "Otras aplicaciones siguen entregando y solo ocultan el aviso. Si quieres eso, déjalo sin silenciar y usa Seguir en segundo plano — eso reduce el tráfico sin silenciar las menciones.",
             "Output device": "Dispositivo de salida",
@@ -2051,7 +2051,7 @@
             "Only the owner can moderate": "Seul le propriétaire peut modérer",
             "Only transmit while speaking": "Ne transmettre qu'en parlant",
             "Open": "Ouvrir",
-            "Opens a .mayhemserver file. Every event in it is signature-checked the same way events from a peer are, so a tampered file cannot smuggle anything in.": "Ouvre un fichier .mayhemserver. Chaque événement est vérifié par signature comme ceux d'un pair : un fichier altéré ne peut rien faire passer.",
+            "Opens a .reaperserver file. Every event in it is signature-checked the same way events from a peer are, so a tampered file cannot smuggle anything in.": "Ouvre un fichier .reaperserver. Chaque événement est vérifié par signature comme ceux d'un pair : un fichier altéré ne peut rien faire passer.",
             "Opus segments during a call": "Segments Opus pendant un appel",
             "Other apps keep delivering and only hide the alert. If you want that, leave it unmuted and use Follow in background instead — that reduces traffic without silencing mentions.": "D'autres applications continuent de livrer et masquent seulement l'alerte. Si c'est ce que vous voulez, laissez-le activé et utilisez Suivre en arrière-plan — cela réduit le trafic sans faire taire les mentions.",
             "Output device": "Périphérique de sortie",
@@ -2678,7 +2678,7 @@
             "Only the owner can moderate": "Nur die Eigentümerin oder der Eigentümer kann moderieren",
             "Only transmit while speaking": "Nur beim Sprechen senden",
             "Open": "Öffnen",
-            "Opens a .mayhemserver file. Every event in it is signature-checked the same way events from a peer are, so a tampered file cannot smuggle anything in.": "Öffnet eine .mayhemserver-Datei. Jedes Ereignis darin wird genauso signaturgeprüft wie Ereignisse von einem Peer, eine manipulierte Datei kann also nichts einschleusen.",
+            "Opens a .reaperserver file. Every event in it is signature-checked the same way events from a peer are, so a tampered file cannot smuggle anything in.": "Öffnet eine .reaperserver-Datei. Jedes Ereignis darin wird genauso signaturgeprüft wie Ereignisse von einem Peer, eine manipulierte Datei kann also nichts einschleusen.",
             "Opus segments during a call": "Opus-Segmente während eines Anrufs",
             "Other apps keep delivering and only hide the alert. If you want that, leave it unmuted and use Follow in background instead — that reduces traffic without silencing mentions.": "Andere Apps stellen weiter zu und blenden nur die Meldung aus. Wenn du das willst, lass es unstumm und nutze stattdessen Im Hintergrund verfolgen — das senkt den Verkehr, ohne Erwähnungen zu unterdrücken.",
             "Output device": "Ausgabegerät",
@@ -3305,7 +3305,7 @@
             "Only the owner can moderate": "Só o proprietário pode moderar",
             "Only transmit while speaking": "Transmitir apenas ao falar",
             "Open": "Abrir",
-            "Opens a .mayhemserver file. Every event in it is signature-checked the same way events from a peer are, so a tampered file cannot smuggle anything in.": "Abre um ficheiro .mayhemserver. Cada evento é verificado por assinatura tal como os que vêm de um par, por isso um ficheiro adulterado não consegue passar nada.",
+            "Opens a .reaperserver file. Every event in it is signature-checked the same way events from a peer are, so a tampered file cannot smuggle anything in.": "Abre um ficheiro .reaperserver. Cada evento é verificado por assinatura tal como os que vêm de um par, por isso um ficheiro adulterado não consegue passar nada.",
             "Opus segments during a call": "Segmentos Opus durante uma chamada",
             "Other apps keep delivering and only hide the alert. If you want that, leave it unmuted and use Follow in background instead — that reduces traffic without silencing mentions.": "Outras aplicações continuam a entregar e apenas escondem o alerta. Se queres isso, deixa por silenciar e usa Seguir em segundo plano — isso reduz o tráfego sem calar as menções.",
             "Output device": "Dispositivo de saída",
@@ -9091,7 +9091,7 @@
               var res = await window.p2p.exportCommunity(s.id, seedPairs(s.id));
               saveDataUrl(
                 "data:application/octet-stream;base64," + res.data,
-                s.name.replace(/[^a-z0-9 _-]/gi, "") + ".mayhemserver",
+                s.name.replace(/[^a-z0-9 _-]/gi, "") + ".reaperserver",
               );
               closeModal();
               flash(
@@ -9112,7 +9112,7 @@
           var note = document.createElement("div");
           note.className = "muted";
           note.textContent =
-            t("Opens a .mayhemserver file. Every event in it is signature-checked the same way events from a peer are, so a tampered file cannot smuggle anything in.");
+            t("Opens a .reaperserver file. Every event in it is signature-checked the same way events from a peer are, so a tampered file cannot smuggle anything in.");
           card.appendChild(note);
 
           var chosen = null;
@@ -9122,7 +9122,7 @@
           pick.onclick = function () {
             var input = document.createElement("input");
             input.type = "file";
-            input.accept = ".mayhemserver,application/octet-stream";
+            input.accept = ".reaperserver,.mayhemserver,application/octet-stream";
             input.onchange = function () {
               var file = input.files && input.files[0];
               if (!file) return;
@@ -9931,7 +9931,7 @@
               // main-process dialog.
               saveDataUrl(
                 "data:application/json;base64," + btoa(bundle),
-                "mayhem-identity-" + username + ".json",
+                "reaper-identity-" + username + ".json",
               );
               closeModal();
               flash(t("Identity exported — keep it somewhere safe"));
