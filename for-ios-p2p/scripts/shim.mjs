@@ -45,11 +45,29 @@ const SHIM_ALIASES = {
   "@reaper/keepalive": join(HERE, "src/shim/plugins-stub.ts"),
 };
 
+/**
+ * The suites, and how each one has to be built.
+ *
+ * Most of them compare a shim against Node's own implementation, so they are
+ * built with Node's builtins intact — substituting them would leave the test
+ * comparing the shim to itself.
+ *
+ * `shimmed` is for the one kind that cannot work that way. `net.test.ts` runs
+ * the shared core's `Transport` through the socket shim, which only means
+ * anything if `node:net` inside that core resolves to the shim rather than to
+ * Node's real sockets. It gets the same substitutions the app ships, plus a
+ * scriptable stand-in for the native plugin.
+ */
 const TESTS = [
-  "src/shim/crypto.test.ts",
-  "src/shim/zlib.test.ts",
-  "src/shim/fs.test.ts",
-  "src/shim/core.test.ts",
+  { file: "src/shim/crypto.test.ts" },
+  { file: "src/shim/zlib.test.ts" },
+  { file: "src/shim/fs.test.ts" },
+  { file: "src/shim/core.test.ts" },
+  { file: "src/shim/net.test.ts", shimmed: "sockets" },
+
+  // Everything substituted, because this one runs the app's own startup
+  // sequence rather than comparing a shim against Node.
+  { file: "src/shim/start.test.ts", shimmed: "full" },
 ];
 
 /**
@@ -150,7 +168,7 @@ try {
     packages: "external",
   });
 
-  for (const test of TESTS) {
+  for (const { file: test, shimmed } of TESTS) {
     if (!existsSync(test)) {
       console.log(`\n=== ${test} — not written yet, skipped ===`);
       continue;
@@ -171,8 +189,44 @@ try {
         // test imports the same stub, which is how it can see what reached the
         // disk. Bundled rather than external so both halves get one instance.
         packages: "external",
-        alias: { "@capacitor/filesystem": join(HERE, "src/shim/fs-stub.ts") },
-        external: ["node:*", "buffer"],
+        alias: {
+          "@capacitor/filesystem": join(HERE, "src/shim/fs-stub.ts"),
+
+          // Only for the suites that ask for it — see TESTS above. The socket
+          // plugin is replaced by a scriptable stand-in so the test can push
+          // events back up, which is the only way to drive the shim without a
+          // WebView.
+          // "sockets" substitutes only what a socket test needs. `node:fs` and
+          // `node:path` stay Node's, because that suite reads the core's
+          // source to check the call shape it relies on — and a test reading
+          // through the virtual filesystem would be looking at a disk that
+          // does not contain the repository.
+          //
+          // "full" substitutes everything, because that suite runs the app's
+          // own startup rather than comparing anything to Node.
+          ...(shimmed
+            ? {
+                ...(shimmed === "full" ? SHIM_ALIASES : {}),
+                "node:net": join(HERE, "src/shim/net.ts"),
+                "node:events": join(HERE, "src/shim/events.ts"),
+                "@reaper/socket": join(HERE, "src/shim/socket-stub.ts"),
+
+                // Reached through `./tor`, which the substitution above points
+                // at the iOS module. Neither suite starts Tor.
+                "@reaper/tor": join(HERE, "src/shim/plugins-stub.ts"),
+                "@reaper/keepalive": join(HERE, "src/shim/plugins-stub.ts"),
+              }
+            : {}),
+        },
+        plugins: shimmed ? [iosTor] : [],
+
+        // A shimmed build must not leave `node:net` external, or the alias
+        // above is ignored and the core quietly uses the real one.
+        external: shimmed === "full"
+          ? ["buffer"]
+          : shimmed
+            ? ["node:fs", "node:path", "node:crypto", "node:zlib", "node:os", "buffer"]
+            : ["node:*", "buffer"],
       },
     );
 

@@ -29,6 +29,14 @@ export const Tor = {
   start: unavailable("Tor.start"),
   stop: unavailable("Tor.stop"),
   status: unavailable("Tor.status"),
+
+  // Answering rather than throwing, because the interop test compiles the
+  // desktop `bridge.ts`, and its identity export asks for the service key on
+  // every call. A throw here would fail an export for want of an address,
+  // which is precisely the outcome that code is written to avoid.
+  exportKey: async () => ({ secret: "", public: "", hostname: "" }),
+  importKey: unavailable("Tor.importKey"),
+
   addListener: async () => ({ remove: async () => {} }),
 };
 

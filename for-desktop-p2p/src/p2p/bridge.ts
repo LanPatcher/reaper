@@ -20,7 +20,15 @@ import { brotliCompressSync, brotliDecompressSync, constants } from "node:zlib";
 
 import { BlobStore, blobId } from "./blobs";
 import { CommunityStore } from "./store";
-import { TorService, compareVersions, torVersion } from "./tor";
+import {
+  TorService,
+  checkOnionKey,
+  compareVersions,
+  readOnionKey,
+  torVersion,
+  writeOnionKey,
+  type OnionKey,
+} from "./tor";
 import { Transport, resetWireStats, wireStats } from "./transport";
 
 /**
@@ -1304,6 +1312,21 @@ export function registerP2PHandlers(): void {
   // by far, and a backup that takes minutes to write is a backup people stop
   // making. The index cannot re-sync from anywhere, which is exactly why it
   // has to travel.
+  //
+  // And it carries the onion service key, which is the part that was missing.
+  // A friend code is `{ id, name, address, encryption key }` — the *address*
+  // is in there, and the address is a public key held only in tor's service
+  // directory. Restoring the signing key alone produces an account that is
+  // still recognisably you in the log and that nobody can open a connection
+  // to: every code handed out before points at a device that no longer
+  // answers. Peers already connected relearn the new address from a
+  // `peer.address` event, which is no help at all for the people who have not
+  // spoken to you yet, and they are exactly the ones a friend code is for.
+  //
+  // The cost is stated rather than hidden: two devices holding one service key
+  // both publish a descriptor for the same address, and tor resolves that by
+  // whichever published last. So this is a restore, not a duplicate, and the
+  // interface says so.
 
   /** Everything needed to be this person again, encrypted under a passphrase. */
   ipcMain.handle(CHANNEL.exportIdentity, async (_, passphrase: string) => {
@@ -1319,8 +1342,21 @@ export function registerP2PHandlers(): void {
       // A missing index is survivable — the key is the irreplaceable part.
     }
 
+    let onion: OnionKey | undefined;
+    try {
+      // Awaited although the desktop's is synchronous. The iOS build swaps
+      // this module for one that reaches into Swift, so the same call has to
+      // read correctly whether it returns a value or a promise.
+      onion = await readOnionKey(join(root(), "tor"));
+    } catch (error) {
+      // Not fatal. An export without an address is worth far more than no
+      // export, and the alternative — refusing — is how people end up with no
+      // backup at all.
+      log("[p2p]", `the onion key could not be read for export: ${String(error)}`);
+    }
+
     const payload = Buffer.from(
-      JSON.stringify({ v: 1, identity, index, at: Date.now() }),
+      JSON.stringify({ v: 2, identity, index, onion, at: Date.now() }),
       "utf8",
     );
 
@@ -1382,11 +1418,21 @@ export function registerP2PHandlers(): void {
       const parsed = JSON.parse(plain.toString("utf8")) as {
         identity: Identity;
         index?: SignedEvent[];
+        onion?: OnionKey;
       };
 
       if (!parsed.identity || !parsed.identity.privateKey) {
         throw new Error("that file does not contain an identity");
       }
+
+      // Checked before anything is destroyed.
+      //
+      // What follows closes every store and overwrites the keystore, and there
+      // is no way back from it. A service key that turns out to be malformed
+      // after that point would leave the device with a new identity, no
+      // address, and no way to return to the old one — so the one part of this
+      // that can be judged in advance is judged in advance.
+      if (parsed.onion) checkOnionKey(parsed.onion);
 
       // Everything open belongs to the old identity.
       for (const [, store] of stores) store.close();
@@ -1396,6 +1442,19 @@ export function registerP2PHandlers(): void {
 
       new ElectronKeystore().save(parsed.identity);
       identity = parsed.identity;
+
+      // The address moves with the account.
+      //
+      // tor reads its service directory once, at startup, so this takes hold
+      // on the next start rather than now — which is the same restart the
+      // identity swap already requires.
+      let onion: string | undefined;
+      if (parsed.onion) {
+        onion = await writeOnionKey(join(root(), "tor"), parsed.onion);
+        log("[p2p]", `onion address restored: ${onion}`);
+      } else {
+        log("[p2p]", "that bundle carries no onion address — this device will publish a new one");
+      }
 
       if (parsed.index && parsed.index.length) {
         const store = storeFor(INDEX);
@@ -1407,7 +1466,7 @@ export function registerP2PHandlers(): void {
       }
 
       log("[p2p]", `identity replaced with ${parsed.identity.userId}`);
-      return { userId: parsed.identity.userId };
+      return { userId: parsed.identity.userId, onion };
     },
   );
 

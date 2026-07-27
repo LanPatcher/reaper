@@ -136,8 +136,21 @@ export class Socket extends EventEmitter {
     return this;
   }
 
-  connect(port: number, host: string, onConnect?: () => void): this {
-    this.#onConnect = onConnect;
+  /**
+   * `connect(port, host, cb)` — or `connect(port, cb)`, which Node also
+   * accepts.
+   *
+   * The overload is not decoration. See `Server.listen` below for what it
+   * costs to leave one out.
+   */
+  connect(
+    port: number,
+    host?: string | (() => void),
+    onConnect?: () => void,
+  ): this {
+    const where = typeof host === "function" ? "127.0.0.1" : (host ?? "127.0.0.1");
+    this.#onConnect = typeof host === "function" ? host : onConnect;
+
     sockets.set(this.id, this);
 
     if (!proxyReady()) {
@@ -150,26 +163,52 @@ export class Socket extends EventEmitter {
       return this;
     }
 
-    void Native.connect({ id: this.id, host, port, proxyPort }).catch(
+    void Native.connect({ id: this.id, host: where, port, proxyPort }).catch(
       (error: Error) => this.failed(error),
     );
 
     return this;
   }
 
-  write(data: Buffer | Uint8Array | string): boolean {
-    if (this.#destroyed) return false;
+  /**
+   * `write(data)`, `write(data, cb)`, and `write(data, encoding, cb)`.
+   *
+   * The transport sends with `socket.write(frame, () => undefined)` and does
+   * not act on the callback — which is exactly why accepting it matters. A
+   * callback that is silently dropped costs nothing until the day something
+   * waits on it, and then it costs a frozen app with no error in it.
+   */
+  write(
+    data: Buffer | Uint8Array | string,
+    encoding?: BufferEncoding | ((error?: Error) => void),
+    done?: (error?: Error) => void,
+  ): boolean {
+    const finished = typeof encoding === "function" ? encoding : done;
+    const as = typeof encoding === "string" ? encoding : "utf8";
+
+    if (this.#destroyed) {
+      finished?.(new Error("socket is closed"));
+      return false;
+    }
 
     const bytes = typeof data === "string"
-      ? Buffer.from(data, "utf8")
+      ? Buffer.from(data, as)
       : Buffer.from(data);
 
     if (!this.#ready) {
       this.#pending.push(bytes);
+
+      // Called now rather than when the connection opens. Node calls it once
+      // the write is handed to the socket, and buffering here is this shim's
+      // business, not the caller's.
+      queueMicrotask(() => finished?.());
       return true;
     }
 
-    void Native.send({ id: this.id, data: bytes.toString("base64") });
+    void Native.send({ id: this.id, data: bytes.toString("base64") })
+      .then(() => finished?.())
+      .catch((error: Error) => finished?.(error));
+
     return true;
   }
 
@@ -236,7 +275,36 @@ export class Server extends EventEmitter {
     wire();
   }
 
-  listen(port: number, _host?: string, onListening?: () => void): this {
+  /**
+   * `listen(port, host, cb)` — and `listen(port, cb)`, which is the one that
+   * mattered.
+   *
+   * Node accepts the callback in either position. This did not, and the
+   * omission cost a build cycle and an evening: `transport.ts` calls
+   *
+   *     this.#server.listen(port, () => resolve(this.port!));
+   *
+   * so the callback arrived where a hostname was expected, `onListening` was
+   * undefined, and `onListening?.()` did nothing at all. The optional-call
+   * operator turned a wrong argument into silence.
+   *
+   * Downstream, `transport.listen` never resolved, `netStart` never returned,
+   * and `boot()` never settled — so the app sat on "Starting Tor" for ever.
+   * Nothing threw and nothing rejected, because from every layer's point of
+   * view it was still waiting for a perfectly reasonable thing.
+   *
+   * The lesson generalises past this one method: a shim for somebody else's
+   * interface has to accept everything the callers actually use, and the
+   * callers are the shared core, which was written against Node and uses
+   * Node's overloads freely. Supporting the tidy signature and quietly
+   * dropping the rest is how a shim passes review and hangs on a device.
+   */
+  listen(
+    port: number,
+    host?: string | (() => void),
+    onListening?: () => void,
+  ): this {
+    const announce = typeof host === "function" ? host : onListening;
     listening = this;
 
     void Native.listen({ port })
@@ -255,7 +323,7 @@ export class Server extends EventEmitter {
         }
 
         this.#port = bound;
-        onListening?.();
+        announce?.();
         this.emit("listening");
       })
       .catch((error: Error) => this.emit("error", error));

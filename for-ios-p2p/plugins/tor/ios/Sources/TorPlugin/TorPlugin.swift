@@ -23,6 +23,8 @@ public class TorPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "status", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "exportKey", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "importKey", returnType: CAPPluginReturnPromise),
     ]
 
     private var tor: TorService?
@@ -58,6 +60,47 @@ public class TorPlugin: CAPPlugin, CAPBridgedPlugin {
             "onion": tor?.onion as Any,
             "error": tor?.lastError as Any,
         ])
+    }
+
+    /**
+     * The service key, for an identity backup.
+     *
+     * Read from disk rather than from the running client, so it works before
+     * Tor has bootstrapped — an export should not require waiting for a
+     * circuit.
+     */
+    @objc func exportKey(_ call: CAPPluginCall) {
+        call.resolve(TorService.exportKey())
+    }
+
+    /**
+     * Adopt an address from a backup.
+     *
+     * The restart is the point. tor reads its service directory once at
+     * startup, so writing the key without restarting leaves the device
+     * publishing its old address while believing it has a new one — which is
+     * the confusing half-state this whole feature exists to prevent.
+     */
+    @objc func importKey(_ call: CAPPluginCall) {
+        guard
+            let secret = call.getString("secret").flatMap({ Data(base64Encoded: $0) }),
+            let publicKey = call.getString("public").flatMap({ Data(base64Encoded: $0) })
+        else {
+            call.reject("that backup does not contain an onion key")
+            return
+        }
+
+        let hostname = call.getString("hostname") ?? ""
+
+        do {
+            try TorService.importKey(secret: secret, publicKey: publicKey, hostname: hostname)
+        } catch {
+            call.reject(error.localizedDescription)
+            return
+        }
+
+        tor?.reload()
+        call.resolve(["hostname": hostname])
     }
 
     deinit {

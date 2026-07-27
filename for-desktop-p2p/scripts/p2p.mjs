@@ -39,6 +39,7 @@ const TARGETS = {
     "src/p2p/membership.test.ts",
     "src/p2p/delivery.test.ts",
     "src/p2p/backup.test.ts",
+    "src/p2p/onion.test.ts",
     "src/local-ui/language.test.ts",
     "src/local-ui/appearance.test.ts",
     "src/local-ui/boot.test.ts",
