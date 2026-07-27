@@ -69,6 +69,57 @@ function reaperInterface(path) {
   };
 }
 
+/**
+ * `Buffer` and `process`, which the shared core assumes are simply there.
+ *
+ * Node has both as globals and the desktop files use them bare — `Buffer.from`
+ * appears in nine of them and not one imports it. A browser has neither, so the
+ * first of those modules to evaluate throws `ReferenceError: Buffer is not
+ * defined`, the entry module never runs, and the page shows its static HTML
+ * with no script behind it. That is not a hang and there is nothing to catch;
+ * it looks exactly like an app that started and did nothing.
+ *
+ * Injected per module rather than assigned to `globalThis` from an entry point,
+ * because an entry only runs first if the bundler happens to order it first —
+ * and nothing in the module graph says it must. A module that declares its own
+ * import cannot be reordered out of correctness.
+ */
+function nodeGlobals() {
+  const NEEDS_BUFFER = /(^|[^.\w$])Buffer\s*[.[]/;
+  const NEEDS_PROCESS = /(^|[^.\w$])process\s*\./;
+
+  return {
+    name: "node-globals",
+
+    transform(code, id) {
+      // Only the shared core. Everything under `src/` here is browser code
+      // written knowing it is browser code.
+      if (!id.includes("for-desktop-p2p")) return null;
+
+      const prelude = [];
+
+      if (NEEDS_BUFFER.test(code) && !/from\s+["']buffer["']/.test(code)) {
+        prelude.push('import { Buffer } from "buffer";');
+      }
+
+      if (NEEDS_PROCESS.test(code)) {
+        // Enough of it to satisfy the reads that survive into this build:
+        // `process.platform` decides desktop-only branches, and the rest are
+        // in modules that are shimmed away entirely.
+        prelude.push(
+          'const process = { platform: "ios", arch: "arm64", ' +
+            'env: {}, resourcesPath: "", stdout: null, ' +
+            'cwd: () => "/", on: () => {}, exit: () => {} };',
+        );
+      }
+
+      if (!prelude.length) return null;
+
+      return { code: prelude.join("\n") + "\n" + code, map: null };
+    },
+  };
+}
+
 function useIosTor(shimPath) {
   return {
     name: "ios-tor",
@@ -100,6 +151,7 @@ function useIosTor(shimPath) {
 
 export default defineConfig({
   plugins: [
+    nodeGlobals(),
     useIosTor(resolve(__dirname, "src/shim/tor.ts")),
     reaperInterface(
       resolve(__dirname, "../for-desktop-p2p/src/local-ui/index.html"),
@@ -116,10 +168,16 @@ export default defineConfig({
       "node:events": resolve(__dirname, "src/shim/events.ts"),
       // The whole desktop bridge runs here; see src/shim/electron.ts.
       electron: resolve(__dirname, "src/shim/electron.ts"),
-      // `Buffer` is used throughout the core. The polyfill is a real
-      // implementation rather than a stub, because the core does arithmetic on
-      // buffers — `readUInt32BE`, `subarray`, `equals` — not just carry them.
-      buffer: "buffer",
+      // The npm package, by path.
+      //
+      // `buffer: "buffer"` is a self-alias and does nothing, which left Vite to
+      // treat it as a Node builtin and swap in `__vite-browser-external` — a
+      // stub whose every property throws. The core does real arithmetic on
+      // buffers (`readUInt32BE`, `subarray`, `equals`), so a stub is not a
+      // degraded version of this, it is a guaranteed crash on first use.
+      //
+      // Named explicitly so there is no builtin for Vite to prefer.
+      buffer: resolve(__dirname, "node_modules/buffer/index.js"),
     },
   },
 
