@@ -1,0 +1,29 @@
+# Which packages may run install scripts.
+#
+# pnpm 11 moved this out of package.json's "pnpm" field, which it now ignores
+# outright — the warning on every install was that field still being there.
+#
+# Everything here is denied by default, so only the packages that genuinely
+# need to compile or unpack something at install time are allowed. Electron
+# downloads its binary, electron-winstaller unpacks the Squirrel tooling, and
+# esbuild and the two ws helpers build native code.
+allowBuilds:
+  aws-sdk: false
+  bufferutil: true
+  core-js: false
+  electron: true
+  # The abandoned v5 package, not @electron-forge/cli. It shadowed the real
+  # CLI once already; denying its scripts keeps it inert if anything pulls it
+  # back in.
+  electron-forge: false
+  electron-winstaller: true
+  esbuild: true
+  register-scheme@https://codeload.github.com/devsnek/node-register-scheme/tar.gz/e7cc9a63a1f512565da44cb57316d9fb10750e17: true
+  spawn-sync: false
+  utf-8-validate: true
+
+# Electron Forge resolves plugins and makers by walking node_modules directly,
+# so the isolated layout hides transitive dependencies from it.
+nodeLinker: hoisted
+
+blockExoticSubdeps: false # required to make discord-rpc work

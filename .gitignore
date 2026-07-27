@@ -1,0 +1,34 @@
+# Dependencies. Reinstalled per machine — and they have to be, since packages
+# like esbuild ship a different binary per platform.
+node_modules/
+
+# Build output
+dist/
+build/
+out/
+client-dist/
+*.ipa
+
+# The generated iOS project. Capacitor owns it and regenerates it from
+# `npx cap add ios`, which is what the Mac build does — committing it means a
+# permanently half-configured copy that drifts from the installed Capacitor.
+for-ios-p2p/ios/
+
+# The vendored Tor daemon, fetched by `npm run vendor:tor`. Tens of megabytes
+# of somebody else's binary; not ours to redistribute in a repository.
+for-desktop-p2p/vendor/
+
+# The Tor Browser sitting in this folder, which is not part of the project.
+Tor Browser/
+
+# Retired repositories. Each has its own history and upstream; see old/README.md.
+old/
+
+# Local secrets. Nothing should ever be here, but an accidental commit of an
+# identity export would hand over an entire account.
+*.reaper-identity
+*.env
+.env*
+
+.DS_Store
+Thumbs.db

@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "paths": {
+      "node:crypto": ["./src/shim/crypto.ts"],
+      "node:zlib": ["./src/shim/zlib.ts"],
+      "node:fs": ["./src/shim/fs.ts"],
+      "node:path": ["./src/shim/path.ts"]
+    }
+  },
+  "include": ["src", "scripts", "*.ts"]
+}

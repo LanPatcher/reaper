@@ -1,0 +1,18 @@
+# Moved to the repository root.
+#
+# Codemagic only reads `codemagic.yaml` from the root of what it checked out,
+# so the real configuration is `../codemagic.yaml`. This file is left as a
+# signpost rather than deleted, because a build configuration that appears to
+# live next to the project it builds is exactly where somebody would look.
+#
+# The reason the root is the right place is not only Codemagic's convention:
+# the iOS build compiles the same core files as the desktop build, by
+# reference rather than by copy —
+#
+#     src/shim/core-entry.ts  ->  ../../../for-desktop-p2p/src/p2p/
+#
+# so a checkout containing only `for-ios-p2p` cannot build at all. The two
+# trees are one repository, and the build configuration belongs at the top of
+# it. Every step there begins with `cd for-ios-p2p`.
+#
+# This file is not used. Edit ../codemagic.yaml.

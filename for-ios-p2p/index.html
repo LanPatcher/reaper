@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="color-scheme" content="dark" />
+    <title>Reaper</title>
+    <style>
+      :root {
+        --rail: #0a0b0f;
+        --side: #14161c;
+        --main: #0d0e12;
+        --line: #232631;
+        --text: #dfe1e6;
+        --dim: #7c7f8a;
+        --accent: #5865f2;
+        --good: #3abf7e;
+        --bad: #f23f43;
+      }
+
+      * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+      body {
+        margin: 0;
+        background: var(--main);
+        color: var(--text);
+        font: 15px/1.5 -apple-system, system-ui, sans-serif;
+        /* The notch and the home indicator. Without these the interface runs
+           underneath both, which on a phone is not a rounding error. */
+        padding: env(safe-area-inset-top) env(safe-area-inset-right)
+                 env(safe-area-inset-bottom) env(safe-area-inset-left);
+      }
+
+      #app { padding: 24px 20px; max-width: 34rem; margin: 0 auto; }
+      h1 { font-size: 1.5rem; margin: 0 0 4px; }
+      .sub { color: var(--dim); font-size: 13px; margin-bottom: 24px; }
+
+      .row {
+        display: flex; align-items: center; gap: 10px;
+        padding: 12px 14px; border: 1px solid var(--line);
+        border-radius: 10px; background: var(--side); margin-bottom: 8px;
+      }
+      .row .grow { flex: 1; min-width: 0; }
+      .row .what { font-size: 14px; }
+      .row .detail { font-size: 12px; color: var(--dim); margin-top: 2px; }
+
+      .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+      .dot.loading { background: var(--dim); }
+      .dot.ready, .dot.on { background: var(--good); }
+      .dot.failed, .dot.unavailable { background: var(--bad); }
+      .dot.off { background: var(--dim); }
+
+      .note {
+        margin-top: 20px; font-size: 12px; color: var(--dim);
+        border-top: 1px solid var(--line); padding-top: 16px;
+      }
+      code {
+        background: var(--rail); padding: 1px 5px;
+        border-radius: 4px; font-size: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <h1>Reaper</h1>
+      <div class="sub">Serverless, end-to-end encrypted, over Tor.</div>
+      <div id="status"></div>
+      <div class="note" id="note"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

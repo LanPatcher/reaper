@@ -1,0 +1,184 @@
+# Building the IPA on a Mac, from Windows.
+#
+# Xcode is macOS-only and there is no cross-compiler, so the compile has to
+# happen on a Mac somewhere. This is that Mac: Codemagic runs the build on a
+# hosted macOS machine, and `npm run ios:build` on Windows starts it and
+# downloads the result. Nothing about the process needs a Mac on your desk.
+#
+# ## Where this file lives, and why
+#
+# At the root of the repository, not inside `for-ios-p2p/`. Codemagic only
+# looks for `codemagic.yaml` at the root of what it checked out.
+#
+# That is also the reason the desktop and iOS trees are one repository rather
+# than two. The iOS build compiles the *same* core files as the desktop build —
+# `src/shim/core-entry.ts` imports from `../../../for-desktop-p2p/src/p2p/` —
+# so a checkout containing only `for-ios-p2p` cannot build at all. Sharing the
+# core by reference instead of by copy is the whole point of the port; it just
+# means the two have to travel together.
+#
+# Every step below therefore starts with `cd for-ios-p2p`. Codemagic runs each
+# script from the clone root, so the directory does not carry over.
+#
+# ## What you need first
+#
+#   1. A Codemagic account, with this repository added as an application.
+#   2. `CM_API_TOKEN` in your environment on Windows — Codemagic → Teams →
+#      Personal Account → Integrations → Codemagic API.
+#   3. `CM_APP_ID`, which is the id in the URL of the app's page in Codemagic.
+#      It is a Codemagic id and has nothing to do with an Apple bundle
+#      identifier — it does not exist until the repository has been added.
+#
+# ## Signing
+#
+# This workflow produces an **unsigned** IPA, and that is deliberate rather
+# than unfinished. Signing here would mean uploading an Apple ID and its
+# certificates to a build service; sideloading with Sideloadly or AltStore
+# re-signs on your own machine with your own free Apple ID, which is both
+# simpler and keeps the key where it belongs.
+#
+# The consequence of a free Apple ID: the signature lasts seven days and the
+# app stops opening after that until it is re-installed. AltStore can refresh
+# it over Wi-Fi automatically while both devices are on the same network. A
+# paid developer account raises that to a year — if you get one, the signing
+# section at the bottom of this file is what to uncomment.
+
+workflows:
+  ios-sideload:
+    name: Reaper iOS (unsigned, for sideloading)
+    max_build_duration: 45
+
+    instance_type: mac_mini_m2
+
+    environment:
+      vars:
+        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
+        XCODE_SCHEME: "App"
+      node: 22
+      xcode: latest
+      cocoapods: default
+
+    triggering:
+      events:
+        - tag
+      tag_patterns:
+        - pattern: "ios-*"
+          include: true
+
+    scripts:
+      - name: Install dependencies
+        script: |
+          cd for-ios-p2p
+          npm ci || npm install
+
+      - name: Build the web bundle
+        script: |
+          cd for-ios-p2p
+          npm run build
+
+      - name: Generate the native project
+        script: |
+          cd for-ios-p2p
+          # Generated here rather than committed. The template is a few dozen
+          # files that Capacitor owns and would otherwise drift from the
+          # installed version — and `pod install` cannot run on Windows anyway,
+          # so a committed project would be permanently half-configured.
+          npx cap add ios || npx cap sync ios
+          npx cap sync ios
+
+      - name: Apply the Info.plist changes
+        script: |
+          cd for-ios-p2p
+          # Two things the generated project does not know about.
+          PLIST="ios/App/App/Info.plist"
+
+          # Background audio, which is what keeps the app running when it is
+          # not on screen — see plugins/keepalive. Without this entitlement the
+          # audio session is torn down on backgrounding and the app suspends
+          # like any other, which means no messages arrive until it is opened.
+          /usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$PLIST"
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$PLIST"
+
+          # Microphone access, for calls. iOS kills an app that touches the
+          # microphone without a usage description, and the crash names the
+          # missing key nowhere the user can see it.
+          /usr/libexec/PlistBuddy -c "Delete :NSMicrophoneUsageDescription" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Reaper uses the microphone for voice calls. Audio is end-to-end encrypted and never leaves your device unencrypted.'" "$PLIST"
+
+          # Local networking, for the loopback listener the Tor client forwards
+          # onion traffic to.
+          /usr/libexec/PlistBuddy -c "Delete :NSLocalNetworkUsageDescription" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 'Reaper connects to its own Tor client running on this device.'" "$PLIST"
+
+          echo "--- Info.plist ---"
+          plutil -p "$PLIST"
+
+      - name: Build the archive
+        script: |
+          cd for-ios-p2p
+          # No signing identity, so every signing step is switched off
+          # explicitly. Xcode will otherwise stop and ask for a team.
+          xcodebuild \
+            -workspace "$XCODE_WORKSPACE" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath build/Reaper.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            archive
+
+      - name: Package it as an IPA
+        script: |
+          cd for-ios-p2p
+          # An IPA is a zip with the app inside a Payload directory, and that
+          # is all `xcodebuild -exportArchive` would produce here — except that
+          # exporting requires a signing identity, which this build does not
+          # have. So it is assembled directly.
+          mkdir -p build/Payload
+          cp -r build/Reaper.xcarchive/Products/Applications/App.app build/Payload/Reaper.app
+          cd build && zip -qr Reaper-unsigned.ipa Payload
+          cd .. && ls -lh build/Reaper-unsigned.ipa
+
+    # Relative to the clone root, since `working_directory` is not set.
+    artifacts:
+      - for-ios-p2p/build/Reaper-unsigned.ipa
+      - for-ios-p2p/build/Reaper.xcarchive
+      - /tmp/xcodebuild_logs/*.log
+
+    publishing:
+      email:
+        recipients:
+          - catopowell911@gmail.com
+        notify:
+          success: true
+          failure: true
+
+# ---------------------------------------------------------------------------
+# With a paid Apple Developer account, replace the two build steps above with
+# a signed build and delete the manual packaging step:
+#
+#     environment:
+#       ios_signing:
+#         distribution_type: ad_hoc
+#         bundle_identifier: chat.reaper.app
+#
+#     scripts:
+#       - name: Set up signing
+#         script: |
+#           keychain initialize
+#           app-store-connect fetch-signing-files chat.reaper.app \
+#             --type IOS_APP_ADHOC --create
+#           keychain add-certificates
+#           xcode-project use-profiles
+#
+#       - name: Build
+#         script: |
+#           xcode-project build-ipa \
+#             --workspace "$XCODE_WORKSPACE" --scheme "$XCODE_SCHEME"
+#
+# The signature then lasts a year instead of seven days, and the IPA can be
+# installed without re-signing on your own machine.
+# ---------------------------------------------------------------------------

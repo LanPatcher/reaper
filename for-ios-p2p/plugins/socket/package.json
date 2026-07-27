@@ -1,0 +1,27 @@
+{
+  "name": "@reaper/socket",
+  "version": "0.1.0",
+  "description": "TCP over Network.framework, dialled through a local SOCKS5 proxy.",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "ios/Sources/",
+    "ReaperSocket.podspec"
+  ],
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
