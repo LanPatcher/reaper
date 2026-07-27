@@ -213,32 +213,29 @@ workflows:
           ICONSET="ios/App/App/Assets.xcassets/AppIcon.appiconset"
           mkdir -p "$ICONSET"
 
-          # Xcode 14 and later take a single 1024×1024 image and derive every
-          # size it needs. The older catalogue, with twenty separate entries,
-          # is twenty more chances for one to be missing.
+          # Capacitor's placeholder, which the catalogue below no longer
+          # references. Left behind it is only clutter, but clutter in an asset
+          # catalogue is the sort of thing that gets blamed later.
+          rm -f "$ICONSET/AppIcon-512@2x.png"
+
           cp assets/AppIcon-1024.png "$ICONSET/AppIcon-1024.png"
 
-          cat > "$ICONSET/Contents.json" <<'JSON'
-          {
-            "images": [
-              {
-                "filename": "AppIcon-1024.png",
-                "idiom": "universal",
-                "platform": "ios",
-                "size": "1024x1024"
-              }
-            ],
-            "info": { "author": "xcode", "version": 1 }
-          }
-          JSON
-
-          # Heredocs inside an indented YAML block keep their indentation, and
-          # Xcode will not parse a Contents.json that starts with spaces.
-          sed -i '' 's/^          //' "$ICONSET/Contents.json"
+          # One line, via printf.
+          #
+          # A heredoc inside an indented YAML block keeps that indentation, and
+          # stripping it afterwards with sed is a second thing to get wrong.
+          # Xcode 14 and later derive every size from a single 1024×1024 image,
+          # so the whole catalogue is short enough to write in one go.
+          printf '%s' '{"images":[{"filename":"AppIcon-1024.png","idiom":"universal","platform":"ios","size":"1024x1024"}],"info":{"author":"xcode","version":1}}' > "$ICONSET/Contents.json"
 
           echo "--- icon ---"
           ls -la "$ICONSET"
-          plutil -lint "$ICONSET/Contents.json"
+
+          # Checked with a JSON parser rather than `plutil -lint`, which reads
+          # the file as a property list and rejects perfectly good JSON with
+          # "Unexpected character { at line 1" — an error about the validator's
+          # expectations rather than about the file.
+          python3 -c "import json,sys; json.load(open(sys.argv[1])); print('Contents.json parses')" "$ICONSET/Contents.json"
 
       - name: Build the archive
         script: |
