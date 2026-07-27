@@ -241,6 +241,19 @@ export class Server extends EventEmitter {
 
     void Native.listen({ port })
       .then(({ port: bound }) => {
+        // A port of zero is not a port. `transport.listen` resolves with
+        // `this.port!` — read straight off `address()` — so a zero here means
+        // `address()` returns null, the non-null assertion reads `.port` of
+        // null, and the TypeError is thrown inside a `.then` that nobody
+        // catches. The promise never settles and startup stops there for good.
+        //
+        // Reported as an error instead, which the transport already listens
+        // for and turns into a rejection.
+        if (!bound) {
+          this.emit("error", new Error("the system granted no port"));
+          return;
+        }
+
         this.#port = bound;
         onListening?.();
         this.emit("listening");
