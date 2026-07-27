@@ -213,6 +213,26 @@ export class BlobStore {
     return true;
   }
 
+  /**
+   * Every blob held here.
+   *
+   * Read from the directory rather than from an index, because the directory
+   * *is* the index — a file is present or it is not, and a separate list would
+   * be one more thing that can disagree with the disk.
+   *
+   * Used when linking two of your own devices, to work out which files the
+   * other one is missing.
+   */
+  ids(): string[] {
+    try {
+      return readdirSync(this.#dir).filter((name) => /^[a-f0-9]{64}$/.test(name));
+    } catch {
+      // No directory means no blobs, which is the ordinary state of a
+      // community nothing has been attached to.
+      return [];
+    }
+  }
+
   /** Total bytes held, for reporting. */
   size(): number {
     try {

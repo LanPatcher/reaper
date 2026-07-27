@@ -359,4 +359,87 @@ contextBridge.exposeInMainWorld("p2p", {
     ipcRenderer.on("p2p:event", listener);
     return () => ipcRenderer.removeListener("p2p:event", listener);
   },
+
+  // ---- your own devices ------------------------------------------------
+  //
+  // An identity has exactly one onion address, so exactly one device can
+  // answer at it. These are how the interface finds out which one that is,
+  // takes it over, and copies the account across first.
+
+  /** Who this device is, and whether it currently holds the address. */
+  deviceInfo: (): Promise<DeviceInfo> => ipcRenderer.invoke("p2p:deviceInfo"),
+
+  /** Rename this device. Shown to you, on your other devices. */
+  deviceName: (name: string): Promise<DeviceInfo> =>
+    ipcRenderer.invoke("p2p:deviceName", name),
+
+  /** Answer here from now on. This is the Reconnect button. */
+  deviceTakeOver: (): Promise<DeviceInfo> => ipcRenderer.invoke("p2p:deviceTakeOver"),
+
+  /** Start listening for, and announcing to, your other devices. */
+  linkOpen: (): Promise<{ port: number }> => ipcRenderer.invoke("p2p:linkOpen"),
+
+  /** Stop. Nothing is announced on the network once this returns. */
+  linkClose: (): Promise<boolean> => ipcRenderer.invoke("p2p:linkClose"),
+
+  /** Devices of yours heard from in the last few seconds. */
+  linkPeers: (): Promise<LinkPeer[]> => ipcRenderer.invoke("p2p:linkPeers"),
+
+  /** Copy the whole account to or from the device at this address. */
+  linkTo: (host: string, port: number): Promise<LinkProgress> =>
+    ipcRenderer.invoke("p2p:linkTo", host, port),
+
+  /**
+   * Anything that changes about your devices.
+   *
+   * One subscription rather than three: losing the address, a device
+   * appearing on the network and a sync finishing are all reacted to in the
+   * same place, and separate channels would be three things to keep in step.
+   */
+  onDevices: (handler: (info: DeviceInfo) => void): (() => void) => {
+    const listener = (_: Electron.IpcRendererEvent, info: DeviceInfo) => handler(info);
+    ipcRenderer.on("p2p:devices", listener);
+    return () => ipcRenderer.removeListener("p2p:devices", listener);
+  },
 });
+
+interface Claim {
+  device: string;
+  name: string;
+  n: number;
+  at: number;
+}
+
+interface DeviceInfo {
+  device: string;
+  name: string;
+  standing:
+    | { state: "holding"; claim?: Claim }
+    | { state: "displaced"; by: Claim }
+    | { state: "unclaimed" };
+  claims: Claim[];
+  linking: boolean;
+  linkPort: number;
+  onion?: string;
+
+  /** Present only on the event that reports one. */
+  synced?: LinkProgress;
+  failed?: string;
+}
+
+interface LinkPeer {
+  host: string;
+  port: number;
+  name: string;
+  device: string;
+  at: number;
+}
+
+interface LinkProgress {
+  device: string;
+  name: string;
+  events: number;
+  files: number;
+  communities: number;
+  done: boolean;
+}

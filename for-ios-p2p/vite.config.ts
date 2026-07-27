@@ -106,9 +106,25 @@ function nodeGlobals() {
         // Enough of it to satisfy the reads that survive into this build:
         // `process.platform` decides desktop-only branches, and the rest are
         // in modules that are shimmed away entirely.
+        // `stdout` is a working object, not null.
+        //
+        // `diagnostics.ts` writes every log line with
+        // `process.stdout.write(line)`, unconditionally — it is the line that
+        // makes logging useful from a terminal. A null stdout turns that into
+        // "null is not an object", thrown from inside `log()`, which is called
+        // from the middle of importing an identity. The failure surfaces as a
+        // crash in the account restore rather than in logging, four layers
+        // from anything to do with either.
+        //
+        // Pointed at the console instead, which is also the only place a log
+        // line can usefully go on a phone.
         prelude.push(
           'const process = { platform: "ios", arch: "arm64", ' +
-            'env: {}, resourcesPath: "", stdout: null, ' +
+            'env: {}, resourcesPath: "", ' +
+            'stdout: { write: (text) => { ' +
+            'console.log(String(text).replace(/\\n$/, "")); return true; } }, ' +
+            'stderr: { write: (text) => { ' +
+            'console.warn(String(text).replace(/\\n$/, "")); return true; } }, ' +
             'cwd: () => "/", on: () => {}, exit: () => {} };',
         );
       }
