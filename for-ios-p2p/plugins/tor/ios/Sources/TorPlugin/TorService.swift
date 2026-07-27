@@ -216,7 +216,20 @@ final class TorService {
             .flatMap { UInt16($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
     }
 
-    private func connectController(port: UInt16) {
+    /**
+     * Connect to tor's control port, retrying while it settles.
+     *
+     * `ControlPortWriteToFile` is written around the time the listener binds,
+     * not reliably after it is accepting — so a single attempt can arrive a
+     * fraction too early and be refused. `TORController.connect` reports that
+     * by returning NO without filling in its `NSError**`, which Swift turns
+     * into `Foundation._GenericObjCError error 0`: an error object that says
+     * nothing at all, for a condition that resolves itself in a moment.
+     *
+     * Ten attempts over five seconds, and only then a message that says what
+     * was actually being attempted.
+     */
+    private func connectController(port: UInt16, attempt: Int = 0) {
         guard let configuration = configuration else { return }
 
         let controller = TorController(socketHost: "127.0.0.1", port: port)
@@ -225,12 +238,34 @@ final class TorService {
         do {
             try controller.connect()
         } catch {
-            fail("control port: \(error.localizedDescription)")
+            guard attempt < 10 else {
+                fail(
+                    "could not reach tor's control port on 127.0.0.1:\(port) "
+                    + "after ten attempts — tor is running but will not be driven"
+                )
+                return
+            }
+
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+                [weak self] in
+                self?.connectController(port: port, attempt: attempt + 1)
+            }
             return
         }
 
         guard let cookie = configuration.cookie else {
-            fail("no control cookie — tor is running but cannot be driven")
+            // Written into the data directory by tor at startup. Same race as
+            // the control port, same treatment — retrying costs half a second
+            // and giving up costs the whole network.
+            guard attempt < 10 else {
+                fail("tor never wrote its control cookie, so it cannot be authenticated to")
+                return
+            }
+
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+                [weak self] in
+                self?.connectController(port: port, attempt: attempt + 1)
+            }
             return
         }
 
