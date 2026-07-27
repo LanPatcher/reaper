@@ -56,6 +56,22 @@ export interface TorStatus {
   error?: string | null;
 }
 
+/**
+ * A hidden service's identity, base64 encoded.
+ *
+ * The two key files carry tor's own 32-byte format tag ahead of the key
+ * material, and are moved with it — a key without its tag is rejected at
+ * startup, and stripping it here would mean re-adding it there.
+ *
+ * Empty strings mean there is no service yet, which is the normal state before
+ * Tor has run for the first time.
+ */
+export interface OnionKeyFiles {
+  secret: string;
+  public: string;
+  hostname: string;
+}
+
 export interface TorPlugin {
   /**
    * Start Tor, and publish an onion service forwarding to `localPort`.
@@ -68,6 +84,26 @@ export interface TorPlugin {
 
   stop(): Promise<{ running: boolean }>;
   status(): Promise<TorStatus>;
+
+  /**
+   * This device's service key, for an identity backup.
+   *
+   * The address in a friend code *is* this key, so an account restored without
+   * it is unreachable by every code its owner has ever handed out.
+   */
+  exportKey(): Promise<OnionKeyFiles>;
+
+  /**
+   * Take over an address from a backup.
+   *
+   * Tor is stopped and started again, because the service directory is read
+   * once at startup. Publishing the descriptor afterwards takes the usual
+   * minute or so and arrives as a `published` event.
+   *
+   * Rejects if the files are not a matching key and address, before anything
+   * is written.
+   */
+  importKey(key: OnionKeyFiles): Promise<{ hostname: string }>;
 
   addListener(
     event: "tor",
@@ -84,6 +120,10 @@ export const Tor = registerPlugin<TorPlugin>("Tor", {
       throw new Error("Tor is not available in a browser");
     },
     stop: async () => ({ running: false }),
+    exportKey: async () => ({ secret: "", public: "", hostname: "" }),
+    importKey: async () => {
+      throw new Error("Tor is not available in a browser");
+    },
     status: async () => ({
       running: false,
       bootstrapped: false,

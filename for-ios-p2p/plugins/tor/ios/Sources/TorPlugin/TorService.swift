@@ -499,4 +499,147 @@ final class TorService {
             ofItemAtPath: directory.path
         )
     }
+
+    // ---- moving the address to another device -------------------------------
+    //
+    // The comment at the top of this file says the service key is deliberately
+    // excluded from backup, and that is still true of *automatic* backup —
+    // iCloud must not carry it, because a restore onto a second phone the user
+    // has forgotten about would silently produce two devices publishing one
+    // address.
+    //
+    // A deliberate export is a different thing. The address in a friend code is
+    // this key: an account restored without it keeps its name, its friends list
+    // and its place in every server, and cannot be reached by a single one of
+    // the codes its owner handed out. That is not a degraded restore, it is a
+    // useless one. So the key travels, inside the same passphrase-encrypted
+    // bundle as the signing key, and the interface is explicit that the old
+    // device stops being reachable the moment the new one publishes.
+
+    private static let secretFile = "hs_ed25519_secret_key"
+    private static let publicFile = "hs_ed25519_public_key"
+    private static let hostnameFile = "hostname"
+
+    private static let secretTag = "== ed25519v1-secret: type0 =="
+    private static let publicTag = "== ed25519v1-public: type0 =="
+
+    /// tor's header: the tag in ASCII, zero-padded to 32 bytes.
+    private static func tag(_ text: String) -> Data {
+        var padded = Data(count: 32)
+        let ascii = Data(text.utf8)
+        padded.replaceSubrange(0..<ascii.count, with: ascii)
+        return padded
+    }
+
+    /**
+     * This device's service key, or empty strings if it has none yet.
+     *
+     * Absent is a normal answer rather than an error — Tor may never have been
+     * started on this device. The caller decides what that means; for a backup
+     * it means the bundle carries no address, which is worth saying rather than
+     * refusing to write a backup at all.
+     */
+    static func exportKey() -> [String: String] {
+        guard let directory = try? serviceDirectory() else {
+            return ["secret": "", "public": "", "hostname": ""]
+        }
+
+        let secret = try? Data(contentsOf: directory.appendingPathComponent(secretFile))
+        let publicKey = try? Data(contentsOf: directory.appendingPathComponent(publicFile))
+
+        guard let secret, let publicKey else {
+            return ["secret": "", "public": "", "hostname": ""]
+        }
+
+        let hostname = (try? String(
+            contentsOf: directory.appendingPathComponent(hostnameFile),
+            encoding: .utf8
+        ))?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        return [
+            "secret": secret.base64EncodedString(),
+            "public": publicKey.base64EncodedString(),
+            "hostname": hostname,
+        ]
+    }
+
+    /**
+     * Write a service key from a backup, and answer at that address from now on.
+     *
+     * The `hostname` file is written only when the bundle carries one that is
+     * the right shape, and is not otherwise derived here. Deriving it needs
+     * SHA3-256, which this platform's crypto library does not provide — and
+     * tor rewrites the file from the public key at every startup regardless, so
+     * a hand-written one would be replaced by the truth within seconds anyway.
+     * What is here is a placeholder so the address can be shown immediately
+     * rather than after a restart.
+     */
+    static func importKey(secret: Data, publicKey: Data, hostname: String) throws {
+        // `Data(...)` around the slice on purpose: a prefix keeps the indices
+        // of the buffer it came from, and comparing a re-indexed slice is the
+        // kind of thing that works until the day the input arrives with a
+        // different offset.
+        guard secret.count == 96, Data(secret.prefix(32)) == tag(secretTag) else {
+            throw TorKeyError.malformed("the onion secret key is not in tor's format")
+        }
+
+        guard publicKey.count == 64, Data(publicKey.prefix(32)) == tag(publicTag) else {
+            throw TorKeyError.malformed("the onion public key is not in tor's format")
+        }
+
+        let directory = try serviceDirectory()
+
+        try secret.write(
+            to: directory.appendingPathComponent(secretFile),
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        )
+        try publicKey.write(
+            to: directory.appendingPathComponent(publicFile),
+            options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]
+        )
+
+        let address = hostname.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let target = directory.appendingPathComponent(hostnameFile)
+
+        if address.hasSuffix(".onion"), address.count == 62 {
+            try? Data((address + "\n").utf8).write(to: target, options: [.atomic])
+        } else {
+            // Stale, and worse than absent: it would be read and reported as
+            // this device's address while tor published a different one.
+            try? FileManager.default.removeItem(at: target)
+        }
+
+        for file in [secretFile, publicFile, hostnameFile] {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: directory.appendingPathComponent(file).path
+            )
+        }
+    }
+
+    /**
+     * Restart onto a newly imported key.
+     *
+     * tor reads its service directory once, at startup. On a desktop the
+     * equivalent is "restart the app"; here Tor is a library in a process that
+     * is already running, so it is stopped and started in place and the caller
+     * sees the usual sequence of events as it comes back up.
+     */
+    func reload() {
+        guard running, forwardTo > 0 else { return }
+
+        let port = forwardTo
+        stop()
+        start(localPort: port)
+    }
+}
+
+enum TorKeyError: LocalizedError {
+    case malformed(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .malformed(let reason): return reason
+        }
+    }
 }

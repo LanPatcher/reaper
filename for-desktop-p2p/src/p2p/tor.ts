@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { Socket } from "node:net";
@@ -145,6 +146,205 @@ export class TorService extends EventEmitter {
     this.#process = undefined;
     this.#onionAddress = undefined;
   }
+}
+
+// ---- the address, as something that can be moved ---------------------------
+//
+// An onion address is not stored anywhere. It *is* a public key, written down
+// in base32 — which is why nobody can assign you one and why nobody can take
+// yours away. The consequence is the part that matters here: the only copy of
+// it in existence is the private key in the service directory, and a device
+// that does not have that key cannot be that address, no matter what else it
+// holds.
+//
+// That is why these functions exist. The identity export carries the signing
+// key, which preserves who you are in the log — but a friend code contains the
+// *address*, and every code you have ever handed out points at this key. An
+// import without it produces an account that is recognisably you to anyone
+// already connected and unreachable to everyone else, which is the same as
+// unusable.
+
+/**
+ * A hidden service's identity: the three files tor keeps in its service
+ * directory.
+ *
+ * Carried as base64 because this travels inside a JSON bundle. The two key
+ * files are not raw keys — tor prefixes each with a 32-byte tag naming the
+ * format, and a file without it is rejected at startup.
+ */
+export interface OnionKey {
+  /** `hs_ed25519_secret_key`: 32-byte tag, then 64 bytes of expanded key. */
+  secret: string;
+  /** `hs_ed25519_public_key`: 32-byte tag, then the 32-byte key. */
+  public: string;
+  /** `<56 chars>.onion`, which is that public key encoded. */
+  hostname: string;
+}
+
+const SECRET_TAG = "== ed25519v1-secret: type0 ==";
+const PUBLIC_TAG = "== ed25519v1-public: type0 ==";
+
+/** Where tor keeps the service key, given its data directory. */
+export function onionDir(dataDir: string): string {
+  return join(dataDir, "onion");
+}
+
+/** The tag tor writes at the head of a key file, padded to 32 bytes. */
+function tag(text: string): Buffer {
+  const padded = Buffer.alloc(32);
+  padded.write(text, "ascii");
+  return padded;
+}
+
+/**
+ * The address a public key spells.
+ *
+ * Version 3 onion addresses are `base32(key ‖ checksum ‖ version)`, where the
+ * checksum is the first two bytes of `SHA3-256(".onion checksum" ‖ key ‖
+ * version)`. Computed here rather than trusting the `hostname` file, so a
+ * bundle whose files do not agree with each other is caught while it can still
+ * be refused — instead of being written out and discovered when tor declines
+ * to start with the app already halfway through replacing an identity.
+ */
+export function onionAddress(publicKey: Buffer): string {
+  if (publicKey.length !== 32) {
+    throw new Error("an onion public key is 32 bytes");
+  }
+
+  const version = Buffer.from([0x03]);
+  const checksum = createHash("sha3-256")
+    .update(Buffer.concat([Buffer.from(".onion checksum", "ascii"), publicKey, version]))
+    .digest()
+    .subarray(0, 2);
+
+  return base32(Buffer.concat([publicKey, checksum, version])) + ".onion";
+}
+
+/**
+ * RFC 4648 base32, lower case, unpadded.
+ *
+ * Written out because the input is always 35 bytes — exactly seven groups of
+ * five — so none of the padding cases a general implementation exists to
+ * handle can arise, and a dependency for eleven lines is a poor trade in the
+ * one function that decides whether an address is right.
+ */
+function base32(bytes: Buffer): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz234567";
+
+  let bits = 0;
+  let value = 0;
+  let out = "";
+
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+
+    while (bits >= 5) {
+      out += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+
+  if (bits > 0) out += alphabet[(value << (5 - bits)) & 31];
+  return out;
+}
+
+/**
+ * Read this device's service key, if it has one.
+ *
+ * Absent is a normal answer, not an error: tor may never have been started, or
+ * may not have finished publishing. The caller decides what that means — for a
+ * backup it means the bundle carries no address, which is worth saying out
+ * loud rather than failing over.
+ */
+export function readOnionKey(dataDir: string): OnionKey | undefined {
+  const dir = onionDir(dataDir);
+
+  const secret = join(dir, "hs_ed25519_secret_key");
+  const publicKey = join(dir, "hs_ed25519_public_key");
+  const hostname = join(dir, "hostname");
+
+  if (!existsSync(secret) || !existsSync(publicKey)) return undefined;
+
+  // The file is read when it says something, and the address is computed when
+  // it does not.
+  //
+  // Existing and being empty is a real state, not a hypothetical one: tor
+  // creates the service directory and writes the hostname at slightly
+  // different moments, and an export taken in that window would otherwise
+  // record a key with no address beside it. The key is what decides the
+  // address, so there is never a reason to report not knowing it.
+  const written = existsSync(hostname)
+    ? readFileSync(hostname, "utf8").trim()
+    : "";
+
+  const address = written || onionAddress(readFileSync(publicKey).subarray(32));
+
+  return {
+    secret: readFileSync(secret).toString("base64"),
+    public: readFileSync(publicKey).toString("base64"),
+    hostname: address,
+  };
+}
+
+/**
+ * Check a service key without writing anything.
+ *
+ * Separate from writing on purpose. Importing an identity is destructive — it
+ * closes every store and overwrites the keystore — and a bundle that turns out
+ * to be malformed *after* that has left the device with no identity at all.
+ * So the whole of the validation happens first, and the write that follows
+ * cannot fail on anything this would have caught.
+ *
+ * Returns the address the key actually spells, which is not necessarily the
+ * one written in the bundle.
+ */
+export function checkOnionKey(key: OnionKey): string {
+  const secret = Buffer.from(key.secret ?? "", "base64");
+  const publicKey = Buffer.from(key.public ?? "", "base64");
+
+  if (secret.length !== 96 || !secret.subarray(0, 32).equals(tag(SECRET_TAG))) {
+    throw new Error("the onion secret key in that file is not in tor's format");
+  }
+
+  if (publicKey.length !== 64 || !publicKey.subarray(0, 32).equals(tag(PUBLIC_TAG))) {
+    throw new Error("the onion public key in that file is not in tor's format");
+  }
+
+  const address = onionAddress(publicKey.subarray(32));
+
+  // A mismatch means the files were assembled from different services, and
+  // restoring them would produce a device that publishes at one address while
+  // telling everyone it is at another.
+  if (key.hostname && key.hostname.trim().toLowerCase() !== address) {
+    throw new Error("that file's onion key and address do not match each other");
+  }
+
+  return address;
+}
+
+/**
+ * Install a service key, so this device answers at that address.
+ *
+ * tor reads the directory once at startup, so this takes effect on the next
+ * start and not before — which is why importing an identity asks for a
+ * restart.
+ *
+ * The permissions are a precondition rather than a precaution: tor refuses to
+ * use a service directory that is readable by anyone else, and the refusal is
+ * reported as a startup failure with no obvious cause.
+ */
+export function writeOnionKey(dataDir: string, key: OnionKey): string {
+  const address = checkOnionKey(key);
+  const dir = onionDir(dataDir);
+
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+
+  writeFileSync(join(dir, "hs_ed25519_secret_key"), Buffer.from(key.secret, "base64"), { mode: 0o600 });
+  writeFileSync(join(dir, "hs_ed25519_public_key"), Buffer.from(key.public, "base64"), { mode: 0o600 });
+  writeFileSync(join(dir, "hostname"), address + "\n", { mode: 0o600 });
+
+  return address;
 }
 
 /**

@@ -1,3 +1,6 @@
+import { Tor } from "@reaper/tor";
+
+import { EventEmitter } from "./events";
 import { Socket, proxyReady } from "./net";
 
 /**
@@ -79,11 +82,26 @@ export function socksConnect(host: string, port: number): Promise<Socket> {
  * pretending to run something: `running` is whatever the plugin says, and
  * `start` is a no-op because starting already happened.
  */
-export class TorService {
+export class TorService extends EventEmitter {
   address: string | undefined;
   running = false;
 
-  constructor(_options?: unknown) {}
+  constructor(_options?: unknown) {
+    // An EventEmitter, because the desktop's is one and `bridge.ts` — the same
+    // file, running here unchanged — subscribes to it the moment it is built:
+    //
+    //     tor.on("log", (line) => log("[tor]", line));
+    //
+    // A plain class has no `on`, so that line throws a TypeError inside the
+    // `netStart` handler, which rejects, which surfaces as "could not start
+    // the transport" — an error naming the one part that had just worked.
+    //
+    // Extending the shim rather than adding a stub `on` that discards its
+    // argument: this class does emit something worth hearing the moment
+    // anything is added to it, and a listener silently thrown away is the same
+    // class of bug as the one that froze this app on its startup screen.
+    super();
+  }
 
   async start(): Promise<void> {
     // Already running. See `boot.ts` — Tor is started before the store opens,
@@ -102,6 +120,65 @@ export class TorService {
  */
 export function torVersion(): string | undefined {
   return undefined;
+}
+
+// ---- the address, as something that can be moved ---------------------------
+//
+// Same contract as the desktop's, different plumbing. There the service key is
+// three files under the app's data directory and `bridge.ts` reads them with
+// `fs`; here it is three files inside the app container that only Swift knows
+// the path of, because the directory is chosen by `TorService` and protected
+// with a file-protection class that has no equivalent on a desktop.
+//
+// The signatures match the desktop's exactly, including the `dataDir` argument
+// that is meaningless on a phone. `bridge.ts` is the same file on both
+// platforms and calls these the same way; a shim that needed a different call
+// site would mean forking the one file this whole build exists to avoid
+// forking.
+
+export interface OnionKey {
+  secret: string;
+  public: string;
+  hostname: string;
+}
+
+/** This device's service key, or nothing if Tor has not made one yet. */
+export async function readOnionKey(_dataDir?: string): Promise<OnionKey | undefined> {
+  const key = await Tor.exportKey();
+  if (!key.secret || !key.public) return undefined;
+
+  return { secret: key.secret, public: key.public, hostname: key.hostname ?? "" };
+}
+
+/**
+ * Validate without writing.
+ *
+ * Deliberately not a re-implementation of the desktop's checks. The native
+ * side has to do the same validation anyway — it is the thing that writes the
+ * files — and two copies of a format check are two chances to disagree about
+ * what a valid key looks like. So this only catches what can be caught without
+ * the key material in hand, and the real refusal comes from `importKey`.
+ */
+export function checkOnionKey(key: OnionKey): string {
+  if (!key || !key.secret || !key.public) {
+    throw new Error("that file's onion key is incomplete");
+  }
+  return (key.hostname ?? "").trim().toLowerCase();
+}
+
+/**
+ * Install a service key, so this device answers at that address.
+ *
+ * Unlike the desktop this does not wait for a restart of the app: Tor is a
+ * library here and can be stopped and started in place, so the native side
+ * does exactly that and the new address is published within a minute or two.
+ */
+export async function writeOnionKey(
+  _dataDir: string,
+  key: OnionKey,
+): Promise<string> {
+  const { hostname } = await Tor.importKey(key);
+  return hostname;
 }
 
 export function compareVersions(a: string, b: string): number {
