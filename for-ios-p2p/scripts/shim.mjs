@@ -36,6 +36,13 @@ const SHIM_ALIASES = {
   "node:path": join(HERE, "src/shim/path.ts"),
   "node:net": join(HERE, "src/shim/net.ts"),
   "node:events": join(HERE, "src/shim/events.ts"),
+  electron: join(HERE, "src/shim/electron.ts"),
+
+  // The native plugins, which cannot load outside a WebView. The interop test
+  // reaches them through `net.ts` and never calls them — see plugins-stub.ts.
+  "@reaper/socket": join(HERE, "src/shim/plugins-stub.ts"),
+  "@reaper/tor": join(HERE, "src/shim/plugins-stub.ts"),
+  "@reaper/keepalive": join(HERE, "src/shim/plugins-stub.ts"),
 };
 
 const TESTS = [

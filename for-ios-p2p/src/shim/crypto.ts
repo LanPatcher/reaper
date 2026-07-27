@@ -1,4 +1,5 @@
 import { gcm } from "@noble/ciphers/aes.js";
+import { scrypt as nobleScrypt } from "@noble/hashes/scrypt.js";
 import { ed25519, x25519 } from "@noble/curves/ed25519.js";
 import { hkdf as nobleHkdf } from "@noble/hashes/hkdf.js";
 import { sha256 as nobleSha256 } from "@noble/hashes/sha2.js";
@@ -302,6 +303,39 @@ export function hkdfSync(
   // Returning the wrong one produces a key that is right and a `Buffer.from`
   // that silently produces something else.
   return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer;
+}
+
+/**
+ * Scrypt, for wrapping an exported identity.
+ *
+ * Deliberately expensive — the whole account sits behind one passphrase — and
+ * the parameters come from the caller, which uses the same ones as the desktop.
+ * `maxmem` is accepted and ignored: it is a Node-specific guard against
+ * allocating too much, and this implementation allocates what it needs.
+ *
+ * A backup written on a phone has to open on a desktop and the reverse, so the
+ * output has to match byte for byte. It does — scrypt is fully specified, and
+ * `crypto.test.ts` checks this pair against Node's rather than assuming.
+ */
+export function scryptSync(
+  passphrase: string | Buffer | Uint8Array,
+  salt: string | Buffer | Uint8Array,
+  keylen: number,
+  options?: { N?: number; r?: number; p?: number; maxmem?: number },
+): Buffer {
+  const bytes = (value: string | Buffer | Uint8Array) =>
+    typeof value === "string"
+      ? new Uint8Array(Buffer.from(value, "utf8"))
+      : new Uint8Array(value);
+
+  return Buffer.from(
+    nobleScrypt(bytes(passphrase), bytes(salt), {
+      N: options?.N ?? 16384,
+      r: options?.r ?? 8,
+      p: options?.p ?? 1,
+      dkLen: keylen,
+    }),
+  );
 }
 
 export function randomBytes(size: number): Buffer {

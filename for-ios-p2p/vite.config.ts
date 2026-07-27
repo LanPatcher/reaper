@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { defineConfig } from "vite";
@@ -26,6 +27,42 @@ import { defineConfig } from "vite";
  * which is both relative and far too common to redirect by name. Matching on
  * the importer means only the shared core's copy is substituted.
  */
+/**
+ * Serve the desktop interface as a module.
+ *
+ * `import html from "./interface"` returns the contents of
+ * `for-desktop-p2p/src/local-ui/index.html` — the same file the desktop ships,
+ * not a copy. Reading it through a plugin rather than committing a duplicate is
+ * what keeps the two from drifting; the alternative is two interfaces that are
+ * identical until somebody changes one.
+ */
+function reaperInterface(path) {
+  const ID = "\0reaper-interface";
+
+  return {
+    name: "reaper-interface",
+
+    resolveId(source) {
+      return source === "./interface" || source === "/src/interface"
+        ? ID
+        : null;
+    },
+
+    load(id) {
+      if (id !== ID) return null;
+
+      const html = readFileSync(path, "utf8");
+      return `export default ${JSON.stringify(html)};`;
+    },
+
+    // Rebuild the page when the interface changes, so `npm run dev` reloads on
+    // an edit to a file outside this project.
+    configureServer(server) {
+      server.watcher.add(path);
+    },
+  };
+}
+
 function useIosTor(shimPath) {
   return {
     name: "ios-tor",
@@ -38,7 +75,12 @@ function useIosTor(shimPath) {
 }
 
 export default defineConfig({
-  plugins: [useIosTor(resolve(__dirname, "src/shim/tor.ts"))],
+  plugins: [
+    useIosTor(resolve(__dirname, "src/shim/tor.ts")),
+    reaperInterface(
+      resolve(__dirname, "../for-desktop-p2p/src/local-ui/index.html"),
+    ),
+  ],
 
   resolve: {
     alias: {
@@ -48,6 +90,8 @@ export default defineConfig({
       "node:path": resolve(__dirname, "src/shim/path.ts"),
       "node:net": resolve(__dirname, "src/shim/net.ts"),
       "node:events": resolve(__dirname, "src/shim/events.ts"),
+      // The whole desktop bridge runs here; see src/shim/electron.ts.
+      electron: resolve(__dirname, "src/shim/electron.ts"),
       // `Buffer` is used throughout the core. The polyfill is a real
       // implementation rather than a stub, because the core does arithmetic on
       // buffers — `readUInt32BE`, `subarray`, `equals` — not just carry them.

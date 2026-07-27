@@ -1,0 +1,266 @@
+/**
+ * The desktop interface, on a phone.
+ *
+ * Loaded only by the iOS build, so nothing here can affect the desktop. It is
+ * a layer over the existing stylesheet rather than a fork of it: the interface
+ * is one file shared by both platforms, and a second copy of its layout rules
+ * would drift the first time either changed.
+ *
+ * The shape of the problem: the desktop is three fixed columns — a server
+ * rail, a sidebar of channels or conversations, and the messages — plus a
+ * fourth for members when it is open. A phone has room for one. So the two on
+ * the left become a single slide-over, the members list becomes another from
+ * the right, and the messages have the screen to themselves.
+ */
+
+/* ---- the shell ---------------------------------------------------------- */
+
+html, body {
+  /* The page must not scroll as a whole. Without this, dragging anywhere
+     rubber-bands the entire interface and the fixed panels drift with it. */
+  overflow: hidden;
+  overscroll-behavior: none;
+  height: 100%;
+}
+
+body {
+  /* Text stays the size it was asked to be when the phone is turned. */
+  -webkit-text-size-adjust: 100%;
+}
+
+#shell {
+  position: relative;
+  overflow: hidden;
+}
+
+/* ---- the left slide-over: servers and conversations ---------------------- */
+
+#rail, #side {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 40;
+
+  /* Off-screen until asked for. `translateX` rather than `display` or `left`
+     so it is composited — animating position on a phone drops frames on a
+     list with any content in it. */
+  transform: translateX(-100%);
+  transition: transform .22s cubic-bezier(.32, .72, 0, 1);
+
+  /* Above the wallpaper, and opaque enough to read against it. */
+  background: var(--side);
+}
+
+#rail {
+  left: 0;
+  width: 62px;
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+#side {
+  /* Beside the rail, not underneath it. */
+  left: 62px;
+  width: min(72vw, 280px);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  border-right: 1px solid var(--line);
+}
+
+html.nav-open #rail,
+html.nav-open #side {
+  transform: translateX(0);
+}
+
+/* Tapping the messages closes it, which is the gesture people already expect
+   from every other app that does this. */
+#nav-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  background: rgba(0, 0, 0, .5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .22s;
+}
+
+html.nav-open #nav-scrim {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ---- the right slide-over: members -------------------------------------- */
+
+#members {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  z-index: 40;
+  width: min(72vw, 280px);
+  transform: translateX(100%);
+  transition: transform .22s cubic-bezier(.32, .72, 0, 1);
+  padding-top: env(safe-area-inset-top);
+  padding-bottom: env(safe-area-inset-bottom);
+  background: var(--side);
+}
+
+/* The desktop hides this with a class; on a phone it is always present and
+   simply off-screen, or the transition has nothing to animate from. */
+#members.hide {
+  display: block;
+}
+
+html.members-open #members {
+  transform: translateX(0);
+}
+
+/* ---- the messages ------------------------------------------------------- */
+
+#main {
+  /* The full width. The two columns beside it are no longer in the flow. */
+  width: 100%;
+  padding-top: env(safe-area-inset-top);
+}
+
+#topbar {
+  /* Room for the menu button added by `mobile.ts`. */
+  padding-left: 4px;
+  gap: 6px;
+}
+
+#messages {
+  /* Momentum scrolling, and no rubber-band past the ends that would drag the
+     panels behind it. */
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  padding: 12px;
+}
+
+.msg {
+  /* Wider tap area between messages, and room for a long-press without
+     catching the neighbour. */
+  padding: 6px 0;
+}
+
+.msg .att {
+  /* An attachment must never be wider than the screen. On the desktop these
+     are bounded by the column; here there is no column. */
+  max-width: 100%;
+  height: auto;
+}
+
+.filelink {
+  max-width: 100%;
+}
+
+/* ---- the composer ------------------------------------------------------- */
+
+#composer {
+  /* Above the home indicator. Without this the input sits under it and the
+     last few pixels of what is being typed are unreachable. */
+  padding: 0 12px calc(12px + env(safe-area-inset-bottom));
+  gap: 6px;
+}
+
+#composer input[type=text] {
+  /* Sixteen pixels exactly. Below that, Safari zooms the page on focus and
+     does not zoom back out — the interface is left scaled and off-centre with
+     no way to recover but a reload. */
+  font-size: 16px;
+  padding: 11px 13px;
+}
+
+/* ---- touch targets ------------------------------------------------------ */
+
+/* Apple's minimum is 44 points. The desktop rows are around half that, which
+   is comfortable with a pointer and a coin-toss with a thumb. */
+.row,
+.chan,
+#members .row,
+.friend,
+.listitem {
+  min-height: 44px;
+}
+
+button,
+.copybtn,
+.ghost,
+.vbtn,
+.tab {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* Except where a button is inline in a row of them, which would otherwise
+   push a settings dialog past the height of the screen. */
+.mrow button,
+.chip button,
+#winbtns button {
+  min-height: 36px;
+  min-width: 36px;
+}
+
+/* Nothing hovers on a touch screen. Leaving these in means a row keeps the
+   hover state after being tapped, which reads as a selection that will not
+   clear. */
+@media (hover: none) {
+  .msg:hover,
+  .row:hover,
+  .chan:hover {
+    background: transparent;
+  }
+}
+
+/* ---- dialogs ------------------------------------------------------------ */
+
+#modalCard {
+  /* Nearly full width, and never taller than the screen. The desktop version
+     is a centred card with generous margins; here the margins are the screen. */
+  width: calc(100vw - 24px);
+  max-width: 100%;
+  max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px);
+  margin: calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+#modalCard.tabbed .tabs {
+  /* The tab strip scrolls sideways rather than wrapping onto three rows. */
+  overflow-x: auto;
+  flex-wrap: nowrap;
+  -webkit-overflow-scrolling: touch;
+}
+
+#modalCard.tabbed .tabs button {
+  flex: 0 0 auto;
+}
+
+/* ---- the call overlay --------------------------------------------------- */
+
+#callOverlay {
+  padding: env(safe-area-inset-top) 16px calc(16px + env(safe-area-inset-bottom));
+}
+
+#callFaces {
+  /* Two across rather than a single row that runs off the side. */
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* ---- text selection ----------------------------------------------------- */
+
+/* Long-press is the context menu on this platform, so the default text
+   selection has to be suppressed on the things being pressed — otherwise the
+   selection handles appear on top of the menu. Message *bodies* keep it,
+   because copying a message is a thing people do. */
+.row, .chan, .msg .who, .av, #rail, #topbar {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.msg .body, .msg .body * {
+  -webkit-user-select: text;
+  user-select: text;
+}
