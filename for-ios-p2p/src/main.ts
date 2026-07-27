@@ -1,18 +1,21 @@
 import { boot, onStatus, type BootStatus } from "./boot";
+import { installBridge, installNative } from "./bridge";
+import { installMobileLayout } from "./mobile";
+
+import "./mobile.css";
 
 /**
- * What the app shows before the interface exists.
+ * Starting the app.
  *
- * This is a startup screen, not a placeholder for one. The three things it
- * reports are the three that decide whether the app can work at all — whether
- * it can read its own log, whether it can read what peers send, and whether it
- * keeps running when it is not on screen — and each of them fails in a way that
- * would otherwise be invisible.
+ * Two phases, and the split matters. Until storage and compression are up
+ * there is nothing worth showing — the interface would replay a log it cannot
+ * read — so a status screen holds the ground. Once they are, the real
+ * interface takes over the page and the status screen is gone.
  *
- * The interface itself is the desktop client, which is a single self-contained
- * page driving `window.p2p`. Bringing it across is the next step and needs the
- * transport underneath it first: see `docs/ios-port.md`, which is honest about
- * what is done and what is not.
+ * That interface is `for-desktop-p2p/src/local-ui/index.html`, unmodified. Not
+ * a port of it: the same file the desktop ships, driven by the same core,
+ * through a `window.p2p` that calls the same handlers. The only thing this
+ * build adds is the layer that makes it usable with a thumb.
  */
 
 const STATES: Record<string, { label: string; detail: string }> = {
@@ -20,46 +23,17 @@ const STATES: Record<string, { label: string; detail: string }> = {
     label: "Reading the log",
     detail: "Everything is loaded into memory before anything else starts.",
   },
-  "storage:ready": {
-    label: "Storage ready",
-    detail: "History is on this device and encrypted with a key only it holds.",
-  },
   "storage:failed": {
     label: "Storage failed",
     detail: "The log could not be read. Nothing else has been started.",
   },
-
   "compression:loading": {
     label: "Loading Brotli",
     detail: "The same encoder the desktop uses, so frames match byte for byte.",
   },
-  "compression:ready": {
-    label: "Compression ready",
-    detail: "Frames written here can be read by any other Reaper device.",
-  },
   "compression:failed": {
     label: "Compression failed",
     detail: "Nothing can be written or read from peers until this works.",
-  },
-
-  "background:off": {
-    label: "Background delivery off",
-    detail: "Messages will only arrive while Reaper is open.",
-  },
-  "background:on": {
-    label: "Background delivery on",
-    detail:
-      "A silent audio session keeps the app running. It does not make a " +
-      "sound and does not interrupt anything else playing.",
-  },
-  "background:unavailable": {
-    label: "Background delivery unavailable",
-    detail: "Messages will only arrive while Reaper is open.",
-  },
-
-  "network:off": {
-    label: "Not connected",
-    detail: "Tor has not been started.",
   },
   "network:starting": {
     label: "Starting Tor",
@@ -69,28 +43,11 @@ const STATES: Record<string, { label: string; detail: string }> = {
     label: "Building a circuit",
     detail: "The first one takes longest. Later starts reuse what it learned.",
   },
-  "network:outbound": {
-    label: "Connected, not yet reachable",
-    detail:
-      "You can reach other people. They cannot reach you until this " +
-      "device's address is published, which takes a moment longer.",
-  },
-  "network:reachable": {
-    label: "Reachable",
-    detail: "Your address is published. Peers can open a connection to you.",
-  },
   "network:failed": {
     label: "Tor could not start",
-    detail: "Nothing can be sent or received. Everything here needs it.",
+    detail: "You can read what is here, but nothing will arrive or send.",
   },
 };
-
-function humanSize(bytes: number): string {
-  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(2)} GB`;
-  if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
-  if (bytes >= 1e3) return `${Math.round(bytes / 1e3)} KB`;
-  return `${bytes} B`;
-}
 
 function draw(status: BootStatus): void {
   const box = document.getElementById("status");
@@ -99,17 +56,10 @@ function draw(status: BootStatus): void {
 
   box.textContent = "";
 
-  for (const key of ["storage", "compression", "background", "network"] as const) {
+  for (const key of ["storage", "compression", "network"] as const) {
     const value = status[key];
     const state = STATES[`${key}:${value}`];
     if (!state) continue;
-
-    // The one place a number is worth showing: a first bootstrap can take a
-    // couple of minutes, and a label that never changes reads as a hang.
-    const suffix =
-      key === "network" && value === "connecting" && status.percent
-        ? ` — ${status.percent}%`
-        : "";
 
     const row = document.createElement("div");
     row.className = "row";
@@ -123,7 +73,10 @@ function draw(status: BootStatus): void {
 
     const what = document.createElement("div");
     what.className = "what";
-    what.textContent = state.label + suffix;
+    what.textContent = state.label +
+      (key === "network" && value === "connecting" && status.percent
+        ? ` — ${status.percent}%`
+        : "");
     grow.appendChild(what);
 
     const detail = document.createElement("div");
@@ -135,30 +88,63 @@ function draw(status: BootStatus): void {
     box.appendChild(row);
   }
 
-  const lines: string[] = [];
+  note.textContent = status.error ?? "";
+}
 
-  if (status.error) lines.push(status.error);
+/**
+ * Replace the startup screen with the interface.
+ *
+ * The whole document is swapped rather than a container filled: the shared
+ * page brings its own `<style>`, its own body and its own script, and grafting
+ * that inside an existing document leaves two sets of rules fighting over the
+ * same element ids.
+ *
+ * The scripts have to be re-created rather than carried across, because a
+ * `<script>` that arrives through `innerHTML` is inert — the parser marks it
+ * already-executed. That single detail is the difference between a page that
+ * renders correctly and does nothing, and a working app.
+ */
+async function showInterface(): Promise<void> {
+  const html = (await import("./interface")).default;
 
-  if (status.bytesHeld) {
-    // Worth showing, and not as a curiosity: the log is held in memory to be
-    // readable synchronously, so on a phone this is a real ceiling rather than
-    // a statistic.
-    lines.push(`Holding ${humanSize(status.bytesHeld)} in memory.`);
+  // Before the page runs, not after. Its script reads `window.p2p` while it is
+  // still parsing, and an interface that starts against an absent bridge
+  // throws once and never recovers.
+  installBridge();
+  installNative();
+
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+
+  document.head.innerHTML = parsed.head.innerHTML;
+  document.body.innerHTML = parsed.body.innerHTML;
+
+  // The phone layout goes on before the interface runs, so the first paint is
+  // already the right shape rather than a desktop three-column flash.
+  installMobileLayout();
+
+  for (const original of Array.from(parsed.querySelectorAll("script"))) {
+    const script = document.createElement("script");
+
+    for (const attribute of Array.from(original.attributes)) {
+      script.setAttribute(attribute.name, attribute.value);
+    }
+
+    script.textContent = original.textContent;
+    document.body.appendChild(script);
   }
-
-  if (status.onion) {
-    // Shown in full. It is this device's address, it has to be given to
-    // anybody who wants to reach you, and an abbreviated one cannot be.
-    lines.push(`You are at ${status.onion}`);
-  }
-
-  note.textContent = lines.join(" ");
 }
 
 onStatus(draw);
 
-void boot().then((status) => {
-  if (status.storage === "failed") {
-    console.error("[boot] storage failed, nothing else started");
+void boot().then(async (status) => {
+  // The network is allowed to be down — history is local, and a phone with no
+  // signal should still show its conversations. Storage is not: without it
+  // there is no identity, and the interface would offer to create an account
+  // on top of one that already exists.
+  if (status.storage !== "ready" || status.compression !== "ready") {
+    console.error("[boot] not starting the interface:", status.error);
+    return;
   }
+
+  await showInterface();
 });

@@ -154,6 +154,8 @@ aliases in `vite.config.ts`, mirrored in `scripts/shim.mjs` for the tests.
 | `node:fs` | in-memory + Capacitor | Synchronous reads, debounced writes |
 | `node:path` | POSIX only | These are keys in a virtual tree |
 | `node:net` | `plugins/socket` | Network.framework, SOCKS5 to Tor |
+| `node:events` | a small emitter | Only what the transport uses |
+| `electron` | `shim/electron.ts` | So the desktop bridge runs unchanged |
 | the `tor` daemon | `plugins/tor` | Tor.framework, linked in rather than spawned |
 
 ### Why not WebCrypto
@@ -236,16 +238,37 @@ as such, amber for the middle one. A first bootstrap can take minutes.
 cannot be compiled in this environment, so it is careful code against a
 documented API rather than tested code. The first device run is the test.
 
-### The interface
+### ~~The interface~~ — done, needs a device to confirm
 
-The desktop client is one self-contained page driving `window.p2p` over
-Electron IPC. There is no IPC here — the core runs in the same JavaScript
-context — so the port is a shim exposing the same `window.p2p` surface backed by
-direct calls instead of `ipcRenderer.invoke`. Mechanical, and large: the
-surface is around sixty methods.
+The desktop client runs here, unmodified. Not a port of it — the same
+`for-desktop-p2p/src/local-ui/index.html`, inlined at build time by a Vite
+plugin so the two cannot drift.
 
-It also needs touch work. The interface assumes a mouse and a wide window:
-right-click context menus, hover states, a three-column layout.
+What made that possible is that the desktop's `bridge.ts` reaches Electron
+through exactly four things: `app.getPath`, `app.getAppPath`, `app.isPackaged`
+and `ipcMain.handle`. `src/shim/electron.ts` supplies all four — handlers land
+in a map instead of an IPC channel — so all seventeen hundred lines of it run
+here as well. `src/bridge.ts` then generates `window.p2p` from the channel
+names rather than declaring sixty methods by hand, which means anything the
+interface calls is reachable by construction rather than by somebody having
+remembered it.
+
+`src/mobile.css` and `src/mobile.ts` are the phone layer, loaded only by this
+build:
+
+- The server rail and sidebar become one slide-over from the left, opened by a
+  button in the top bar, closed by tapping away, swiping back, or choosing
+  something in it. `translateX` rather than `display`, so it composites.
+- The member list becomes a slide-over from the right.
+- 44pt touch targets, which is Apple's minimum and about double the desktop's.
+- Long-press synthesises `contextmenu`, so the existing menus work untouched.
+- The composer sits above the keyboard via `visualViewport`, and above the home
+  indicator via `env(safe-area-inset-bottom)`.
+- The message input is exactly 16px, below which Safari zooms on focus and does
+  not zoom back.
+
+**Not confirmed on hardware.** It compiles and the shims pass; whether the
+interface behaves once it is driving a real store is the next thing to find out.
 
 ### Voice
 

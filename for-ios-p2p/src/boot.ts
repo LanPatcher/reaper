@@ -3,7 +3,10 @@ import { Keepalive } from "@reaper/keepalive";
 import { Socket } from "@reaper/socket";
 import { Tor, type TorEvent } from "@reaper/tor";
 
+import { registerP2PHandlers } from "../../for-desktop-p2p/src/p2p/bridge";
+import { invoke } from "./shim/electron";
 import { flush, ready as filesystemReady, heldBytes } from "./shim/fs";
+import { setProxyPort } from "./shim/net";
 import { ready as brotliReady } from "./shim/zlib";
 
 /**
@@ -180,6 +183,36 @@ async function startNetwork(): Promise<void> {
   status.network = "starting";
   announce();
 
+  // The core, before Tor rather than after.
+  //
+  // This is the desktop's own `registerP2PHandlers` — the whole seventeen
+  // hundred lines of it — running against the shims. It loads the identity,
+  // opens the index and installs every handler the interface will call. It has
+  // to happen before the page appears, because the page asks who it is on its
+  // first line.
+  try {
+    registerP2PHandlers();
+  } catch (error) {
+    // Fatal, unlike a network failure: there is no identity and no history, so
+    // the interface would offer to make a new account over the top of one that
+    // already exists.
+    status.storage = "failed";
+    status.error = `could not open the store: ${(error as Error).message}`;
+    announce();
+    return;
+  }
+
+  // Listening for peers. The transport is created by the same handler the
+  // desktop uses, on the port bound above.
+  try {
+    await invoke("p2p:netStart", listening);
+  } catch (error) {
+    status.network = "failed";
+    status.error = `could not start the transport: ${(error as Error).message}`;
+    announce();
+    return;
+  }
+
   await Tor.addListener("tor", (event: TorEvent) => {
     switch (event.state) {
       case "starting":
@@ -196,6 +229,12 @@ async function startNetwork(): Promise<void> {
         // reached — the descriptor has not been published — and saying
         // "connected" here would be a quarter true.
         status.network = "outbound";
+
+        // The port every outbound connection is dialled through. Until this
+        // arrives `net.ts` refuses to connect at all, which is deliberate: a
+        // socket opened to port zero fails in a way that reads as the peer
+        // being unreachable.
+        if (event.socksPort) setProxyPort(event.socksPort);
         break;
 
       case "published":

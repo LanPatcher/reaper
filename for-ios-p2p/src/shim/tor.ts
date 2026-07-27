@@ -65,3 +65,54 @@ export function socksConnect(host: string, port: number): Promise<Socket> {
     socket.connect(port, host);
   });
 }
+
+
+/**
+ * The desktop's Tor supervisor, which does not apply here.
+ *
+ * On a desktop this spawns the `tor` binary, watches it, restarts it and reads
+ * its version. On iOS Tor is linked into the app and driven by `@reaper/tor` —
+ * started long before `bridge.ts` is even loaded — so there is nothing for this
+ * to supervise.
+ *
+ * It exists because `bridge.ts` imports it, and it reports honestly rather than
+ * pretending to run something: `running` is whatever the plugin says, and
+ * `start` is a no-op because starting already happened.
+ */
+export class TorService {
+  address: string | undefined;
+  running = false;
+
+  constructor(_options?: unknown) {}
+
+  async start(): Promise<void> {
+    // Already running. See `boot.ts` — Tor is started before the store opens,
+    // because the transport needs its SOCKS port the moment it comes up.
+  }
+
+  stop(): void {}
+}
+
+/**
+ * The version check, which the desktop uses to warn about an old `tor`.
+ *
+ * Here the version is whatever Tor.framework was built against, and it is not
+ * something a user can change — so there is nothing actionable to warn about.
+ * Reported as unknown rather than as a number that might be wrong.
+ */
+export function torVersion(): string | undefined {
+  return undefined;
+}
+
+export function compareVersions(a: string, b: string): number {
+  const parts = (v: string) => v.split(".").map((n) => parseInt(n, 10) || 0);
+  const left = parts(a);
+  const right = parts(b);
+
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    const difference = (left[i] ?? 0) - (right[i] ?? 0);
+    if (difference) return difference < 0 ? -1 : 1;
+  }
+
+  return 0;
+}
