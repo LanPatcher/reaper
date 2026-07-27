@@ -23,6 +23,10 @@ const STATES: Record<string, { label: string; detail: string }> = {
     label: "Reading the log",
     detail: "Everything is loaded into memory before anything else starts.",
   },
+  "storage:ready": {
+    label: "Storage ready",
+    detail: "History is on this device, encrypted with a key only it holds.",
+  },
   "storage:failed": {
     label: "Storage failed",
     detail: "The log could not be read. Nothing else has been started.",
@@ -30,6 +34,10 @@ const STATES: Record<string, { label: string; detail: string }> = {
   "compression:loading": {
     label: "Loading Brotli",
     detail: "The same encoder the desktop uses, so frames match byte for byte.",
+  },
+  "compression:ready": {
+    label: "Compression ready",
+    detail: "Frames written here can be read by any other Reaper device.",
   },
   "compression:failed": {
     label: "Compression failed",
@@ -42,6 +50,18 @@ const STATES: Record<string, { label: string; detail: string }> = {
   "network:connecting": {
     label: "Building a circuit",
     detail: "The first one takes longest. Later starts reuse what it learned.",
+  },
+  "network:outbound": {
+    label: "Connected",
+    detail: "You can reach other people. Publishing your address takes a moment longer.",
+  },
+  "network:reachable": {
+    label: "Reachable",
+    detail: "Your address is published. Peers can open a connection to you.",
+  },
+  "network:off": {
+    label: "Not connected",
+    detail: "Tor has not been started.",
   },
   "network:failed": {
     label: "Tor could not start",
@@ -136,7 +156,31 @@ async function showInterface(): Promise<void> {
 
 onStatus(draw);
 
+/**
+ * Nothing should take a minute to start.
+ *
+ * Every step of startup crosses into native code, and a native call that never
+ * answers stalls the `await` above it permanently — no error, no rejection,
+ * nothing to catch. That is not hypothetical: binding a port that was already
+ * held did exactly this, and the app sat on its startup screen indefinitely
+ * with no indication anything was wrong.
+ *
+ * So the screen says so rather than lying by omission. It does not cancel
+ * anything — there is nothing safe to cancel halfway through opening a store —
+ * it just stops pretending to be busy.
+ */
+const stalled = setTimeout(() => {
+  const note = document.getElementById("note");
+  if (!note || note.textContent) return;
+
+  note.textContent =
+    "Startup has taken longer than a minute. Whichever row above has no " +
+    "state reached is where it stopped.";
+}, 60_000);
+
 void boot().then(async (status) => {
+  clearTimeout(stalled);
+
   // The network is allowed to be down — history is local, and a phone with no
   // signal should still show its conversations. Storage is not: without it
   // there is no identity, and the interface would offer to create an account
@@ -146,5 +190,17 @@ void boot().then(async (status) => {
     return;
   }
 
-  await showInterface();
+  try {
+    await showInterface();
+  } catch (error) {
+    // Reported on the screen, not just the console. There is no console on a
+    // phone, and a failure here leaves the startup screen up for ever with
+    // nothing to explain it — which is exactly how it presented.
+    const note = document.getElementById("note");
+    if (note) {
+      note.textContent =
+        `The interface could not start: ${(error as Error).message}`;
+    }
+    console.error("[boot] the interface could not start:", error);
+  }
 });
