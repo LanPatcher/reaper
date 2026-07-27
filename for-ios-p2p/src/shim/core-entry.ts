@@ -1,0 +1,48 @@
+/**
+ * The desktop core, re-exported so it can be built twice.
+ *
+ * This file exists only for `core.test.ts`. The runner bundles it once against
+ * Node's real builtins and once against the shims, then makes the two talk to
+ * each other — which is the only way to prove that a phone and a laptop agree
+ * about what an event is.
+ *
+ * Nothing here touches the filesystem. `store.ts` and `log.ts` are deliberately
+ * left out: they need a Capacitor filesystem that does not exist in Node, and
+ * what they would add to this test is covered by `fs.test.ts` instead. What is
+ * exported is the part where a disagreement would be silent and fatal — ids,
+ * signatures and encryption.
+ */
+
+export {
+  canonicalise,
+  causalSort,
+  createEvent,
+  digestContent,
+  findHeads,
+  mergeEvents,
+  verifyEvent,
+  type SignedEvent,
+} from "../../../for-desktop-p2p/src/p2p/events";
+
+export {
+  createIdentity,
+  signDigest,
+  userIdFromPublicKey,
+  verifyDigest,
+  type Identity,
+} from "../../../for-desktop-p2p/src/p2p/identity";
+
+export {
+  agree,
+  deriveKey,
+  isSealed,
+  open,
+  randomKey,
+  seal,
+} from "../../../for-desktop-p2p/src/p2p/crypto";
+
+export {
+  missingFrom,
+  nextSeq,
+  summarise,
+} from "../../../for-desktop-p2p/src/p2p/vector";

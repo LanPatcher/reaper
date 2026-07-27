@@ -1,0 +1,4 @@
+Deploy/*.exe filter=lfs diff=lfs merge=lfs -text
+Deploy/*.deb filter=lfs diff=lfs merge=lfs -text
+Deploy/*.apk filter=lfs diff=lfs merge=lfs -text
+Deploy/*.zip filter=lfs diff=lfs merge=lfs -text

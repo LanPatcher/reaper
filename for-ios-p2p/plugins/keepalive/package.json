@@ -1,0 +1,27 @@
+{
+  "name": "@reaper/keepalive",
+  "version": "0.1.0",
+  "description": "Keeps the app running in the background with a silent, mixing audio session.",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "ios/Sources/",
+    "ReaperKeepalive.podspec"
+  ],
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
