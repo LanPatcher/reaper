@@ -78,13 +78,73 @@ workflows:
 
       - name: Generate the native project
         script: |
+          set -e
           cd for-ios-p2p
+
           # Generated here rather than committed. The template is a few dozen
           # files that Capacitor owns and would otherwise drift from the
           # installed version — and `pod install` cannot run on Windows anyway,
           # so a committed project would be permanently half-configured.
-          npx cap add ios || npx cap sync ios
-          npx cap sync ios
+          #
+          # Not `cap add ios || cap sync ios`. That was the previous shape and
+          # it hid the failure: `||` swallows a non-zero exit, so a broken
+          # generation carried on to the next step and surfaced four steps
+          # later as "App.xcworkspace does not exist" — which names a symptom
+          # in a different part of the build from the cause.
+          if [ -d ios ]; then
+            npx cap sync ios
+          else
+            npx cap add ios
+          fi
+
+          # And then CocoaPods, explicitly.
+          #
+          # This is the step that was actually missing. `cap add ios` writes
+          # `App.xcodeproj` and a Podfile; the *workspace* is created by
+          # `pod install`, and it is the workspace that has to be built,
+          # because that is what links the pods. Capacitor tries to run it
+          # itself and quietly gives up if anything is off — which leaves a
+          # project directory that looks complete and cannot be built.
+          cd ios/App
+
+          # Without `--repo-update` first: every pod here is a local `:path =>`
+          # declaration, so there is nothing to look up remotely and updating
+          # the specs repo clones several hundred megabytes for no reason. The
+          # retry is there for when a pod from the trunk is added — Tor, when
+          # it lands — and the local spec cache turns out to be stale.
+          pod install || pod install --repo-update
+
+      - name: Check the project is actually there
+        script: |
+          cd for-ios-p2p
+
+          echo "--- ios/App ---"
+          ls -la ios/App || true
+
+          if [ ! -d ios/App/App.xcworkspace ]; then
+            echo
+            echo "  App.xcworkspace was not created, so pod install did not"
+            echo "  finish. Everything below is the reason, not the symptom:"
+            echo
+            cat ios/App/Podfile 2>/dev/null || echo "  (no Podfile — cap add ios did not complete)"
+            exit 1
+          fi
+
+          # The plugins have to have been discovered, or the app builds and
+          # then does nothing on the device: no background audio, no sockets.
+          # A missing pod here is silent at build time and total at runtime.
+          echo "--- pods ---"
+          grep -E "Reaper|Capacitor" ios/App/Podfile || true
+
+          for pod in ReaperKeepalive ReaperSocket; do
+            if ! grep -q "$pod" ios/App/Podfile; then
+              echo
+              echo "  $pod is not in the Podfile, so Capacitor did not find it."
+              echo "  It is a file: dependency, so check the symlink survived:"
+              ls -la node_modules/@reaper/ || true
+              exit 1
+            fi
+          done
 
       - name: Apply the Info.plist changes
         script: |
