@@ -42,8 +42,14 @@ function reaperInterface(path) {
   return {
     name: "reaper-interface",
 
+    // Same reason as `ios-tor` above: a relative specifier has to be caught
+    // before Vite turns it into a path that does not exist.
+    enforce: "pre",
+
     resolveId(source) {
-      return source === "./interface" || source === "/src/interface"
+      return source === "./interface" ||
+        source === "/src/interface" ||
+        source.endsWith("/src/interface")
         ? ID
         : null;
     },
@@ -66,10 +72,28 @@ function reaperInterface(path) {
 function useIosTor(shimPath) {
   return {
     name: "ios-tor",
+
+    // Before Vite's own resolution, not after.
+    //
+    // Without this the plugin is a "normal" one and Vite has already turned
+    // `./tor` into an absolute path by the time it is asked — so the check
+    // below never matched, the desktop's Tor module was pulled in, and the
+    // build died on `node:child_process`. A plugin that silently never fires
+    // looks exactly like no plugin at all.
+    enforce: "pre",
+
     resolveId(source, importer) {
-      if (source !== "./tor" || !importer) return null;
-      if (!importer.includes("for-desktop-p2p")) return null;
-      return shimPath;
+      if (!importer || !importer.includes("for-desktop-p2p")) return null;
+
+      // Both spellings. `enforce: "pre"` should mean the bare specifier, but
+      // resolution order is not something to stake a twenty-minute build on,
+      // and matching the resolved path as well costs one condition.
+      const isTor =
+        source === "./tor" ||
+        source.endsWith("/p2p/tor") ||
+        source.endsWith("/p2p/tor.ts");
+
+      return isTor ? shimPath : null;
     },
   };
 }
