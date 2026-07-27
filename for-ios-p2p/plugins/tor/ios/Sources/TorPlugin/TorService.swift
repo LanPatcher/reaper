@@ -50,6 +50,9 @@ final class TorService {
     /// The loopback port tor forwards onion traffic to. The transport listens there.
     private var forwardTo: UInt16 = 0
 
+    /// Where tor writes the control port it chose. An ordinary file.
+    private var controlPortFile: URL?
+
     private(set) var running = false
     private(set) var bootstrapped = false
     private(set) var onion: String?
@@ -87,32 +90,37 @@ final class TorService {
 
             configuration.dataDirectory = dataDirectory
 
-            // The control socket goes in the temporary directory, not beside
-            // the data — and the reason is a limit that is easy to trip and
-            // hard to diagnose.
+            // A control *port* on loopback, not a control socket.
             //
-            // A Unix domain socket path lives in `sockaddr_un.sun_path`, which
-            // is 104 bytes on Darwin. An iOS container path is already around
-            // 76 of those:
+            // A Unix domain socket path has to fit in `sockaddr_un.sun_path`,
+            // which is 104 bytes on Darwin — and an iOS container path does not
+            // leave room. Even `tmp/cp` is over the limit here:
             //
-            //   /var/mobile/Containers/Data/Application/<36-char UUID>/
+            //   /var/mobile/Containers/Data/Application/<36-char UUID>/tmp/cp
             //
-            // Adding `Library/Application Support/tor/control_port` puts it
-            // past 120, and the socket cannot be created. tor carries on
-            // starting, the file never appears, and connecting to it fails
-            // with "no such file or directory" — which reads as tor not having
-            // started rather than as a path being nine characters too long.
+            // Shortening the name was the obvious fix and it is not enough,
+            // because the length is almost entirely the container prefix, which
+            // is not ours to shorten. tor starts fine, the socket is never
+            // created, and connecting to it fails with "no such file or
+            // directory" — an error about a missing file when the real problem
+            // is an address that cannot be expressed.
             //
-            // `tmp/` plus a two-character name is about 83. The socket is not
-            // worth keeping between launches anyway; the key is in the service
-            // directory, which stays where it is.
-            configuration.controlSocket = URL(
-                fileURLWithPath: NSTemporaryDirectory()
-            ).appendingPathComponent("cp")
+            // A TCP control port on 127.0.0.1 has no such limit. `auto` lets
+            // tor pick a free one and write it to a file, which is an ordinary
+            // file and can live at any path length.
+            let portFile = dataDirectory.appendingPathComponent("controlport")
+            self.controlPortFile = portFile
+
+            // Not left over from a previous launch, or the first read would
+            // return a port nothing is listening on.
+            try? FileManager.default.removeItem(at: portFile)
 
             configuration.arguments = [
                 // Bound to loopback and to a port tor picks.
                 "--SocksPort", "auto",
+
+                "--ControlPort", "auto",
+                "--ControlPortWriteToFile", portFile.path,
 
                 // The onion service. These two are an ordered pair — tor
                 // applies `HiddenServicePort` to whichever `HiddenServiceDir`
@@ -168,21 +176,18 @@ final class TorService {
      * looking at the screen.
      */
     private func waitForControlSocket(attempt: Int = 0) {
-        guard let controlURL = configuration?.controlSocket else {
-            fail("no control socket — tor cannot be driven")
+        guard let portFile = controlPortFile else {
+            fail("no control port file — tor cannot be driven")
             return
         }
 
-        if FileManager.default.fileExists(atPath: controlURL.path) {
-            connectController()
+        if let port = Self.readControlPort(portFile) {
+            connectController(port: port)
             return
         }
 
         guard attempt < 40 else {
-            fail(
-                "tor never opened its control socket at \(controlURL.path) — "
-                + "if that path is longer than 104 characters, that is why"
-            )
+            fail("tor did not report a control port within twenty seconds")
             return
         }
 
@@ -192,15 +197,29 @@ final class TorService {
         }
     }
 
-    private func connectController() {
+    /**
+     * Read the port tor chose.
+     *
+     * The file holds one line: `PORT=127.0.0.1:51234`. It may exist while still
+     * being written, so a line that does not parse is treated as "not yet"
+     * rather than as a failure — which is what the retry above is for.
+     */
+    private static func readControlPort(_ file: URL) -> UInt16? {
+        guard
+            let text = try? String(contentsOf: file, encoding: .utf8),
+            let line = text.split(separator: "\n").first(where: { $0.hasPrefix("PORT=") })
+        else { return nil }
+
+        return line
+            .split(separator: ":")
+            .last
+            .flatMap { UInt16($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    }
+
+    private func connectController(port: UInt16) {
         guard let configuration = configuration else { return }
 
-        guard let controlURL = configuration.controlSocket else {
-            fail("no control socket — tor cannot be driven")
-            return
-        }
-
-        let controller = TorController(socketURL: controlURL)
+        let controller = TorController(socketHost: "127.0.0.1", port: port)
         self.controller = controller
 
         do {
