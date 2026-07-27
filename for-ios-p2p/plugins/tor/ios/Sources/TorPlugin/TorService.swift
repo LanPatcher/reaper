@@ -87,13 +87,28 @@ final class TorService {
 
             configuration.dataDirectory = dataDirectory
 
-            // A control socket at a path chosen here rather than asking tor to
-            // pick one. This is the arrangement in Tor.framework's own example,
-            // and it is used because it is the documented one — the control
-            // port is how everything below drives tor, so a guess here fails
-            // as "cannot connect" with nothing to point at.
-            configuration.controlSocket =
-                dataDirectory.appendingPathComponent("control_port")
+            // The control socket goes in the temporary directory, not beside
+            // the data — and the reason is a limit that is easy to trip and
+            // hard to diagnose.
+            //
+            // A Unix domain socket path lives in `sockaddr_un.sun_path`, which
+            // is 104 bytes on Darwin. An iOS container path is already around
+            // 76 of those:
+            //
+            //   /var/mobile/Containers/Data/Application/<36-char UUID>/
+            //
+            // Adding `Library/Application Support/tor/control_port` puts it
+            // past 120, and the socket cannot be created. tor carries on
+            // starting, the file never appears, and connecting to it fails
+            // with "no such file or directory" — which reads as tor not having
+            // started rather than as a path being nine characters too long.
+            //
+            // `tmp/` plus a two-character name is about 83. The socket is not
+            // worth keeping between launches anyway; the key is in the service
+            // directory, which stays where it is.
+            configuration.controlSocket = URL(
+                fileURLWithPath: NSTemporaryDirectory()
+            ).appendingPathComponent("cp")
 
             configuration.arguments = [
                 // Bound to loopback and to a port tor picks.
@@ -130,13 +145,50 @@ final class TorService {
             running = true
             emit("starting", [:])
 
-            // The control port is not up the instant the thread starts.
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 1) { [weak self] in
-                self?.connectController()
-            }
+            // Retried rather than attempted once after a fixed delay.
+            //
+            // tor creates the control socket some time after the thread
+            // starts, and how long depends on the device and on how much work
+            // it has to do first. A single attempt after one second is a guess
+            // that is wrong often enough to look like a permanent failure.
+            waitForControlSocket()
         } catch {
             lastError = "could not prepare Tor's directories: \(error.localizedDescription)"
             emit("failed", ["error": lastError as Any])
+        }
+    }
+
+    /**
+     * Wait for tor to create the control socket, then drive it.
+     *
+     * Polls rather than sleeps, and gives up with an honest message rather
+     * than hanging: forty attempts at half a second is twenty seconds, which
+     * is far longer than tor takes to open a socket on any device and short
+     * enough that a genuine failure is reported while somebody is still
+     * looking at the screen.
+     */
+    private func waitForControlSocket(attempt: Int = 0) {
+        guard let controlURL = configuration?.controlSocket else {
+            fail("no control socket — tor cannot be driven")
+            return
+        }
+
+        if FileManager.default.fileExists(atPath: controlURL.path) {
+            connectController()
+            return
+        }
+
+        guard attempt < 40 else {
+            fail(
+                "tor never opened its control socket at \(controlURL.path) — "
+                + "if that path is longer than 104 characters, that is why"
+            )
+            return
+        }
+
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) {
+            [weak self] in
+            self?.waitForControlSocket(attempt: attempt + 1)
         }
     }
 
