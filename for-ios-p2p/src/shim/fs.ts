@@ -306,6 +306,52 @@ export function cpSync(
   }
 }
 
+/**
+ * The three the log uses, and nothing more.
+ *
+ * `log.ts` opens a segment purely to create it — `closeSync(openSync(path,
+ * "a"))` — and truncates one when a torn write is found at the tail. There are
+ * no file descriptors here because everything is a key in a map, so `openSync`
+ * returns the path itself as the handle and `closeSync` has nothing to do.
+ *
+ * That is a real simplification rather than a stub: the whole point of this
+ * module is that reads are synchronous against memory, so a descriptor would
+ * be a number pointing at a Buffer that is already reachable by name.
+ */
+export function openSync(path: string, flags?: string): string {
+  const at = key(path);
+
+  // "a" creates the file if it is absent, which is the only reason this is
+  // ever called. Any other flag would be a caller this shim has not been
+  // written for, and silently creating a file for it would be worse than not.
+  if (!files.has(at) && (flags === undefined || flags.startsWith("a") || flags.startsWith("w"))) {
+    files.set(at, Buffer.alloc(0));
+    touch(at);
+  }
+
+  return at;
+}
+
+export function closeSync(_handle: string): void {
+  // Nothing to release. Persistence is the flush, not the close.
+}
+
+/**
+ * Cut a file back to `length`.
+ *
+ * Used when a frame at the tail turns out to be half-written — a crash during
+ * an append. Dropping the remainder is what bounds the damage to the last
+ * frame rather than the file.
+ */
+export function truncateSync(path: string, length = 0): void {
+  const at = key(path);
+  const data = files.get(at);
+  if (!data) return;
+
+  files.set(at, Buffer.from(data.subarray(0, length)));
+  touch(at);
+}
+
 function asBuffer(data: Buffer | Uint8Array | string): Buffer {
   return typeof data === "string" ? Buffer.from(data, "utf8") : Buffer.from(data);
 }

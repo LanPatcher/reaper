@@ -46,3 +46,12 @@ export {
   nextSeq,
   summarise,
 } from "../../../for-desktop-p2p/src/p2p/vector";
+
+// The transport, the store and the log — the parts that were left out while
+// `node:net`, `node:events` and a real filesystem were missing. Their presence
+// here is the check that matters: if these compile against the shims, the
+// phone is running the same networking code as the desktop rather than a
+// second implementation that has to be kept in step.
+export { CommunityStore } from "../../../for-desktop-p2p/src/p2p/store";
+export { Transport } from "../../../for-desktop-p2p/src/p2p/transport";
+export { BlobStore, blobId } from "../../../for-desktop-p2p/src/p2p/blobs";
