@@ -87,14 +87,24 @@ public class SocketPlugin: CAPPlugin, CAPBridgedPlugin {
     call.resolve()
   }
 
+  /**
+   * Bind a loopback port, and resolve only once it is actually bound.
+   *
+   * The port is what Tor is told to forward its onion service to, so resolving
+   * early with a placeholder is worse than failing: Tor is handed a target of
+   * zero, refuses, and the app reports that nothing can be sent or received —
+   * which describes the consequence and not the cause.
+   */
   @objc func listen(_ call: CAPPluginCall) {
     let port = call.getInt("port") ?? 0
 
-    do {
-      let bound = try sockets?.listen(port: UInt16(port)) ?? 0
-      call.resolve(["port": Int(bound)])
-    } catch {
-      call.reject("could not listen: \(error.localizedDescription)")
+    sockets?.listen(port: UInt16(port)) { outcome in
+      switch outcome {
+      case .success(let bound):
+        call.resolve(["port": Int(bound)])
+      case .failure(let error):
+        call.reject("could not listen: \(error.localizedDescription)")
+      }
     }
   }
 

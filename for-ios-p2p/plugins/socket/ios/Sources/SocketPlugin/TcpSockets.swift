@@ -122,20 +122,79 @@ final class TcpSockets {
    * this — and binding it to every interface would put an unauthenticated
    * Reaper transport on the local Wi-Fi.
    */
-  func listen(port: UInt16) throws -> UInt16 {
+  /**
+   * Bind a loopback port and report which one was granted.
+   *
+   * Asynchronous, and it has to be. `NWListener.port` is nil until the
+   * listener reaches `.ready`, and `start` returns immediately — so reading it
+   * on the next line yields nothing and the caller falls back to the port it
+   * asked for. Asking for zero means "choose one for me", so the caller was
+   * told the port was zero, Tor was handed a forwarding target of zero, and
+   * refused to start with "localPort is required".
+   *
+   * The symptom was "nothing can be sent or received", four layers away from a
+   * value read one line too early.
+   */
+  func listen(port: UInt16, then: @escaping (Result<UInt16, Error>) -> Void) {
     stopListening()
 
     let options = NWProtocolTCP.Options()
     options.noDelay = true
 
     let parameters = NWParameters(tls: nil, tcp: options)
-    parameters.requiredLocalEndpoint = NWEndpoint.hostPort(
-      host: .init("127.0.0.1"),
-      port: .init(rawValue: port) ?? .any
-    )
     parameters.allowLocalEndpointReuse = true
 
-    let listener = try NWListener(using: parameters)
+    // Only pinned when a specific port was asked for. Requiring an endpoint of
+    // port zero asks the system to bind port zero literally, rather than to
+    // pick a free one.
+    if port != 0 {
+      parameters.requiredLocalEndpoint = NWEndpoint.hostPort(
+        host: .init("127.0.0.1"),
+        port: .init(rawValue: port) ?? .any
+      )
+    }
+
+    let listener: NWListener
+    do {
+      listener = try NWListener(using: parameters)
+    } catch {
+      then(.failure(error))
+      return
+    }
+
+    // Answered once, whichever way it goes.
+    var answered = false
+    let settle: (Result<UInt16, Error>) -> Void = { outcome in
+      if answered { return }
+      answered = true
+      then(outcome)
+    }
+
+    listener.stateUpdateHandler = { state in
+      switch state {
+      case .ready:
+        guard let bound = listener.port?.rawValue else {
+          settle(.failure(NSError(
+            domain: "chat.reaper.sockets", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "listener is ready but reported no port"]
+          )))
+          return
+        }
+        settle(.success(bound))
+
+      case .failed(let error):
+        settle(.failure(error))
+
+      case .cancelled:
+        settle(.failure(NSError(
+          domain: "chat.reaper.sockets", code: 2,
+          userInfo: [NSLocalizedDescriptionKey: "listener was cancelled before it bound"]
+        )))
+
+      default:
+        break
+      }
+    }
 
     listener.newConnectionHandler = { [weak self] connection in
       guard let self else { return }
@@ -163,8 +222,6 @@ final class TcpSockets {
 
     listener.start(queue: queue)
     self.listener = listener
-
-    return listener.port?.rawValue ?? port
   }
 
   func stopListening() {
