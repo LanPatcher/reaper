@@ -272,36 +272,21 @@ function makeKey(): { key: OnionKey; publicKey: Buffer } {
 // ---- the import path, in the order it happens ------------------------------
 //
 // `bridge.ts` cannot be executed here — it opens Electron — so this reads it.
-// Text, and normally that would be worth little; what makes it worth something
-// is that the assertion is about *order*, which is the property that cannot be
-// checked any other way and is the one that turns a bad file into a lost
-// account.
-
-{
-  const source = readFileSync(join(process.cwd(), "src/p2p/bridge.ts"), "utf8");
-  const handler = source.slice(source.indexOf("CHANNEL.importIdentity"));
-
-  const validated = handler.indexOf("checkOnionKey");
-  const destroyed = handler.indexOf("for (const [, store] of stores) store.close()");
-  const written = handler.indexOf("writeOnionKey");
-
-  ck("the import validates the service key", validated >= 0);
-  ck("before it closes anything", validated >= 0 && validated < destroyed);
-  ck("and writes it only after the identity is saved",
-     written > handler.indexOf("new ElectronKeystore().save"));
-
-  // The export has to reach for the key at all — the whole failure was an
-  // export that quietly did not.
-  const exporter = source.slice(
-    source.indexOf("CHANNEL.exportIdentity"),
-    source.indexOf("CHANNEL.importIdentity"),
-  );
-
-  ck("the export carries the service key", exporter.includes("readOnionKey"));
-  ck("and a missing one does not stop it",
-     exporter.includes("try {") && exporter.includes("catch"));
-}
-
+// The identity file is gone, and so are the assertions about it.
+//
+// Export and import were removed outright: a passphrase-protected copy of an
+// account, sitting in a file, going stale the moment anything changed, and
+// producing on restore a device that believed it was the original — which is
+// what filled the sync roster with addresses nothing ever answered at.
+//
+// Linking replaces it, and the property those tests were protecting is now
+// protected somewhere better. They checked the *order* of operations inside
+// one handler by reading its source as text, because a bad order meant a lost
+// account and nothing else could catch it. Pairing has no such order to get
+// wrong: nothing is destroyed, nothing is rewritten, and two devices reconcile
+// live. `pair.test.ts` checks it by running it over a connection that batches
+// and one that delivers a byte at a time, which is a far stronger thing to be
+// able to say than that the source mentions two functions in the right order.
 
 // ---- the file tor is actually given ----------------------------------------
 //

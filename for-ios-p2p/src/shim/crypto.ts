@@ -309,6 +309,75 @@ export function createHash(algorithm: string) {
   return api;
 }
 
+/**
+ * HMAC, built on the hashes above.
+ *
+ * Node has this natively and iOS does not, and CryptoKit's version is not
+ * reachable from here without another native plugin — so it is the textbook
+ * construction, which is short enough that adding a plugin for it would be the
+ * larger risk:
+ *
+ *     HMAC(K, m) = H((K' ^ opad) || H((K' ^ ipad) || m))
+ *
+ * `K'` is the key padded to the hash's block size, or the hash of the key when
+ * the key is longer than that. The block size is 64 bytes for every algorithm
+ * this supports; SHA-512 would need 128, so it is asserted rather than assumed
+ * — a silently wrong block size still produces plausible-looking output, and
+ * the failure would appear as a pairing that refuses a correct password.
+ */
+export function createHmac(algorithm: string, key: Buffer | Uint8Array | string) {
+  if (!HASHES[algorithm]) throw new Error(`unsupported hash: ${algorithm}`);
+
+  const BLOCK = 64;
+
+  if (algorithm === "sha512" || algorithm === "sha384") {
+    throw new Error(`hmac: ${algorithm} needs a 128-byte block, which this does not implement`);
+  }
+
+  let secret = typeof key === "string"
+    ? new Uint8Array(Buffer.from(key, "utf8"))
+    : new Uint8Array(key);
+
+  // A key longer than the block is replaced by its own digest, which is what
+  // makes the construction accept a key of any length.
+  if (secret.length > BLOCK) {
+    secret = new Uint8Array(createHash(algorithm).update(Buffer.from(secret)).digest() as Buffer);
+  }
+
+  const padded = new Uint8Array(BLOCK);
+  padded.set(secret);
+
+  const inner = new Uint8Array(BLOCK);
+  const outer = new Uint8Array(BLOCK);
+
+  for (let at = 0; at < BLOCK; at++) {
+    inner[at] = padded[at] ^ 0x36;
+    outer[at] = padded[at] ^ 0x5c;
+  }
+
+  const run = createHash(algorithm).update(Buffer.from(inner));
+
+  const api = {
+    update(data: Buffer | Uint8Array | string, encoding?: BufferEncoding) {
+      run.update(
+        typeof data === "string" ? Buffer.from(data, encoding ?? "utf8") : Buffer.from(data),
+      );
+      return api;
+    },
+
+    digest(encoding?: "hex" | "base64") {
+      const once = createHash(algorithm)
+        .update(Buffer.from(outer))
+        .update(run.digest() as Buffer)
+        .digest() as Buffer;
+
+      return encoding ? once.toString(encoding) : once;
+    },
+  };
+
+  return api;
+}
+
 export function hkdfSync(
   digest: string,
   ikm: Buffer | Uint8Array,

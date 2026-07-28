@@ -9469,6 +9469,7 @@
           status.className = "muted";
           card.appendChild(status);
 
+
           buttons(card, t("Export"), async function () {
             status.textContent = t("Packing…");
             try {
@@ -10282,242 +10283,7 @@
       // safety net that exists.
       // ===================================================================
 
-      function exportIdentityDialog() {
-        modal(t("Export identity"), function (card) {
-          var note = document.createElement("div");
-          note.className = "muted";
-          note.textContent =
-            t("Saves your key, friends list and servers to one encrypted file. Anyone who has the file and the passphrase can be you, so treat it like the key it contains.");
-          card.appendChild(note);
 
-          // The address is the part people find out about the hard way.
-          //
-          // A friend code contains it, so an account restored without it is
-          // unreachable by every code its owner has ever handed out — the name
-          // and the friends list come back and nobody new can connect. It
-          // travels in this file, and saying so is the difference between a
-          // backup somebody trusts and one they discover is incomplete on the
-          // day they need it.
-          var addr = document.createElement("div");
-          addr.className = "muted";
-          addr.textContent = myOnion
-            ? t("Your address travels with it, so your friend code keeps working on the device you restore onto.")
-            : t("Your address is not in this file yet — Tor has not published one on this device. Export again once it has, or your friend code will not work after a restore.");
-          card.appendChild(addr);
-
-          var pw = textRow(card, t("Passphrase"), "", "at least 8 characters");
-          pw.type = "password";
-          var pw2 = textRow(card, t("Repeat passphrase"), "", "");
-          pw2.type = "password";
-
-          var err = document.createElement("div");
-          err.className = "muted";
-          card.appendChild(err);
-
-          buttons(card, t("Export"), async function () {
-            if (pw.value.length < 8) {
-              err.textContent = t("At least 8 characters."); return;
-            }
-            if (pw.value !== pw2.value) {
-              err.textContent = t("Those do not match."); return;
-            }
-
-            err.textContent = t("Encrypting…");
-            try {
-              var bundle = await window.p2p.exportIdentity(pw.value);
-              // Saved through the same download path attachments use, so it
-              // lands wherever the browser puts files and needs no new
-              // main-process dialog.
-              saveDataUrl(
-                "data:application/json;base64," + btoa(bundle),
-                "reaper-identity-" + username + ".json",
-              );
-              closeModal();
-              flash(t("Identity exported — keep it somewhere safe"));
-            } catch (e) {
-              err.textContent = String((e && e.message) || e);
-            }
-          });
-          pw.focus();
-        });
-      }
-
-      function importIdentityDialog() {
-        var fresh = !username;
-
-        modal(t("Import identity"), function (card) {
-          var warn = document.createElement("div");
-          warn.className = fresh ? "muted" : "warn";
-          warn.textContent = fresh
-            ? t("Restores an account from a file you exported before. The key generated for this device a moment ago has never been used and is simply discarded.")
-            : t("This replaces the identity on this device. Whatever is here now will be unreachable unless you have exported it.");
-          card.appendChild(warn);
-
-          var note = document.createElement("div");
-          note.className = "muted";
-          note.textContent =
-            t("Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.");
-          card.appendChild(note);
-
-          // Said plainly, because it is a takeover rather than a copy.
-          //
-          // Two devices holding one service key both publish a descriptor for
-          // the same address, and whichever published most recently is the one
-          // people reach. That is not something the app can arbitrate, so the
-          // honest instruction is to stop using the old device.
-          var takes = document.createElement("div");
-          takes.className = "muted";
-          takes.textContent =
-            t("This device takes over the address in the file, so your existing friend code keeps working. Stop using the old device once you have done this — two devices answering at one address will each interrupt the other.");
-          card.appendChild(takes);
-
-          var chosen = null;
-          var pick = document.createElement("button");
-          pick.className = "ghost";
-          pick.textContent = t("Choose file…");
-          pick.onclick = function () {
-            var input = document.createElement("input");
-            input.type = "file";
-            input.accept = "application/json,.json";
-            input.onchange = function () {
-              var file = input.files && input.files[0];
-              if (!file) return;
-              var reader = new FileReader();
-              reader.onload = function () {
-                chosen = String(reader.result);
-                pick.textContent = file.name;
-              };
-              reader.readAsText(file);
-            };
-            input.click();
-          };
-          card.appendChild(pick);
-
-          var pw = textRow(card, t("Passphrase"), "", "");
-          pw.type = "password";
-
-          var err = document.createElement("div");
-          err.className = "muted";
-          card.appendChild(err);
-
-          buttons(card, t("Replace identity"), async function () {
-            if (!chosen) { err.textContent = t("Pick a file first."); return; }
-            err.textContent = t("Decrypting…");
-            try {
-              var res = await window.p2p.importIdentity(chosen, pw.value);
-              closeModal();
-              modal(t("Identity replaced"), function (c2) {
-                // What to do next is not the same on both platforms, and the
-                // desktop's instruction is impossible on the other one. iOS
-                // has no restart a person can perform from inside the app —
-                // Tor is restarted natively when the address changes, and the
-                // rest takes effect when the app is next opened.
-                var onPhone = false;
-                try {
-                  onPhone = window.native &&
-                    window.native.versions.desktop() === "ios";
-                } catch (_) { }
-
-                var m = document.createElement("div");
-                m.textContent = onPhone
-                  ? t("Now signed in as {id}. Close and reopen Reaper to finish — the old identity is still loaded in memory.", { id: res.userId })
-                  : t("Now signed in as {id}. Restart Reaper to finish — the old identity is still loaded in memory.", { id: res.userId });
-                c2.appendChild(m);
-
-                // What actually came back.
-                //
-                // A restore that returns the right user id and an empty
-                // friends list looks exactly like one that worked — that is
-                // how an empty account shipped, and how it went unnoticed
-                // until somebody went looking for a friend who was not there.
-                // Counted at the source and stated here, so the failure is
-                // visible at the moment it happens rather than a day later.
-                var w = document.createElement("div");
-                w.className = res.restored ? "muted" : "warn";
-                w.textContent = res.restored
-                  ? t("Restored {n} entries — {friends} friend(s) and {servers} server(s).", {
-                      n: res.restored, friends: res.friends, servers: res.servers,
-                    })
-                  : t("That file carried your key but no friends, servers or settings. It was written by an older version, or exported before you had any.");
-                c2.appendChild(w);
-
-                // Whether the address came across decides whether old friend
-                // codes still reach this person, so it is reported as a fact
-                // rather than left to be discovered.
-                var a = document.createElement("div");
-                a.className = res.onion ? "muted" : "warn";
-                a.textContent = res.onion
-                  ? t("Your address came with it: {at}. Friend codes you gave out before will reach this device once Tor has published it again.", { at: res.onion })
-                  : t("That file carried no address, so this device will publish a new one. Friend codes you gave out before will not reach it — send people a new code.");
-                c2.appendChild(a);
-
-                // ---- catch up, before anything else ------------------
-                //
-                // A restored account is as old as the file it came from. Every
-                // friend added, server joined and message sent on the other
-                // device since then is missing, and there is nothing on this
-                // screen to suggest that — it looks complete.
-                //
-                // So the catch-up is offered here rather than buried in
-                // settings, and skipping it says what skipping it costs.
-                if (res.canSync) {
-                  var sy = document.createElement("div");
-                  sy.className = "muted";
-                  sy.textContent =
-                    t("This backup knows where the device it came from can be reached. Catching up now brings over anything added since it was written — friends, servers, group chats and anything still waiting to send.");
-                  c2.appendChild(sy);
-
-                  var syb = document.createElement("button");
-                  syb.textContent = t("Catch up now");
-                  syb.onclick = async function () {
-                    syb.disabled = true;
-                    syb.textContent = t("Connecting over Tor — this takes a moment…");
-
-                    try {
-                      var got = await window.p2p.syncDevices();
-                      syb.textContent = got.events
-                        ? t("Brought over {n} events", { n: got.events })
-                        : t("Already up to date");
-                      await refreshDevices();
-                    } catch (e) {
-                      syb.disabled = false;
-                      syb.textContent = String((e && e.message) || e);
-                    }
-                  };
-                  c2.appendChild(syb);
-
-                  var skip = document.createElement("div");
-                  skip.className = "muted";
-                  skip.style.fontSize = "11px";
-                  skip.textContent =
-                    t("You can skip this, but until it runs your friends list and servers are as old as the backup file.");
-                  c2.appendChild(skip);
-                }
-
-                // Reloaded rather than closed.
-                //
-                // The import writes the restored account to disk and stops
-                // there. Everything on screen — the friends list, the servers,
-                // the profile — was read into memory when the app started, and
-                // none of it is re-read, so a successful restore leaves the
-                // interface showing the empty account it started with. On a
-                // desktop the instruction to restart papers over that; on a
-                // phone there is no restart to perform, and the result reads
-                // as a restore that brought nothing.
-                //
-                // Reloading re-runs startup against what was just written,
-                // which is the same thing a restart does and is available on
-                // both platforms.
-                buttons(c2, t("Reload"), function () {
-                  location.reload();
-                });
-              });
-            } catch (e) {
-              err.textContent = String((e && e.message) || e);
-            }
-          });
-        });
-      }
 
       // ===================================================================
       // QR codes
@@ -11267,38 +11033,131 @@
           mineText.style.cssText = "flex:1 1 200px;min-width:0";
           mineWrap.appendChild(mineText);
 
-          function drawMine() {
+          // ---- the password --------------------------------------------
+          //
+          // First, and gating the code below it, because the code is useless
+          // without it and showing them together invites setting one and
+          // forgetting the other. Linking hands over the entire account, so
+          // the only thing standing between a scanned code and somebody
+          // else's identity is this — and until it is set there is nothing to
+          // show.
+          var pwWrap = document.createElement("div");
+          pwWrap.style.cssText = "margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:8px";
+
+          // Placed above the code rather than appended after it. It is built
+          // here because `mineWrap` and `drawMine` have to be in scope, but on
+          // screen the password comes first — it is the thing that makes the
+          // code mean anything, and a reader who meets the code first has
+          // already been given something to copy before being told why it is
+          // safe to.
+          card.insertBefore(pwWrap, far);
+
+          var pwTitle = document.createElement("div");
+          pwTitle.style.cssText = "font-weight:600;margin-bottom:4px";
+          pwTitle.textContent = t("Pairing password");
+          pwWrap.appendChild(pwTitle);
+
+          var pwNote = document.createElement("div");
+          pwNote.className = "muted";
+          pwNote.style.fontSize = "11px";
+          pwNote.textContent =
+            t("You will type this on the other device. The code below is encrypted with it, so a photograph of your screen is worth nothing without it — and nobody can link to your account by scanning alone.");
+          pwWrap.appendChild(pwNote);
+
+          var pwRow = document.createElement("div");
+          pwRow.style.cssText = "display:flex;gap:6px;margin-top:8px;flex-wrap:wrap";
+          pwWrap.appendChild(pwRow);
+
+          var pwInput = document.createElement("input");
+          pwInput.type = "password";
+          pwInput.placeholder = t("at least 8 characters");
+          pwInput.autocomplete = "new-password";
+          pwInput.style.cssText = "flex:1 1 180px;min-width:0";
+          pwRow.appendChild(pwInput);
+
+          var pwSave = document.createElement("button");
+          pwSave.className = "primary";
+          pwSave.textContent = t("Set password");
+          pwRow.appendChild(pwSave);
+
+          var pwState = document.createElement("div");
+          pwState.className = "muted";
+          pwState.style.fontSize = "11px";
+          pwState.style.marginTop = "6px";
+          pwWrap.appendChild(pwState);
+
+          var hasPassword = false;
+
+          window.p2p.pairPassword().then(function (state) {
+            hasPassword = Boolean(state && state.set);
+            showPasswordState();
+            if (hasPassword) drawMine();
+          });
+
+          function showPasswordState() {
+            pwState.textContent = hasPassword
+              ? t("A password is set. Setting a new one replaces it — devices already linked stay linked.")
+              : t("No password set yet. Set one to get a code.");
+            mineWrap.style.display = hasPassword ? "flex" : "none";
+            far.style.display = hasPassword ? "block" : "none";
+          }
+
+          pwSave.onclick = async function () {
+            pwSave.disabled = true;
+
+            try {
+              await window.p2p.pairPassword(pwInput.value);
+              hasPassword = true;
+              pwInput.value = "";
+              showPasswordState();
+              await drawMine();
+            } catch (e) {
+              pwState.textContent = String((e && e.message) || e);
+            }
+
+            pwSave.disabled = false;
+          };
+
+          async function drawMine() {
             qrBox.textContent = "";
             mineText.textContent = "";
 
-            var address = devices && devices.syncOnion;
+            if (!hasPassword) { qrBox.style.display = "none"; return; }
 
-            if (!address) {
+            var invite;
+
+            try {
+              invite = await window.p2p.pairInvite();
+            } catch (e) {
               qrBox.style.display = "none";
 
-              var waiting = document.createElement("div");
-              waiting.className = "muted";
-              waiting.style.fontSize = "12px";
-              waiting.textContent =
-                t("This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.");
-              mineText.appendChild(waiting);
+              // Tor not ready is the common case and reads as breakage unless
+              // it is named. It takes a minute or two from a cold start.
+              var why = document.createElement("div");
+              why.className = "muted";
+              why.style.fontSize = "12px";
+              why.textContent = String((e && e.message) || e);
+              mineText.appendChild(why);
               return;
             }
 
             qrBox.style.display = "block";
-            qrBox.appendChild(qrElement(address.toUpperCase(), 148));
+            qrBox.appendChild(qrElement(invite.code, 148));
 
             var label = document.createElement("div");
             label.className = "muted";
             label.style.fontSize = "11px";
-            label.textContent = t("Scan this on your other device, or copy the address.");
+            label.textContent =
+              t("Scan this on your other device and enter the password. The code is useless to anyone who does not have it.");
             mineText.appendChild(label);
 
             var code = document.createElement("div");
-            code.className = "code";
+            code.className = "code selectable";
             code.style.cssText = "word-break:break-all;font-size:11px;margin:6px 0";
-            code.textContent = address;
+            code.textContent = invite.code;
             mineText.appendChild(code);
+
+            var address = invite.onion;
 
             var copyAddr = document.createElement("button");
             copyAddr.className = "ghost";
@@ -13134,17 +12993,19 @@
           };
           card.appendChild(cmp);
 
-          var expb = document.createElement("button");
-          expb.className = "ghost";
-          expb.textContent = t("Export identity");
-          expb.onclick = exportIdentityDialog;
-          br.appendChild(expb);
-
-          var impb = document.createElement("button");
-          impb.className = "ghost";
-          impb.textContent = t("Import identity");
-          impb.onclick = importIdentityDialog;
-          br.appendChild(impb);
+          // No export and no import.
+          //
+          // A file was the wrong shape for this. It is a copy of the account
+          // that exists outside any device, so it has to be defended by a
+          // passphrase the user picks and remembers, it goes stale the moment
+          // anything changes, and restoring it produced a device that believed
+          // it was the original — which is how the sync roster filled up with
+          // addresses nothing ever answered at.
+          //
+          // Linking replaces it and is strictly better: nothing is written to
+          // disk, nothing goes stale because the two devices reconcile live,
+          // and each end learns where the other actually is. See the Devices
+          // section below.
 
           // ---- your own devices ----------------------------------------
           var dvl = document.createElement("label");
