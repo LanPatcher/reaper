@@ -11118,7 +11118,50 @@
             pwSave.disabled = false;
           };
 
+          /**
+           * How long a shown code is good for.
+           *
+           * A pairing code is an address plus a way in, sitting on a screen.
+           * It is meant to be scanned within a minute or two of being asked
+           * for, so leaving it up indefinitely is only a risk — somebody walks
+           * past a monitor, or it stays on a shared display long after the
+           * person who wanted it has gone.
+           *
+           * Ten minutes is long enough to find your other device, plug it in
+           * and get through a Tor circuit, and short enough that an abandoned
+           * screen stops being an invitation.
+           */
+          var INVITE_MINUTES = 10;
+          var expiryTimer = null;
+
+          function expireInvite() {
+            if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; }
+
+            // Hidden, not merely marked stale. A code still legible on screen
+            // invites another attempt, and the failure it produces would be a
+            // timeout somewhere else entirely.
+            qrBox.textContent = "";
+            qrBox.style.display = "none";
+            mineText.textContent = "";
+
+            var gone = document.createElement("div");
+            gone.className = "muted";
+            gone.style.fontSize = "12px";
+            gone.textContent =
+              t("This code has expired. Codes last ten minutes so one cannot be left on screen indefinitely.");
+            mineText.appendChild(gone);
+
+            var again = document.createElement("button");
+            again.className = "primary";
+            again.style.marginTop = "8px";
+            again.textContent = t("Show a new code");
+            again.onclick = function () { drawMine(); };
+            mineText.appendChild(again);
+          }
+
           async function drawMine() {
+            if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; }
+
             qrBox.textContent = "";
             mineText.textContent = "";
 
@@ -11156,6 +11199,14 @@
             code.style.cssText = "word-break:break-all;font-size:11px;margin:6px 0";
             code.textContent = invite.code;
             mineText.appendChild(code);
+
+            var lasts = document.createElement("div");
+            lasts.className = "muted";
+            lasts.style.fontSize = "11px";
+            lasts.textContent = t("This code works for ten minutes.");
+            mineText.appendChild(lasts);
+
+            expiryTimer = setTimeout(expireInvite, INVITE_MINUTES * 60 * 1000);
 
             var address = invite.onion;
 
@@ -18283,8 +18334,20 @@
 
           try {
             var res = await window.p2p.pairJoin(code, pass);
-            if (res && res.ok) location.reload();
-            else $("setupErr").textContent = (res && res.error) || t("Could not link");
+
+            if (res && res.ok) { location.reload(); return; }
+
+            var why = (res && res.error) || t("Could not link");
+
+            // A code that has lapsed produces a connection that opens and then
+            // goes nowhere, because the other device is no longer offering to
+            // pair. Reported as what it is, rather than as a network problem
+            // the user cannot act on.
+            if (/timed out|never sent anything/i.test(why)) {
+              why = t("That code may have expired — ask the other device for a new one and try again.");
+            }
+
+            $("setupErr").textContent = why;
           } catch (e) {
             $("setupErr").textContent = String((e && e.message) || e);
           } finally {

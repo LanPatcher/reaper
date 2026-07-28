@@ -167,6 +167,9 @@ export class Socket extends EventEmitter {
    */
   #held: Buffer[] = [];
 
+  /** Set by `end`, so writes after it are refused rather than queued. */
+  #ended = false;
+
   constructor(id?: string) {
     super();
     this.id = id ?? freshId();
@@ -278,6 +281,36 @@ export class Socket extends EventEmitter {
       .catch((error: Error) => finished?.(error));
 
     return true;
+  }
+
+  /**
+   * Stop writing, but let what has been written go.
+   *
+   * The distinction from `destroy` matters and its absence here caused a real
+   * failure. Code that gives up on a connection wants to send *why* first, and
+   * `destroy` discards anything still buffered — so the explanation is thrown
+   * away and the peer sees only a closed socket.
+   *
+   * There was no `end` on this class at all, so that code crashed instead,
+   * inside its own error handler, replacing every pairing failure with
+   * "this.#socket.end is not a function" and destroying the message it was
+   * trying to deliver.
+   *
+   * The native side has no half-close, so this is as close as it gets: refuse
+   * further writes, and let the flush already in flight complete before the
+   * connection goes.
+   */
+  end(data?: Buffer | string): void {
+    if (this.#ended) return;
+    this.#ended = true;
+
+    if (data) this.write(data);
+
+    // A moment for the native queue to drain, then release the handle. Unref'd
+    // where the runtime supports it so this can never be the reason a process
+    // stays alive.
+    const done = setTimeout(() => this.destroy(), 250);
+    (done as unknown as { unref?: () => void }).unref?.();
   }
 
   destroy(): void {
