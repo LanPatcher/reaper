@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { Transport } from "../../../for-desktop-p2p/src/p2p/transport";
 
 import { createServer, setProxyPort, Socket } from "./net";
-import { calls, fire, grantPort, reset } from "./socket-stub";
+import { bindPorts, calls, fire, grantPort, reset } from "./socket-stub";
 
 /**
  * `node:net`, as the shared core actually calls it.
@@ -353,6 +353,77 @@ function within<T>(what: string, ms: number, work: Promise<T>): Promise<T | unde
   ck("and the other one is still accepting", arrived[0] === "chat", arrived.join(","));
 
   chat.close();
+}
+
+// ---- coming back after a reload ---------------------------------------------
+//
+// Linking calls `location.reload()`, because the page has to come back up as
+// the account it was just handed. That restarts the JavaScript and loses every
+// port it knew about. It does not restart Tor, which is a library in the same
+// process and refuses to be reconfigured while it is running — so Tor goes on
+// forwarding both onion services to the ports from before the reload.
+//
+// A fresh page that asks for "any port" therefore gets two that nothing points
+// at. The phone can still dial out and is unreachable to anything dialling it,
+// until the app is force-quit. What that looked like from the other end was a
+// link that plainly worked, followed by a desktop reporting that none of your
+// devices answered.
+//
+// The listeners themselves survive, so the fix is to find them again.
+
+{
+  reset();
+
+  // As if a previous run had bound these two and then the page reloaded:
+  // pairing first, transport second, which is the order `boot.ts` opens them.
+  bindPorts([51940, 51941]);
+
+  const pairing = createServer(() => {});
+  await within("the pairing listener comes back", 1000,
+    new Promise<void>((resolve) => { pairing.listen(0, () => resolve()); }));
+
+  const chat = createServer(() => {});
+  await within("the transport listener comes back", 1000,
+    new Promise<void>((resolve) => { chat.listen(0, () => resolve()); }));
+
+  ck("a reload re-attaches to the ports Tor is still forwarding to",
+     pairing.address()?.port === 51940 && chat.address()?.port === 51941,
+     `${pairing.address()?.port} / ${chat.address()?.port}`);
+
+  // And the accepts route correctly afterwards, which is the whole point —
+  // re-attaching to the right numbers and then dropping the connections would
+  // be the same failure with better logging.
+  const arrived: string[] = [];
+  pairing.on("connection", () => arrived.push("pairing"));
+  chat.on("connection", () => arrived.push("chat"));
+
+  fire("accept", { id: "in-after-reload", port: 51940 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  ck("and a device dialling the sync address still reaches the pairing service",
+     arrived[0] === "pairing", arrived.join(","));
+
+  pairing.close();
+  chat.close();
+}
+
+// And a first launch, where nothing is bound, still just asks for a port.
+{
+  reset();
+  grantPort(51950);
+
+  const server = createServer(() => {});
+  await within("a first launch binds normally", 1000,
+    new Promise<void>((resolve) => { server.listen(0, () => resolve()); }));
+
+  ck("with nothing already bound, a new port is requested",
+     server.address()?.port === 51950, String(server.address()?.port));
+
+  const asked = calls.filter((call) => call.name === "listen");
+  ck("and it asks the system to choose one",
+     asked.length === 1 && asked[0].args.port === 0, JSON.stringify(asked));
+
+  server.close();
 }
 
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");

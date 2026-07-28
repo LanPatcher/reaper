@@ -71,6 +71,16 @@ export interface SocketPlugin {
   /** Stop the listener on a port, or every listener when none is named. */
   stopListening(options?: { port?: number }): Promise<void>;
 
+  /**
+   * Ports already bound, oldest first.
+   *
+   * The listeners outlive a WebView reload and so does Tor, which goes on
+   * forwarding its two onion services to whichever ports it was told about at
+   * launch. After a reload the fresh page has to re-attach to those rather
+   * than bind two new ones nothing points at.
+   */
+  listeningPorts(): Promise<{ ports: number[] }>;
+
   addListener(event: "connect", handler: (e: SocketEvent) => void): Promise<Handle>;
   addListener(event: "accept", handler: (e: SocketAccept) => void): Promise<Handle>;
   addListener(event: "data", handler: (e: SocketData) => void): Promise<Handle>;
@@ -94,6 +104,7 @@ export const Socket = registerPlugin<SocketPlugin>("Socket", {
     close: async () => {},
     listen: async () => ({ port: 0 }),
     stopListening: async () => {},
+    listeningPorts: async () => ({ ports: [] }),
     addListener: async () => ({ remove: async () => {} }),
   }),
 });

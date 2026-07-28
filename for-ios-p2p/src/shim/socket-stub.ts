@@ -31,6 +31,20 @@ export function grantPort(port: number | undefined): void {
 }
 
 /**
+ * Ports the native side believes it is already listening on.
+ *
+ * Set directly to stand in for a WebView reload: the listeners belong to the
+ * Swift object, which outlives the page, so a fresh JavaScript context finds
+ * them already bound.
+ */
+const alreadyBound: number[] = [];
+
+export function bindPorts(ports: number[]): void {
+  alreadyBound.length = 0;
+  alreadyBound.push(...ports);
+}
+
+/**
  * Clear what was recorded, and deliberately *not* the handlers.
  *
  * `net.ts` installs its listeners once behind a module-level flag, exactly as
@@ -43,6 +57,7 @@ export function grantPort(port: number | undefined): void {
 export function reset(): void {
   calls.length = 0;
   grant = undefined;
+  alreadyBound.length = 0;
 }
 
 /** Push an event up, the way the plugin bridge would. */
@@ -83,7 +98,22 @@ export const Socket = {
     calls.push({ name: "listen", args });
 
     const asked = Number(args.port ?? 0);
-    return { port: grant ?? (asked || 51820) };
+    const port = asked || grant || 51820;
+
+    if (!alreadyBound.includes(port)) alreadyBound.push(port);
+    return { port: asked ? port : (grant ?? 51820) };
+  },
+
+  /**
+   * Ports the native side is already listening on, oldest first.
+   *
+   * Scriptable, because the case worth testing is the one that only happens
+   * after a WebView reload: listeners that outlived the JavaScript that opened
+   * them. See `bindPorts`.
+   */
+  async listeningPorts() {
+    calls.push({ name: "listeningPorts", args: {} });
+    return { ports: [...alreadyBound] };
   },
 
   async stopListening(args?: Record<string, unknown>) {

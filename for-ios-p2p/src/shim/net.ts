@@ -149,6 +149,51 @@ function only(): Server | undefined {
   return servers.size === 1 ? [...servers.values()][0] : undefined;
 }
 
+/**
+ * Which port to actually ask for, given the one the caller asked for.
+ *
+ * Almost always the same one. The exception is the case that made linking look
+ * as though it had half worked.
+ *
+ * Linking calls `location.reload()`, because the page has to come back up as
+ * the account it was just given. That restarts the JavaScript and everything
+ * in it — including the record of which loopback ports the two services are
+ * on. It does *not* restart Tor, which is a library in the same process, and
+ * `TorService.start` returns early when it is already running, so Tor cannot
+ * be told about new ports either. It goes on forwarding both onion services to
+ * the ports from before the reload.
+ *
+ * So a fresh page that asks for "any port" gets two nothing points at. The
+ * phone can still dial out, and is unreachable to every device that tries to
+ * dial *it*, until the app is force-quit — which presents as a link that
+ * worked, followed by a desktop reporting that none of your devices answered.
+ *
+ * The listeners themselves survive the reload, so what this does is find them
+ * again. Asked fresh each time rather than cached: there are two of these per
+ * launch, the call is a bridge round-trip against an array of two numbers, and
+ * a cache would need invalidating at exactly the moment this exists to handle.
+ */
+async function wanted(port: number): Promise<number> {
+  // A specific port was asked for. Nothing to work out.
+  if (port !== 0) return port;
+
+  let bound: number[];
+
+  try {
+    bound = (await Native.listeningPorts()).ports ?? [];
+  } catch {
+    // An older native build without the method, or the browser stub. Binding
+    // something new is the previous behaviour and remains correct on a first
+    // launch, which is the only case those two ever see.
+    return 0;
+  }
+
+  // The first one this context has not already claimed. `boot.ts` opens the
+  // pairing listener before the transport on every run, so taking them in the
+  // order they were bound puts each service back where Tor is sending it.
+  return bound.find((one) => !servers.has(one)) ?? 0;
+}
+
 let nextId = 0;
 function freshId(): string {
   return `out-${Date.now().toString(36)}-${nextId++}`;
@@ -461,7 +506,8 @@ export class Server extends EventEmitter {
   ): this {
     const announce = typeof host === "function" ? host : onListening;
 
-    void Native.listen({ port })
+    void wanted(port)
+      .then((asked) => Native.listen({ port: asked }))
       .then(({ port: bound }) => {
         // A port of zero is not a port. `transport.listen` resolves with
         // `this.port!` — read straight off `address()` — so a zero here means

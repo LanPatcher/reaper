@@ -68,6 +68,24 @@ final class TcpSockets {
    */
   private var listeners: [UInt16: NWListener] = [:]
 
+  /**
+   * The order they were bound in, which is what makes a reload recoverable.
+   *
+   * The WebView can reload — linking a device does exactly that, because the
+   * page has to come back up as somebody else — and it takes every listener
+   * the JavaScript knew about with it. Tor does not reload: it goes on
+   * forwarding both onion services to the ports it was told about at launch,
+   * and `TorService.start` returns early when it is already running, so it
+   * cannot be told new ones.
+   *
+   * So the ports that matter are the ones already bound here, and the fresh
+   * JavaScript has to find them again rather than ask for two new ones nothing
+   * forwards to. Order is how it tells them apart — `boot.ts` opens the
+   * pairing listener first and the transport second, on every run — so this
+   * preserves it. A dictionary alone does not.
+   */
+  private var order: [UInt16] = []
+
   private let emit: Events
 
   init(emit: @escaping Events) {
@@ -217,6 +235,8 @@ final class TcpSockets {
         // a listener filed under the port that was *asked* for would be filed
         // under zero.
         self?.listeners[bound] = listener
+        if self?.order.contains(bound) == false { self?.order.append(bound) }
+
         settle(.success(bound))
 
       case .failed(let error):
@@ -293,10 +313,25 @@ final class TcpSockets {
     if port == 0 {
       for listener in listeners.values { listener.cancel() }
       listeners.removeAll()
+      order.removeAll()
       return
     }
 
     listeners.removeValue(forKey: port)?.cancel()
+    order.removeAll { $0 == port }
+  }
+
+  /**
+   * The ports currently bound, oldest first.
+   *
+   * Read by the JavaScript after a reload so it can re-attach to the listeners
+   * Tor is still forwarding to, instead of binding two new ports that nothing
+   * points at. Without it, linking a device left the phone reachable only
+   * until the page reloaded — which linking always does — and it stayed
+   * unreachable until the app was force-quit.
+   */
+  func listeningPorts() -> [UInt16] {
+    order.filter { listeners[$0] != nil }
   }
 
   // ---- moving bytes --------------------------------------------------------
