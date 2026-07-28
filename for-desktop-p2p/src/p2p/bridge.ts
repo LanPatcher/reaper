@@ -991,8 +991,48 @@ async function openPair(): Promise<number> {
  * so a dialled session and an answered session are the same code reading the
  * same account, and there is no second set of hooks to drift out of step.
  */
+/**
+ * Make sure Tor is running as a *client*, whether or not there is an account.
+ *
+ * Tor is normally brought up by `netStart`, which the interface calls once it
+ * has an account to run. Linking is the one thing that has to work *before*
+ * that: a new device has no identity, sits on the setup screen, and its whole
+ * purpose in that moment is to reach a sibling and be given one.
+ *
+ * So on a fresh phone, scanning a code and pressing Link dialled through a Tor
+ * that had never been started, and the honest answer came back — "Tor has not
+ * opened its SOCKS port yet". Correct, and useless: nothing was ever going to
+ * start it.
+ *
+ * Started with the account service switched off, because there is no account
+ * to publish yet. The sync service still goes up, so this device can be
+ * dialled back the moment it has an identity worth reaching.
+ */
+async function ensureTorClient(): Promise<void> {
+  const forSync = await openPair();
+
+  if (!tor) {
+    tor = new TorService({
+      dataDir: join(root(), "tor"),
+      torPath: torExecutable(),
+
+      // Nothing to forward to yet: the chat transport is not listening, and
+      // with `account: false` the account service is not configured at all.
+      targetPort: forSync,
+      syncPort: forSync,
+      role: "account",
+      account: false,
+    });
+  }
+
+  if (!tor.running) {
+    log("[pair]", "starting Tor so this device can reach the other one");
+    await tor.start();
+  }
+}
+
 async function pairOverTor(onion: string): Promise<PairResult> {
-  await openPair();
+  await ensureTorClient();
 
   const socket = await socksConnect(onion, 80);
   return pair!.adopt(socket);
@@ -1500,12 +1540,27 @@ export function registerP2PHandlers(): void {
       log("[link]", `no device link on this device: ${String(error)}`);
     }
 
+    // Replace any client-only Tor started for linking.
+    //
+    // `ensureTorClient` brings Tor up before an account exists, with the
+    // account service off and `targetPort` pointing at the pairing service —
+    // because there is no chat transport listening yet. Leaving that instance
+    // in place once there *is* one would eventually publish the account
+    // address in front of the pairing protocol, which is the same "two
+    // protocols, one address" fault that made every link fail. So it is
+    // stopped and rebuilt against the real listener.
+    if (tor?.running) {
+      log("[tor]", "restarting with the chat transport in place");
+      tor.stop();
+    }
+
     tor = new TorService({
       dataDir: join(root(), "tor"),
       torPath: torExecutable(),
       targetPort: listening,
       syncPort: forSync,
       role: "account",
+      account: true,
     });
 
     // A device that publishes has a claim on record, always.
