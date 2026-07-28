@@ -54,6 +54,27 @@ export function proxyReady(): boolean {
 // ---- one set of listeners, demultiplexed by id ------------------------------
 
 const sockets = new Map<string, Socket>();
+
+/**
+ * Bytes that arrived for a socket this side had not registered yet.
+ *
+ * The native side accepts a connection and can deliver its first data event in
+ * the same turn, before the `accept` handler here has put the new `Socket` in
+ * the map. `sockets.get(id)?.receive(...)` then discards it — silently,
+ * because the optional call has nothing to report.
+ *
+ * What gets discarded is the *first* frame, which in the device link is the
+ * greeting. The exchange then continues one message out of step and fails with
+ * "expected a device link greeting and got proof" — an error about the second
+ * message, describing the loss of the first.
+ *
+ * Held here instead and handed over when the socket appears. Bounded, because
+ * an id that never registers must not accumulate: a peer that vanishes between
+ * accept and registration is a leak otherwise.
+ */
+const early = new Map<string, Buffer[]>();
+const EARLY_LIMIT = 64 * 1024;
+
 let wired = false;
 
 function wire(): void {
@@ -65,7 +86,19 @@ function wire(): void {
   });
 
   void Native.addListener("data", ({ id, data }) => {
-    sockets.get(id)?.receive(Buffer.from(data, "base64"));
+    const bytes = Buffer.from(data, "base64");
+    const socket = sockets.get(id);
+
+    if (socket) { socket.receive(bytes); return; }
+
+    // Not registered yet — see `early`. Kept rather than dropped.
+    const waiting = early.get(id) ?? [];
+    const held = waiting.reduce((total, chunk) => total + chunk.length, 0);
+
+    if (held + bytes.length > EARLY_LIMIT) return;
+
+    waiting.push(bytes);
+    early.set(id, waiting);
   });
 
   void Native.addListener("close", ({ id }) => {
@@ -123,6 +156,22 @@ export class Socket extends EventEmitter {
     if (id) this.#ready = true;
 
     wire();
+
+    if (!id) return;
+
+    // Anything that arrived before this object existed.
+    //
+    // Delivered on a later turn, because the caller has not had a chance to
+    // subscribe yet — emitting synchronously from a constructor means emitting
+    // to nobody, which is the same loss by a different route.
+    const waiting = early.get(id);
+    if (!waiting || !waiting.length) return;
+
+    early.delete(id);
+
+    queueMicrotask(() => {
+      for (const chunk of waiting) this.receive(chunk);
+    });
   }
 
   /** Node returns `this` so calls can be chained; the transport relies on it. */
@@ -254,6 +303,7 @@ export class Socket extends EventEmitter {
     if (this.#destroyed) return;
     this.#destroyed = true;
     sockets.delete(this.id);
+    early.delete(this.id);
     this.emit("close");
   }
 

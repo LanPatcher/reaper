@@ -9052,7 +9052,7 @@
 
         paintComposer();
         renderSide(); renderMessages();
-        if (!$("input").disabled) $("input").focus();
+        if (!$("input").disabled) focusComposer();
       }
 
       /**
@@ -9135,7 +9135,7 @@
         // keyboard up over half the conversation the moment it is opened,
         // before anyone has said they want to type — so opening a message to
         // read it means dismissing a keyboard first, every time.
-        if (!matchMedia("(hover: none)").matches) $("input").focus();
+        focusComposer();
       }
 
       async function openGroup(g) {
@@ -9181,7 +9181,7 @@
           excerpt: excerptOf(m),
         };
         paintReplyBar();
-        $("input").focus();
+        focusComposer();
       }
 
       function cancelReply() { replyTo = null; paintReplyBar(); }
@@ -11395,6 +11395,36 @@
             closeModal();
           });
         });
+      }
+
+      /**
+       * Put the cursor in the composer, where that is a kindness.
+       *
+       * On a desktop it saves a click. On a phone it throws the on-screen
+       * keyboard over half the conversation the moment one is opened, before
+       * anyone has said they want to type — so reading a message means
+       * dismissing a keyboard first, every time.
+       *
+       * One function rather than the check written at each call site: there
+       * were three, the first was fixed and the other two were not, and the
+       * behaviour was fixed for direct messages and still wrong for every
+       * server channel.
+       */
+      function focusComposer() {
+        var input = $("input");
+        if (!input || input.disabled) return;
+
+        // The class the phone build sets on the document, not a media query.
+        //
+        // `(hover: none)` looked like the right test and did not hold: a
+        // WKWebView does not always report it the way a mobile browser does,
+        // so the guard passed and the keyboard came up anyway. The class is
+        // set by the code that builds the phone layout, so it is true exactly
+        // when this is running on a phone and cannot disagree with itself.
+        if (document.documentElement.classList.contains("mobile")) return;
+        if (matchMedia("(hover: none)").matches) return;
+
+        input.focus();
       }
 
       function myFriendCode() {
