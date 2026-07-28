@@ -324,12 +324,29 @@ function makeKey(): { key: OnionKey; publicKey: Buffer } {
   ck("each directory is followed by its own port",
      dirs < port && port < syncDir && syncDir < syncPort);
 
-  // The thing that broke it. A second `new TorService` for the sync address
-  // reads as reasonable and cannot work.
+  // The thing that broke it: two tor processes, both trying to bind the same
+  // fixed SOCKS and control ports, so the second could never start.
+  //
+  // Counting `new TorService(` used to stand in for that, and it stopped
+  // being a fair proxy once linking needed Tor before an account exists —
+  // that path constructs one too, with the account service off. There are now
+  // legitimately two construction sites and still only ever one process.
+  //
+  // So the invariant is asserted directly instead: whichever site runs
+  // second must stop what the first one started.
   const bridge = readFileSync(join(process.cwd(), "src/p2p/bridge.ts"), "utf8");
   const instances = (bridge.match(/new TorService\(/g) ?? []).length;
 
-  ck("the bridge starts tor once, not twice", instances === 1, String(instances));
+  ck("the bridge has a bounded number of tor construction sites",
+     instances <= 2, String(instances));
+
+  // The one inside `netStart` replaces whatever linking may have started.
+  const netStart = bridge.slice(bridge.indexOf("let forSync = 0;"));
+  const stops = netStart.indexOf("tor.stop()");
+  const builds = netStart.indexOf("new TorService(");
+
+  ck("and the second one stops the first before replacing it",
+     stops >= 0 && stops < builds, `stop@${stops} build@${builds}`);
 
   // And the pairing server has to be listening before tor is configured,
   // because tor is told the port it forwards to and reads its configuration

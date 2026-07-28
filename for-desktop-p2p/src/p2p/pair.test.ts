@@ -692,10 +692,11 @@ await lopsided();
 
   const source = readFileSync(join(process.cwd(), "src/p2p/bridge.ts"), "utf8");
 
-  const configured = source.slice(
-    source.indexOf("let forSync = 0;"),
-    source.indexOf("role: \"account\""),
-  );
+  // Anchored on the *netStart* block specifically. Searching from the top of
+  // the file finds `role: "account"` inside the client-only Tor that linking
+  // starts, which sits earlier and made this slice run backwards.
+  const from = source.indexOf("let forSync = 0;");
+  const configured = source.slice(from, source.indexOf("new TorService(", from));
 
   ck(
     "the sync address forwards to the pairing service",
