@@ -1,3 +1,4 @@
+import { Keepalive } from "@reaper/keepalive";
 import { Scanner } from "@reaper/scanner";
 
 import { invoke, subscribe } from "./shim/electron";
@@ -96,6 +97,21 @@ export function installNative(): void {
     close: () => {},
 
     setBadgeCount: () => {},
+
+    /**
+     * Whether a call is up, which decides the audio session's category.
+     *
+     * At rest the app claims `.playback`, which leaves other audio on the
+     * device alone. A call needs the microphone, so it claims `.playAndRecord`
+     * and the hands-free Bluetooth profile — worse quality for everything
+     * playing, and therefore claimed only while a call is actually running.
+     */
+    setInCall: (active: boolean) => {
+      void Keepalive.setInCall({ active: Boolean(active) }).catch(() => {
+        // A call that cannot switch category still works; it is the quality
+        // that suffers, and there is nothing useful to show the user here.
+      });
+    },
 
     // Saving a file needs a share sheet, which is a native plugin this build
     // does not have yet. Doing nothing is wrong but quiet; saying so is not.

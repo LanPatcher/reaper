@@ -23,6 +23,7 @@ public class KeepalivePlugin: CAPPlugin, CAPBridgedPlugin {
     CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
     CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
     CAPPluginMethod(name: "status", returnType: CAPPluginReturnPromise),
+    CAPPluginMethod(name: "setInCall", returnType: CAPPluginReturnPromise),
   ]
 
   private let keepalive = Keepalive()
@@ -62,6 +63,18 @@ public class KeepalivePlugin: CAPPlugin, CAPBridgedPlugin {
   @objc func stop(_ call: CAPPluginCall) {
     keepalive.stop()
     call.resolve(["running": false])
+  }
+
+  /**
+   * Tell the audio session whether a call is in progress.
+   *
+   * Called from the call overlay rather than inferred here, because "a call is
+   * happening" is a fact the interface knows and this plugin does not.
+   */
+  @objc func setInCall(_ call: CAPPluginCall) {
+    let active = call.getBool("active") ?? false
+    let ok = keepalive.setInCall(active)
+    call.resolve(["ok": ok])
   }
 
   @objc func status(_ call: CAPPluginCall) {

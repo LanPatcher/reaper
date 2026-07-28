@@ -22,17 +22,17 @@ import Foundation
  *
  * ## Being a good citizen about it
  *
- * The category is `.playAndRecord` with `.mixWithOthers`, and each part
- * matters:
+ * The category depends on whether a call is in progress, and the reason it is
+ * not fixed is that this session outlives every individual use of it — it is
+ * installed at startup and stays installed, so a permanent claim to be a
+ * recording app is a permanent claim, including while somebody is listening to
+ * something else.
  *
- *   - `.playAndRecord` earns background execution *and* permits input.
- *     `.playback` earns the first and forbids the second, which is how voice
- *     calls came to report the microphone as unavailable. `.ambient`
- *     does not.
- *   - `.mixWithOthers` means this does not become the "now playing" app and
- *     does not stop anything else. Without it, launching Reaper would pause
- *     Spotify — silently, since our audio is silence — and the lock screen
- *     controls would start driving an app playing nothing.
+ * At rest: `.playback` with `.mixWithOthers`. Background execution, no input,
+ * and no effect on other audio on the device.
+ *
+ * In a call: `.playAndRecord` with `.allowBluetooth`, for as long as the call
+ * lasts and no longer.
  *
  * `.duckOthers` is deliberately absent: it would quieten other audio to make
  * room for ours, and ours is nothing.
@@ -60,6 +60,34 @@ import Foundation
  */
 final class Keepalive {
   private let session = AVAudioSession.sharedInstance()
+
+  /**
+   * Whether a call is actually in progress.
+   *
+   * This exists because the session is installed once, at startup, and stays
+   * installed for as long as the app is running — so whatever it claims, it
+   * claims the entire time, including while somebody is listening to an
+   * audiobook in another app.
+   *
+   * It used to claim `.playAndRecord` with `.allowBluetooth` permanently, and
+   * both halves of that degraded everything else playing on the device:
+   *
+   *   - `.allowBluetooth` is a request for HFP, the hands-free *phone call*
+   *     profile — 8 or 16 kHz, mono. Asking for it puts the headphones into
+   *     that profile for every app, so music and audiobooks come out sounding
+   *     like a speakerphone. The constant for "Bluetooth, but the good one" is
+   *     `.allowBluetoothA2DP`, and it is a different thing entirely.
+   *
+   *   - `.playAndRecord` reconfigures the hardware for input as well as
+   *     output, which changes the route and the rate whether or not anything
+   *     is recording.
+   *
+   * So at rest this is `.playback`: background execution, no input, no claim
+   * on the microphone and no effect on anybody else's audio. `.playAndRecord`
+   * is adopted only when a call starts, which is the only time the trade is
+   * worth making, and dropped again when it ends.
+   */
+  private var inCall = false
   private var engine: AVAudioEngine?
   private var player: AVAudioPlayerNode?
 
@@ -84,6 +112,67 @@ final class Keepalive {
    */
   private static let bufferSeconds: Double = 1.0
 
+  /**
+   * The category for the state the app is actually in.
+   *
+   * One function rather than a call site per state, because the failure this
+   * fixes was two call sites disagreeing about what the session was for.
+   */
+  private func applyCategory() throws {
+    if inCall {
+      // A call needs the microphone, and HFP is correct here: it is the only
+      // Bluetooth profile with an input path at all. The audio quality cost is
+      // real and unavoidable, and it lasts as long as the call rather than as
+      // long as the app.
+      try session.setCategory(
+        .playAndRecord,
+        mode: .voiceChat,
+        options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker]
+      )
+      return
+    }
+
+    // At rest. `.playback` still earns background execution — that is what
+    // keeps the connection alive with the screen locked — but it makes no
+    // claim on input, so nothing else on the device is disturbed.
+    //
+    // `.mixWithOthers` so this never becomes the "now playing" app and never
+    // pauses what somebody is already listening to.
+    try session.setCategory(
+      .playback,
+      mode: .default,
+      options: [.mixWithOthers]
+    )
+  }
+
+  /**
+   * Enter or leave call mode.
+   *
+   * Returns false if the switch failed, in which case the previous category is
+   * still in force — a call with no microphone is worth reporting, and silently
+   * carrying on with the wrong category is how this became hard to see.
+   */
+  @discardableResult
+  func setInCall(_ active: Bool) -> Bool {
+    if inCall == active { return true }
+
+    let previous = inCall
+    inCall = active
+
+    do {
+      try applyCategory()
+
+      // Re-activating is what makes the route change take effect on a session
+      // that is already running.
+      if running { try session.setActive(true, options: []) }
+      return true
+    } catch {
+      inCall = previous
+      lastError = "audio session: \(error.localizedDescription)"
+      return false
+    }
+  }
+
   func start() -> Bool {
     if running { return true }
     lastError = nil
@@ -91,27 +180,7 @@ final class Keepalive {
     do {
       // Announced before activating, so the system knows what kind of app this
       // is claiming to be before it is asked to grant anything.
-      // `.playAndRecord`, not `.playback`.
-      //
-      // `.playback` earns background execution and forbids input, and that
-      // second half is what broke voice: this session is installed at startup
-      // and stays installed, so by the time anything asks for a microphone the
-      // category already says this app does not record. `getUserMedia` then
-      // fails, and it fails as "microphone unavailable" rather than as
-      // anything naming an audio session.
-      //
-      // `.playAndRecord` keeps the background execution and permits input. The
-      // recording indicator only appears while something is actually
-      // capturing, so an idle app looks no different than it did.
-      //
-      // `.defaultToSpeaker` because the alternative is the earpiece: without
-      // it a call comes out of the receiver at the top of the phone, which
-      // sounds like the volume is broken.
-      try session.setCategory(
-        .playAndRecord,
-        mode: .default,
-        options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker]
-      )
+      try applyCategory()
       try session.setActive(true, options: [])
     } catch {
       lastError = "audio session: \(error.localizedDescription)"
