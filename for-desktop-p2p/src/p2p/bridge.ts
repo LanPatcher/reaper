@@ -35,7 +35,7 @@ import {
 import { WORTH_SYNCING, type LinkProgress } from "./link";
 import {
   openInvite, PairService, PICTURES as PAIR_PICTURES,
-  type Invite, type PairResult,
+  type Invite, type PairResult, type Scope,
 } from "./pair";
 import { CommunityStore } from "./store";
 import {
@@ -655,7 +655,10 @@ function syncAddressNow(): string | undefined {
  * for the network. Conversations, friends, servers, group chats and the outbox
  * cannot be fetched from anywhere else, so those always travel.
  */
-async function syncOverTor(entry: SyncAddress): Promise<LinkProgress> {
+async function syncOverTor(
+  entry: SyncAddress,
+  scope: Scope = "messages",
+): Promise<LinkProgress> {
   if (syncing.has(entry.onion)) {
     throw new Error("already syncing with that device");
   }
@@ -663,9 +666,10 @@ async function syncOverTor(entry: SyncAddress): Promise<LinkProgress> {
   syncing.add(entry.onion);
 
   try {
-    const result = await syncWithSibling(entry.onion);
+    const result = await syncWithSibling(entry.onion, scope);
 
-    log("[pair]", `synced with ${result.name || entry.name}: ${result.events} events`);
+    log("[pair]", `synced with ${result.name || entry.name} (${scope}): `
+      + `${result.events} events, ${result.pictures} pictures`);
 
     await publishIfHolding();
 
@@ -709,12 +713,13 @@ async function syncOverTor(entry: SyncAddress): Promise<LinkProgress> {
  */
 async function syncAllDevices(
   failures?: { name: string; error: string }[],
+  scope: Scope = "messages",
 ): Promise<LinkProgress[]> {
   const done: LinkProgress[] = [];
 
   for (const entry of others(syncAddresses(), thisDevice().id)) {
     try {
-      done.push(await syncOverTor(entry));
+      done.push(await syncOverTor(entry, scope));
     } catch (error) {
       // A device being switched off is the ordinary case and must not stop the
       // others being tried.
@@ -741,11 +746,28 @@ async function syncAllDevices(
 /** How often to catch up with no prompting at all. */
 const SYNC_EVERY_MS = 5 * 60 * 1000;
 
+/**
+ * How many of those passes go by between one that also carries pictures.
+ *
+ * Every sixth, so half an hour. Profile pictures, banners and server icons are
+ * the only files that cross a pairing at all — message attachments never do —
+ * and they change about as often as people change their minds about their
+ * avatar, which is to say rarely. Asking about them every five minutes costs a
+ * list of every picture on the account, in both directions, to establish that
+ * nothing has happened.
+ *
+ * A face that is twenty minutes out of date has cost nobody anything. A
+ * conversation that is twenty minutes out of date is a broken app, which is
+ * why messages are not on this schedule.
+ */
+const PICTURES_EVERY = 6;
+
 /** How long to let a burst of changes settle before acting on it. */
 const SYNC_SETTLE_MS = 20 * 1000;
 
 let syncTimer: ReturnType<typeof setInterval> | undefined;
 let syncSoon: ReturnType<typeof setTimeout> | undefined;
+let passes = 0;
 
 /**
  * Whether the user has already been told, this session, that a change would
@@ -763,8 +785,12 @@ function startSyncSchedule(): void {
   syncTimer = setInterval(() => {
     if (!others(syncAddresses(), thisDevice().id).length) return;
 
-    void syncAllDevices().then((done) => {
-      if (done.some((one) => one.events > 0)) announceDevices();
+    // Messages nearly always; pictures occasionally. See `PICTURES_EVERY`.
+    passes += 1;
+    const scope: Scope = passes % PICTURES_EVERY === 0 ? "everything" : "messages";
+
+    void syncAllDevices(undefined, scope).then((done) => {
+      if (done.some((one) => one.events > 0 || one.files > 0)) announceDevices();
     });
   }, SYNC_EVERY_MS);
 
@@ -943,6 +969,20 @@ async function openPair(): Promise<number> {
 
       return [...new Set([...onDisk, ...stores.keys(), INDEX])];
     },
+
+    /**
+     * What a device needs before it can be signed in.
+     *
+     * The private index and nothing else. It carries the username claim, which
+     * is the fact the interface reads to decide whether to show the setup
+     * screen — so the moment this lands the device stops being a stranger.
+     * It also carries the friends list, the server list and the claims, all of
+     * which are metadata rather than history, and all of which are small.
+     *
+     * What it does not carry is a single message. Those are the whole point of
+     * the app and none of them are needed to get into it.
+     */
+    essential: () => [INDEX],
 
     summary: (community) => storeFor(community).summary(),
     missingForSummary: (community, summary) =>
@@ -1209,10 +1249,20 @@ async function joinWithInvite(invite: Invite, password: string): Promise<PairRes
   return service.join(socket, invite, password);
 }
 
-/** Catch up with a device that already shares this account. */
-async function syncWithSibling(onion: string): Promise<PairResult> {
+/**
+ * Catch up with a device that already shares this account.
+ *
+ * `messages` by default, which is every conversation and no pictures — the
+ * shape the scheduled pass wants, because it is the one that runs most often
+ * and the picture list is the part whose cost does not fall once both sides
+ * have caught up.
+ */
+async function syncWithSibling(
+  onion: string,
+  scope: Scope = "messages",
+): Promise<PairResult> {
   const { socket, service } = await dialSibling(onion);
-  return service.sync(socket);
+  return service.sync(socket, scope);
 }
 
 function blobsFor(community: string): BlobStore {
@@ -1796,14 +1846,26 @@ export function registerP2PHandlers(): void {
     // is fully usable meanwhile, and everything this produces arrives as an
     // event.
     void (async () => {
-      // What the other devices did while this one was closed. Nothing here is
-      // urgent, and being wrong about the friends list for another minute
-      // costs less than a slow start.
-      await syncAllDevices();
+      // What the other devices did while this one was closed, in the order it
+      // becomes useful.
+      //
+      // Messages first, and on their own. On a device that has just been
+      // linked this is everything it does not yet have — every conversation
+      // and every server — and it is what somebody who has just signed in is
+      // waiting to see. The link itself deliberately carried none of it: it
+      // carried the account and the index, so the user was let in within
+      // seconds, and this is the pass that fills the app underneath them.
+      await syncAllDevices(undefined, "messages");
+      announceDevices();
+
+      // Then the pictures, once. Faces and server icons are the last thing
+      // worth waiting on and the first thing that is noticed missing, so they
+      // are fetched promptly but never ahead of a message.
+      await syncAllDevices(undefined, "everything");
+      announceDevices();
 
       // And from here on, without being asked.
       startSyncSchedule();
-      announceDevices();
     })().catch((error: Error) => log("[link]", error.message));
 
     return { port: listening, peers: [], onion };
@@ -2368,7 +2430,17 @@ export function registerP2PHandlers(): void {
     wantsAddress = true;
     announceDevices();
 
-    const settled = await syncAllDevices();
+    // The smallest pass there is, because settling a claim needs nothing else.
+    //
+    // Claims are exchanged in the greeting, before a single community is
+    // offered, so the holder has already agreed by the time anything else
+    // would have been transferred. This used to run a full sync — every
+    // server, every conversation, every picture — to establish one boolean,
+    // and the button that resolves "signed in on another device" sat on
+    // "Copying across and taking over…" for as long as that took. Whatever is
+    // new arrives on the schedule a moment later, from a device that is by
+    // then the one answering.
+    const settled = await syncAllDevices(undefined, "identity");
 
     if (settled.length) {
       // The other device gave it up during that exchange.
@@ -2424,8 +2496,12 @@ export function registerP2PHandlers(): void {
       );
     }
 
+    // Everything, because somebody asked for it by name. The scheduled passes
+    // keep messages current on their own and pictures current every half hour;
+    // pressing Sync is what somebody does when they do not want to wait for
+    // either, so it is the one pass that fetches the lot.
     const failures: { name: string; error: string }[] = [];
-    const done = await syncAllDevices(failures);
+    const done = await syncAllDevices(failures, "everything");
     announceDevices();
 
     if (!done.length) {
@@ -2565,7 +2641,7 @@ export function registerP2PHandlers(): void {
 
     for (const entry of others(syncAddresses(), me.id)) {
       try {
-        done.push(await syncWithSibling(entry.onion));
+        done.push(await syncWithSibling(entry.onion, "everything"));
       } catch (error) {
         failed.push({ name: entry.name, error: (error as Error).message });
       }
@@ -2594,9 +2670,10 @@ export function registerP2PHandlers(): void {
     // useful generic message for this: the person is standing in front of both
     // devices and can act on "connection refused" or "wrong account", and can
     // do nothing at all with "did not answer".
-    return syncOverTor({
-      device: "unknown", name: address.slice(0, 8), onion: address, at: Date.now(),
-    });
+    return syncOverTor(
+      { device: "unknown", name: address.slice(0, 8), onion: address, at: Date.now() },
+      "everything",
+    );
   });
 
   ipcMain.handle(CHANNEL.putBlob, (_, community: string, base64: string) => {

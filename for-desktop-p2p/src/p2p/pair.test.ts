@@ -93,6 +93,11 @@ function device(name: string, onion: string, hasAccount = true) {
     accountSecret: () => account,
 
     communities: () => [...logs.keys()],
+
+    // What the real bridge returns: the private index, which is what names the
+    // user and therefore what a device needs before it can be signed in.
+    essential: () => ["@index"],
+
     summary: (community) => summarise(logs.get(community) ?? []),
 
     missingForSummary: (community, summary) => {
@@ -246,11 +251,16 @@ async function connect(port: number): Promise<Socket> {
   // transcription of it has to derive the same key, or the failure lands on a
   // person who copied it correctly.
   ck(
-    "the passphrase works without its grouping dash",
-    openInvite(code, minted.password.replace("-", "")).ok,
+    "the passphrase has no punctuation to mistype",
+    !minted.password.includes("-"),
+    minted.password,
   );
   ck(
-    "and in lower case",
+    "and a dash typed out of habit is ignored",
+    openInvite(code, `${minted.password.slice(0, 4)}-${minted.password.slice(4)}`).ok,
+  );
+  ck(
+    "and it works in lower case",
     openInvite(code, minted.password.toLowerCase()).ok,
   );
   ck(
@@ -263,11 +273,11 @@ async function connect(port: number): Promise<Socket> {
   );
   ck(
     "and the passphrase itself has no ambiguous characters in it",
-    /^[A-Z2-7]{4}-[A-Z2-7]{4}$/.test(minted.password),
+    /^[A-Z2-7]{8}$/.test(minted.password),
     minted.password,
   );
 
-  const wrong = openInvite(code, "AAAA-AAAA");
+  const wrong = openInvite(code, "AAAAAAAA");
   ck("a different passphrase does not open it", !wrong.ok);
   ck(
     "and says so, rather than blaming the camera",
@@ -321,6 +331,12 @@ async function pairs(mode: "direct" | "batch" | "drip", reversed: boolean) {
   const desktop = device("Ray's desktop", "d".repeat(56) + ".onion");
   const phone = device("Ray's phone", "p".repeat(56) + ".onion");
 
+  // Already linked, which is the state this exercises: the full pass, with
+  // everything in it, over a connection doing its worst. The *first* link is
+  // deliberately tiny and is covered above; this is the one that has volume to
+  // mangle, and volume is what a length-prefixed reader has to survive.
+  phone.hooks.accountSecret = () => desktop.hooks.accountSecret();
+
   desktop.logs.set("@index", [event("a friend"), event("a server")]);
   desktop.logs.set("srv_one", [event("a message")]);
   phone.logs.set("@index", [event("something only the phone has")]);
@@ -330,30 +346,26 @@ async function pairs(mode: "direct" | "batch" | "drip", reversed: boolean) {
   desktop.pictures.set(avatarId, avatar);
   desktop.logs.set(PICTURES, [event("an avatar")]);
 
-  // Whoever shows the code listens; the other one scans it and dials.
-  const [shows, scans] = reversed ? [desktop, phone] : [phone, desktop];
+  // Either device can start a sync, so run it from each end.
+  const [listens, dials] = reversed ? [desktop, phone] : [phone, desktop];
 
-  const listener = new PairService(shows.hooks);
+  const listener = new PairService(listens.hooks);
   const direct = await listener.open();
   const port = mode === "direct" ? direct : await relay(direct, mode);
-
-  const minted = listener.mint(address());
-  const opened = openInvite(minted.code, minted.password);
 
   let result;
   let failed = "";
 
   try {
-    if (opened.ok !== true) throw new Error("the minted code did not open");
-    const dialler = new PairService(scans.hooks);
-    result = await dialler.join(await connect(port), opened.invite, minted.password);
+    result = await new PairService(dials.hooks)
+      .sync(await connect(port), "everything");
   } catch (error) {
     failed = (error as Error).message;
   }
 
   const label = `${mode}${reversed ? ", reversed" : ""}`;
 
-  ck(`pairs over a ${label} connection`, !failed, failed);
+  ck(`syncs over a ${label} connection`, !failed, failed);
   ck(`  and both sides finish`, Boolean(result?.done));
 
   ck(
@@ -384,8 +396,128 @@ for (const mode of ["direct", "batch", "drip"] as const) {
   await pairs(mode, false);
 }
 
-// The scanner is not always the same device, so run it the other way round too.
+// Either device can start a sync, so run it the other way round too.
 await pairs("batch", true);
+
+/**
+ * And the first link survives the same transport.
+ *
+ * Small, but not trivially small — it still carries an account, an index and a
+ * frame boundary that can fall anywhere. A reader that only works on a direct
+ * connection would pass every assertion above and fail on the one pass a user
+ * actually watches.
+ */
+{
+  const desktop = device("desktop", "d".repeat(56) + ".onion");
+  const fresh = device("phone", "p".repeat(56) + ".onion", false);
+
+  desktop.logs.set("@index", [event("a friend")]);
+
+  const listener = new PairService(fresh.hooks);
+  const direct = await listener.open();
+  const port = await relay(direct, "drip");
+
+  const minted = listener.mint(address());
+  const opened = openInvite(minted.code, minted.password);
+
+  let failed = "";
+  let result;
+
+  try {
+    if (opened.ok !== true) throw new Error("the minted code did not open");
+    result = await new PairService(desktop.hooks)
+      .join(await connect(port), opened.invite, minted.password);
+  } catch (error) {
+    failed = (error as Error).message;
+  }
+
+  ck("a first link survives a connection delivering one byte at a time", !failed, failed);
+  ck("  and completes", Boolean(result?.done));
+  ck("  and the account arrived", fresh.account === desktop.account);
+
+  await listener.close();
+}
+
+/* ---- what the first link is allowed to carry ----------------------------- */
+
+/**
+ * The link that somebody is watching carries the account and nothing else.
+ *
+ * This is the difference between a link that takes seconds and one that takes
+ * minutes, and the minutes were being spent in the worst possible place: the
+ * device being linked sat on a setup screen, with no name and no account,
+ * while every server's entire history and every avatar came across a Tor
+ * circuit — none of which is needed to be signed in, and all of which is
+ * useless until you are.
+ *
+ * So the first pass carries the account key and the private index, because the
+ * index is what names the user. Everything else follows on the schedule, from
+ * a device that by then is signed in and usable.
+ */
+{
+  const desktop = device("desktop", "d".repeat(56) + ".onion");
+  const fresh = device("phone", "p".repeat(56) + ".onion", false);
+
+  desktop.logs.set("@index", [event("a friend"), event("a server joined")]);
+  desktop.logs.set("srv_big", [event("one"), event("two"), event("three")]);
+  desktop.logs.set("dm_someone", [event("hello")]);
+
+  const avatar = randomBytes(2_000);
+  const avatarId = createHash("sha256").update(avatar).digest("hex");
+  desktop.pictures.set(avatarId, avatar);
+
+  const listener = new PairService(fresh.hooks);
+  const port = await listener.open();
+  const minted = listener.mint(address());
+  const opened = openInvite(minted.code, minted.password);
+
+  const result = opened.ok === true
+    ? await new PairService(desktop.hooks)
+        .join(await connect(port), opened.invite, minted.password)
+    : undefined;
+
+  ck("the first link completes", Boolean(result?.done));
+  ck("  and it is an identity pass", result?.scope === "identity", String(result?.scope));
+
+  ck("  the account came across", fresh.account === desktop.account);
+  ck(
+    "  and the index, which is what names the user",
+    (fresh.logs.get("@index") ?? []).length === 2,
+    `${(fresh.logs.get("@index") ?? []).length}`,
+  );
+
+  // The whole point. None of this is needed to be signed in, so none of it is
+  // allowed to stand between the user and being signed in.
+  ck(
+    "  but no server history",
+    !(fresh.logs.get("srv_big") ?? []).length,
+    `${(fresh.logs.get("srv_big") ?? []).length} events`,
+  );
+  ck(
+    "  and no direct conversations",
+    !(fresh.logs.get("dm_someone") ?? []).length,
+  );
+  ck("  and no pictures at all", fresh.pictures.size === 0, `${fresh.pictures.size}`);
+
+  await listener.close();
+
+  // And now the background passes, in the order the app runs them.
+  const second = new PairService(fresh.hooks);
+  const port2 = await second.open();
+
+  await new PairService(desktop.hooks).sync(await connect(port2), "messages");
+
+  ck("the messages pass brings the servers", (fresh.logs.get("srv_big") ?? []).length === 3,
+     `${(fresh.logs.get("srv_big") ?? []).length}`);
+  ck("  and the conversations", (fresh.logs.get("dm_someone") ?? []).length === 1);
+  ck("  and still no pictures", fresh.pictures.size === 0, `${fresh.pictures.size}`);
+
+  await new PairService(desktop.hooks).sync(await connect(port2), "everything");
+
+  ck("the occasional pass brings the pictures", fresh.pictures.has(avatarId));
+
+  await second.close();
+}
 
 /* ---- syncing afterwards, with nothing typed ------------------------------ */
 
@@ -666,6 +798,11 @@ async function lopsided() {
   const slow = device("Ray's phone", "p".repeat(56) + ".onion");
   const fast = device("Ray's desktop", "d".repeat(56) + ".onion");
 
+  // Two devices already linked, running the full pass — the one with enough
+  // in it for the faster side to get well ahead while the slower is still
+  // deriving a key.
+  slow.hooks.accountSecret = () => fast.hooks.accountSecret();
+
   fast.logs.set("@index", [event("a friend"), event("a server")]);
   fast.logs.set("srv_one", [event("a message")]);
 
@@ -675,8 +812,6 @@ async function lopsided() {
 
   const listener = new PairService(slow.hooks);
   const direct = await listener.open();
-  const minted = listener.mint(address());
-  const opened = openInvite(minted.code, minted.password);
 
   // Delay only what travels towards the listener, so its greeting is answered
   // long before it has read the answer — the far side authorises first and
@@ -703,9 +838,8 @@ async function lopsided() {
   let result;
 
   try {
-    if (opened.ok !== true) throw new Error("the minted code did not open");
     result = await new PairService(fast.hooks)
-      .join(await connect(port), opened.invite, minted.password);
+      .sync(await connect(port), "everything");
   } catch (error) {
     failed = (error as Error).message;
   }
