@@ -365,18 +365,28 @@ export class LinkService extends EventEmitter {
       device: "", name: "", events: 0, files: 0, communities: 0, done: false,
     };
 
+    /**
+     * Write one message.
+     *
+     * Every message on this connection is a 4-byte big-endian length followed
+     * by that many bytes, from the first byte to the last, whether or not it is
+     * encrypted. Only the *body* changes: the first two are plaintext JSON,
+     * because they are what establishes the key, and everything after is a
+     * sealed frame.
+     *
+     * That uniformity is the whole point, and it is why this is written out
+     * rather than delegated to `encodeFrame` alone. The reader has to find
+     * message boundaries before it can know anything about a message, and if
+     * finding a boundary depends on whether the key has been set yet, then the
+     * reader's behaviour depends on timing — see the note on the data handler.
+     */
     const send = (message: Message) => {
-      const body = Buffer.from(JSON.stringify(message), "utf8");
+      const json = Buffer.from(JSON.stringify(message), "utf8");
+      const body = key ? encodeFrame(json, key) : json;
 
-      if (!key) {
-        // Only the hello is in the clear, and it carries a hash and a nonce.
-        const header = Buffer.alloc(4);
-        header.writeUInt32BE(body.length);
-        socket.write(Buffer.concat([header, body]));
-        return;
-      }
-
-      socket.write(encodeFrame(body, key));
+      const header = Buffer.alloc(4);
+      header.writeUInt32BE(body.length);
+      socket.write(Buffer.concat([header, body]));
     };
 
     const deliver = (message: Message) => {
@@ -398,62 +408,119 @@ export class LinkService extends EventEmitter {
         waiting.push((message) => { clearTimeout(timer); resolve(message); });
       });
 
+    /**
+     * Split the stream into messages.
+     *
+     * ## Why this is not allowed to know about the key
+     *
+     * This used to have two modes. Before the key existed it read a plain
+     * length prefix; after, it called `decodeFrame`. It also cleared the buffer
+     * on the changeover, on the reasoning that the handshake was over and
+     * anything left was stale.
+     *
+     * Both of those are bugs, and together they are *the* bug — the one that
+     * made linking a device fail with a complaint about a message arriving out
+     * of order, reliably, for weeks, while ordinary chat over the same onion
+     * worked perfectly.
+     *
+     * The reason chat was fine is that its transport frames every message the
+     * same way from the first byte. This did not, and a handler that changes
+     * how it parses is a handler whose correctness depends on *when* it runs.
+     *
+     * Concretely: this loop is synchronous and drains the whole chunk, but the
+     * key is set from an `await` continuation, which is a microtask and cannot
+     * run until the loop has finished. Tor batches aggressively, so a single
+     * chunk routinely carries the greeting, the proof and the first encrypted
+     * message together. The first two parsed correctly. The third was a sealed
+     * frame handed to the plaintext parser, which read its magic number as a
+     * length, got something absurd, and gave up — after discarding the buffer.
+     * And then the buffer was discarded a second time when the key was finally
+     * set, taking whatever had arrived in the meantime with it.
+     *
+     * So framing is now uniform and unconditional: four bytes of length, then
+     * that many bytes, forever. Nothing here inspects the key, nothing clears
+     * the buffer, and a message that is only half-arrived is simply waited for.
+     * Whether a body is plaintext or sealed is decided by *position* in the
+     * conversation, below, which is the same on both sides and does not depend
+     * on what has or has not been scheduled yet.
+     */
+    let seen = 0;
+
     socket.on("data", (chunk) => {
       inbox = Buffer.concat([inbox, chunk]);
 
       for (;;) {
-        if (!key) {
-          if (inbox.length < 4) return;
-          const length = inbox.readUInt32BE(0);
+        if (inbox.length < 4) return;
 
-          // A length that could not be a hello.
-          //
-          // Worth naming, because the likeliest cause is not corruption: it is
-          // having reached the *wrong service* on the right device. Both the
-          // chat transport and this listen on loopback ports, and if an onion
-          // service is pointed at the wrong one the bytes that arrive are a
-          // perfectly valid frame of a completely different protocol. Read as
-          // a length prefix that is nonsense, and reported until now as "that
-          // is not a Reaper device link" — true, unhelpful, and pointing at
-          // the wrong thing.
-          if (length === 0 || length > 64 * 1024) {
-            deliver({
-              t: "wrong-service",
-              saw: inbox.subarray(0, Math.min(16, inbox.length)).toString("hex"),
-            } as unknown as Message);
-            inbox = Buffer.alloc(0);
-            return;
-          }
+        const length = inbox.readUInt32BE(0);
 
-          if (inbox.length < 4 + length) return;
-
-          const body = inbox.subarray(4, 4 + length);
-          inbox = inbox.subarray(4 + length);
-
-          try {
-            deliver(JSON.parse(body.toString("utf8")) as Message);
-          } catch {
-            // Framed like a link greeting and is not one. Reported rather than
-            // dropped, or the far end simply stops answering and the caller is
-            // told the device did not respond.
-            deliver({
-              t: "wrong-service",
-              saw: body.subarray(0, 24).toString("utf8"),
-            } as unknown as Message);
-            inbox = Buffer.alloc(0);
-            return;
-          }
-          continue;
+        // Not a link at all.
+        //
+        // Worth naming separately, because the likeliest cause is not
+        // corruption: it is having reached the *wrong service* on the right
+        // device. The chat transport and this both listen on loopback ports,
+        // and an onion service pointed at the wrong one delivers a perfectly
+        // valid frame of a completely different protocol.
+        //
+        // Only ever decided on the first message. After that the stream is
+        // known to be a link, so a bad length is a real desynchronisation and
+        // pretending otherwise would hide it.
+        if (length === 0 || length > 8 * 1024 * 1024) {
+          deliver({
+            t: seen === 0 ? "wrong-service" : "out-of-step",
+            saw: inbox.subarray(0, Math.min(16, inbox.length)).toString("hex"),
+          } as unknown as Message);
+          socket.destroy();
+          return;
         }
 
-        const frame = decodeFrame(inbox, 0, key);
-        if (!frame) return;
+        // Not all here yet. Keep it and wait — never discard a partial
+        // message, which is what a short read looks like and is not an error.
+        if (inbox.length < 4 + length) return;
 
-        inbox = inbox.subarray(frame.size);
+        const body = inbox.subarray(4, 4 + length);
+        inbox = inbox.subarray(4 + length);
+
+        // The first two messages each way are the greeting and the proof, in
+        // that order, and they are in the clear because they are what derives
+        // the key. Everything after them is sealed. Counting is deterministic
+        // and identical on both sides; asking "is the key set yet" is not.
+        const plain = seen < 2;
+        seen += 1;
+
+        let json: Buffer;
+
+        if (plain) {
+          json = body;
+        } else {
+          if (!key) {
+            // Cannot happen: the key is derived from the proof, which is
+            // message two, so it exists before message three is read. Stated
+            // rather than assumed, because the version of this that assumed it
+            // is the one that shipped broken.
+            deliver({ t: "out-of-step", saw: "sealed before key" } as unknown as Message);
+            socket.destroy();
+            return;
+          }
+
+          const frame = decodeFrame(body, 0, key);
+
+          if (!frame) {
+            deliver({ t: "out-of-step", saw: "unreadable frame" } as unknown as Message);
+            socket.destroy();
+            return;
+          }
+
+          json = frame.payload;
+        }
 
         try {
-          deliver(JSON.parse(frame.payload.toString("utf8")) as Message);
+          deliver(JSON.parse(json.toString("utf8")) as Message);
         } catch {
+          deliver({
+            t: seen === 1 ? "wrong-service" : "out-of-step",
+            saw: json.subarray(0, 24).toString("utf8"),
+          } as unknown as Message);
           socket.destroy();
           return;
         }
@@ -521,9 +588,9 @@ export class LinkService extends EventEmitter {
 
       key = sessionKey(identity, mine, hello.nonce);
 
-      // Anything still buffered was sent in the clear and is not trusted past
-      // this point. In practice there is nothing, because both sides wait.
-      inbox = Buffer.alloc(0);
+      // Nothing is discarded here. Bytes that arrived while this was being
+      // derived are the peer's next messages, already framed and waiting, and
+      // throwing them away was half of why linking a device never worked.
 
       // ---- who holds the address -------------------------------------------
 

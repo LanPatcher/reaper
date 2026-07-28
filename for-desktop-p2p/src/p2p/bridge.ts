@@ -31,6 +31,10 @@ import {
   standing,
 } from "./devices";
 import { LinkService, WORTH_SYNCING, type LinkProgress } from "./link";
+import {
+  openInvite, PairService, sealInvite, PICTURES as PAIR_PICTURES,
+  type PairResult,
+} from "./pair";
 import { CommunityStore } from "./store";
 import {
   TorService,
@@ -100,6 +104,10 @@ const CHANNEL = {
   linkOpen: "p2p:linkOpen",
   syncDevices: "p2p:syncDevices",
   syncWith: "p2p:syncWith",
+  pairPassword: "p2p:pairPassword",
+  pairInvite: "p2p:pairInvite",
+  pairJoin: "p2p:pairJoin",
+  pairSync: "p2p:pairSync",
   putBlob: "p2p:putBlob",
   getBlob: "p2p:getBlob",
   hasBlob: "p2p:hasBlob",
@@ -379,6 +387,7 @@ interface DeviceRecord {
 
 let device: DeviceRecord | undefined;
 let link: LinkService | undefined;
+let pair: PairService | undefined;
 
 /**
  * Where the renderer can be reached from outside a handler.
@@ -749,6 +758,135 @@ function changedSomethingWorthSyncing(): void {
 }
 
 /** Start listening and announcing for other devices of yours. */
+/**
+ * Where the pairing password lives.
+ *
+ * Stored as a scrypt-stretched verifier would be pointless here: both devices
+ * need the password itself to derive the same key, so it is kept as written,
+ * inside the account directory, which is already where the private key is. A
+ * threat model in which this file is readable is one in which the account is
+ * already gone.
+ */
+function passwordFile(): string {
+  return join(root(), "pair-password");
+}
+
+function pairPassword(): string | undefined {
+  try {
+    const read = readFileSync(passwordFile(), "utf8").trim();
+    return read || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function setPairPassword(password: string): void {
+  writeFileSync(passwordFile(), password, { mode: 0o600 });
+}
+
+/**
+ * The pairing service.
+ *
+ * Separate from `openLink` and on its own port, because they are different
+ * protocols and the onion service that fronts this one must point at exactly
+ * one of them. Sharing a port is how a link ends up reading chat frames.
+ */
+async function openPair(): Promise<number> {
+  if (pair?.port) return pair.port;
+
+  const me = thisDevice();
+
+  const service = new PairService({
+    device: me.id,
+    name: me.name,
+
+    onion: () => tor?.syncAddress ?? "",
+    password: () => pairPassword(),
+
+    communities: () => {
+      const dir = join(root(), "communities");
+      const onDisk = existsSync(dir)
+        ? readdirSync(dir, { withFileTypes: true })
+            .filter((entry) => entry.isDirectory())
+            .map((entry) => entry.name)
+        : [];
+
+      return [...new Set([...onDisk, ...stores.keys(), INDEX])];
+    },
+
+    summary: (community) => storeFor(community).summary(),
+    missingForSummary: (community, summary) =>
+      [...storeFor(community).missingForSummary(summary)],
+
+    merge: (community, events) => {
+      const result = storeFor(community).merge(events);
+
+      if (result.accepted.length) {
+        try {
+          viewer?.send(P2P_EVENT, community, result.accepted.map(forRenderer));
+        } catch { /* window gone */ }
+      }
+
+      return result.accepted.length;
+    },
+
+    pictureIds: () => blobsFor(PAIR_PICTURES).ids(),
+    readPicture: (id) => blobsFor(PAIR_PICTURES).read(id),
+    writePicture: (id, bytes) => { blobsFor(PAIR_PICTURES).accept(id, bytes); },
+
+    holding: () => holds(claimsFromLog(), thisDevice().id),
+    wants: () => wantsAddress,
+    claimN: () => holder(claimsFromLog())?.n ?? 0,
+
+    /**
+     * Remember a sibling.
+     *
+     * Written only from a session that proved the password, which is the fix
+     * for a roster that filled with addresses nothing ever answered at: a
+     * failed or half-finished attempt now leaves no trace at all.
+     */
+    learn: (peer) => {
+      storeFor(INDEX).append(SYNC, {
+        device: peer.device,
+        name: peer.name,
+        onion: peer.onion,
+        at: Date.now(),
+      });
+
+      try { viewer?.send("p2p:devices", syncAddresses()); } catch { /* window gone */ }
+    },
+
+    yield: (peer) => {
+      // The peer asked for the account address and this device has it. Step
+      // aside by appending a claim in their name, which both sides can read.
+      storeFor(INDEX).append(CLAIM, claimFor(claimsFromLog(), peer.device, peer.name));
+      wantsAddress = false;
+    },
+
+    asked: (peer) => {
+      try { viewer?.send("p2p:deviceAsked", peer); } catch { /* window gone */ }
+    },
+  });
+
+  pair = service;
+  return service.open();
+}
+
+/**
+ * Open a circuit to a sibling and run a pairing session over it.
+ *
+ * The session runs on the service that is already listening rather than on a
+ * second one built for the occasion — `adopt` uses that service's own hooks,
+ * so a dialled session and an answered session are the same code reading the
+ * same account, and there is no second set of hooks to drift out of step.
+ */
+async function pairOverTor(onion: string): Promise<PairResult> {
+  await openPair();
+
+  const socket = await socksConnect(onion, 80);
+  return pair!.adopt(socket);
+}
+
 async function openLink(): Promise<number> {
   if (link) return link.port;
 
