@@ -306,6 +306,81 @@ await pairs("batch", true);
   await listener.close();
 }
 
+/* ---- a failure that explains itself -------------------------------------- */
+
+/**
+ * The side that refuses has to say so.
+ *
+ * This is the difference between a bug that takes ten minutes and one that
+ * takes a week. When a session gave up it used to stop writing and close, so
+ * the peer saw a socket end and reported "that device closed the connection" —
+ * a sentence that covers a refused password, a crash in a hook, a dead circuit
+ * and a listener that was never there, and distinguishes none of them.
+ *
+ * Now the reason is written to the wire before the socket goes, and the
+ * assertion is that the *dialling* side ends up holding the *answering* side's
+ * explanation.
+ */
+{
+  const mine = device("mine", "correct horse", "m".repeat(56) + ".onion");
+  const noPassword = device("theirs", "", "t".repeat(56) + ".onion");
+
+  // A device with no pairing password set refuses everything, which is one of
+  // the states that used to be indistinguishable from a network failure.
+  noPassword.hooks.password = () => undefined;
+
+  const listener = new PairService(noPassword.hooks);
+  const port = await listener.open();
+
+  let why = "";
+  try {
+    await dial(new PairService(mine.hooks), port);
+  } catch (error) {
+    why = (error as Error).message;
+  }
+
+  ck("a refusal reaches the other device", Boolean(why), why);
+  ck(
+    "and carries the reason rather than just the disconnection",
+    /password/i.test(why) && !/closed the connection/i.test(why),
+    why,
+  );
+
+  await listener.close();
+}
+
+/**
+ * And when there is genuinely nothing to say, the stage is.
+ *
+ * A peer that accepts a connection and then vanishes cannot explain itself, so
+ * the message has to be built from what this side observed. Naming the stage
+ * turns one sentence into four, each with a different answer.
+ */
+{
+  const mine = device("mine", "correct horse", "m".repeat(56) + ".onion");
+
+  // Accepts, says nothing, hangs up — a listener on the right port speaking
+  // the wrong protocol, or an app still starting.
+  const mute = createServer((socket) => { setTimeout(() => socket.destroy(), 60); });
+  await new Promise<void>((done) => mute.listen(0, "127.0.0.1", () => done()));
+  const port = (mute.address() as { port: number }).port;
+
+  let why = "";
+  try {
+    await dial(new PairService(mine.hooks), port);
+  } catch (error) {
+    why = (error as Error).message;
+  }
+
+  ck(
+    "a silent peer is reported as silent, not as a refusal",
+    /never said anything/.test(why),
+    why,
+  );
+
+  mute.close();
+}
+
 /* ---- what the sync address forwards to ----------------------------------- */
 
 /**

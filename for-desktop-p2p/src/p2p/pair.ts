@@ -486,6 +486,17 @@ class Session {
   /** Ours, sent in the greeting, and what the peer must sign. */
   readonly #nonce = randomBytes(16).toString("hex");
 
+  /**
+   * How far this session got.
+   *
+   * Kept purely so that a connection dying early can say *where* it died.
+   * "That device closed the connection" was the only thing this could report
+   * for a long time, and it covers a refused password, a crash in a hook, a
+   * Tor circuit collapsing and a peer that was never listening — four
+   * different problems with four different answers, presented identically.
+   */
+  #stage: "opening" | "greeted" | "authorised" | "transferring" = "opening";
+
   #authorised = false;
   #saidDone = false;
   #heardDone = false;
@@ -542,8 +553,22 @@ class Session {
       this.#socket.on("close", () => {
         // A close after both sides finished is how a session ends, not a
         // failure. Only an early one is worth reporting.
-        if (this.#result.done) this.#settle();
-        else this.#fail("that device closed the connection");
+        if (this.#result.done) { this.#settle(); return; }
+
+        // Named by stage, because the answer differs completely between them.
+        this.#fail({
+          opening:
+            "that device accepted the connection but never said anything — " +
+            "it may be starting up, or the address may point at something else",
+          greeted:
+            "that device stopped after the greeting, before the password was " +
+            "proved — check that both devices have the same pairing password",
+          authorised:
+            "that device disconnected just after linking, before sending " +
+            "anything",
+          transferring:
+            "that device disconnected part-way through the transfer",
+        }[this.#stage]);
       });
 
       // Immediately, and without waiting for anything. This is the part the
@@ -582,6 +607,7 @@ class Session {
           this.#result.device = msg.device;
           this.#result.name = msg.name || "a device";
           this.#result.onion = msg.onion || "";
+          this.#stage = "greeted";
 
           this.#send({
             t: "hello",
@@ -605,6 +631,7 @@ class Session {
         }
 
         this.#authorised = true;
+        this.#stage = "authorised";
         this.#result.device = msg.device;
         this.#result.name = msg.name || this.#result.name || "a device";
         this.#result.onion = msg.onion || this.#result.onion;
@@ -672,6 +699,7 @@ class Session {
       }
 
       case "give":
+        this.#stage = "transferring";
         this.#result.events += this.#hooks.merge(msg.community, msg.events);
         return;
 
@@ -773,11 +801,44 @@ class Session {
     this.#resolve(this.#result);
   }
 
+  /**
+   * Give up, and say so to both sides.
+   *
+   * The `no` is the part worth having. Without it a session that failed here —
+   * a hook that threw, a password that did not match, a frame that would not
+   * parse — simply stopped writing, and the peer learned only that a socket
+   * had closed. Both devices then reported "the other one hung up", which is
+   * true of exactly one of them and useless on both.
+   *
+   * Sent before destroying, and only when this side has not already refused,
+   * so the reason survives the trip.
+   */
   #fail(why: string): void {
     if (this.#settled) return;
     this.#settled = true;
     if (this.#timer) clearTimeout(this.#timer);
-    this.#socket.destroy();
+
+    if (!this.#socket.destroyed) {
+      try {
+        this.#socket.write(frame({ t: "no", why }));
+
+        // Half-close rather than destroy, so the bytes just written are
+        // actually flushed — `destroy` discards anything still buffered, which
+        // is how the explanation kept getting lost.
+        this.#socket.end();
+
+        // But not indefinitely. A peer that has already gone will never
+        // acknowledge the close, and a half-closed socket waiting for it is an
+        // open handle that keeps the process alive. Given a moment to flush,
+        // then dropped; the timer is unref'd so it is never itself the reason
+        // anything stays up.
+        const shut = setTimeout(() => this.#socket.destroy(), 250);
+        shut.unref?.();
+      } catch {
+        // Nothing to be done; the message below is still reported locally.
+      }
+    }
+
     this.#reject(new Error(why));
   }
 }
