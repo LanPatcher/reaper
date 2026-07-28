@@ -868,6 +868,64 @@ async function openPair(): Promise<number> {
     readPicture: (id) => blobsFor(PAIR_PICTURES).read(id),
     writePicture: (id, bytes) => { blobsFor(PAIR_PICTURES).accept(id, bytes); },
 
+    /**
+     * The account, for a sibling that has none.
+     *
+     * Serialised as JSON rather than as an encrypted bundle: the only path it
+     * takes is a Tor circuit to an address the peer learned from a code shown
+     * on this screen, after proving the pairing password. That is already an
+     * authenticated, encrypted channel to a device the user just authorised by
+     * hand, and wrapping it again would only add a second passphrase to get
+     * wrong.
+     */
+    identity: () => {
+      if (!identity) return undefined;
+
+      let onionKey: string | undefined;
+
+      try {
+        onionKey = readOnionKey(join(root(), "tor", "onion"))?.toString("base64");
+      } catch {
+        // An account with no published address yet. The identity is still
+        // worth sending; the address can be republished from the key it
+        // derives.
+      }
+
+      return { identity: JSON.stringify(identity), onionKey };
+    },
+
+    /**
+     * Whether this device is still waiting for an account.
+     *
+     * True only before one exists. Once a device has an identity it never asks
+     * again — receiving a second would silently replace the first, and any
+     * history signed by it would stop verifying.
+     */
+    needsIdentity: () => !identity,
+
+    adoptIdentity: (account) => {
+      const arrived = JSON.parse(account.identity) as Identity;
+
+      if (!arrived?.privateKey || !arrived?.userId) {
+        throw new Error("that account arrived incomplete");
+      }
+
+      new ElectronKeystore().save(arrived);
+      identity = arrived;
+
+      // The address travels with the account, or every friend code anybody
+      // holds for this user stops working.
+      if (account.onionKey) {
+        try {
+          writeOnionKey(join(root(), "tor", "onion"), Buffer.from(account.onionKey, "base64"));
+        } catch (error) {
+          log("[pair]", `could not take on the onion key: ${String(error)}`);
+        }
+      }
+
+      log("[pair]", `took on account ${arrived.userId}`);
+    },
+
     holding: () => holds(claimsHeld(), thisDevice().id),
     wants: () => wantsAddress,
     claimN: () => holder(claimsHeld())?.n ?? 0,
