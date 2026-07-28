@@ -195,18 +195,34 @@
       #topbar { height: 46px; border-bottom: 1px solid var(--line); display: flex; align-items: center; padding: 0 16px; gap: 10px; flex-shrink: 0; }
       #topbar b { font-size: 15px; }
       #stats { margin-left: auto; color: var(--dim); font-size: 12px; }
-      #messages { flex: 1; overflow-y: auto; padding: 16px; }
-      .msg { display: flex; gap: 11px; padding: 3px 0; position: relative; }
+      /* The conversation is a fixed-width column that scrolls one way.
+       *
+       * `overflow-y: auto` alone leaves the horizontal axis free, so anything
+       * wider than the column — an attachment, a long unbroken URL, a code
+       * block — widens the whole list and the conversation scrolls sideways.
+       * Every message then has to be dragged back into view to read.
+       *
+       * `min-width: 0` on the flex children is the part that is easy to miss:
+       * a flex item defaults to `min-width: auto`, which means "never smaller
+       * than my contents", so a wide image pushes its row wider no matter what
+       * `max-width` says further down. */
+      #messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px; }
+      .msg { display: flex; gap: 11px; padding: 3px 0; position: relative; min-width: 0; }
+      .msg > * { min-width: 0; }
+      .msg .body { min-width: 0; overflow-wrap: anywhere; }
       .msg:hover { background: rgba(255,255,255,.02); }
       .msg .who { font-weight: 600; }
       .msg .when { color: var(--dim); font-size: 11px; margin-left: 7px; }
       .msg .body { white-space: pre-wrap; word-break: break-word; }
-      .msg img.att { max-width: 380px; max-height: 300px; border-radius: 8px; margin-top: 4px; display: block; }
+      /* Never wider than the column it is in. The pixel cap keeps a small
+         image from being blown up on a wide window; the percentage is what
+         stops a large one widening the conversation. */
+      .msg img.att { max-width: min(380px, 100%); max-height: 300px; height: auto; border-radius: 8px; margin-top: 4px; display: block; }
       /* Video sizes like an image but keeps its controls reachable, so no
          max-height that could crop the control bar out of view. */
       .st.call { background: #5865f2; }
-      .msg video.att { max-width: 420px; max-height: 320px; border-radius: 8px; margin-top: 4px; display: block; background: #000; }
-      .msg audio.att { width: 320px; margin-top: 4px; display: block; }
+      .msg video.att { max-width: min(420px, 100%); max-height: 320px; height: auto; border-radius: 8px; margin-top: 4px; display: block; background: #000; }
+      .msg audio.att { width: min(320px, 100%); margin-top: 4px; display: block; }
 
       /* A text file, read in place.
          The pre scrolls rather than the message list growing to fit it: a
@@ -414,7 +430,7 @@
       .drop { outline: 2px dashed var(--accent); outline-offset: -8px; }
       .chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border-radius: 6px; background: var(--side); border: 1px solid var(--line); font-size: 12px; margin-right: 6px; }
       .chip button { color: var(--dim); }
-      .filelink { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--side); border: 1px solid var(--line); border-radius: 8px; margin-top: 4px; max-width: 320px; }
+      .filelink { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: var(--side); border: 1px solid var(--line); border-radius: 8px; margin-top: 4px; max-width: min(320px, 100%); }
       .filelink .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       #banner { height: 90px; background: var(--main); border-radius: 10px 10px 0 0; background-size: cover; background-position: center; }
       .speaking { box-shadow: 0 0 0 3px var(--good); }
@@ -17741,7 +17757,16 @@
 
             // A sync that actually ran answers the note, so it goes away
             // rather than sitting there suggesting something already done.
-            if (info.synced) hideResync();
+            // Something arrived, so whatever was on screen about a failure is
+            // out of date. Two attempts can overlap — a scan and the scheduled
+            // pass — and the one that fails must not be the last word when the
+            // other succeeded.
+            if (info.synced) {
+              hideResync();
+              if (info.synced.events) {
+                flash(t("Brought over {n} events", { n: info.synced.events }));
+              }
+            }
 
             if (info.synced && info.synced.done) {
               flash(t("Copied {events} events and {files} files from {name}.", {
