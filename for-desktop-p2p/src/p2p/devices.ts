@@ -53,6 +53,64 @@ export interface Claim {
 /** The event type these are stored as, in the private index log. */
 export const CLAIM = "device.claim";
 
+/** Where one of your devices can be reached, whatever network it is on. */
+export const SYNC = "device.sync";
+
+/**
+ * A device of yours, and the onion address it answers sync on.
+ *
+ * Not the account's address. That one is published by whichever device is
+ * holding, so dialling it reaches the device that least needs reaching. Each
+ * device publishes a second, private service purely so its siblings can find
+ * it — which needs no port forwarding, works between continents, and is the
+ * only reason a phone on mobile data can take the account over from a desktop
+ * that is still switched on at home.
+ */
+export interface SyncAddress {
+  device: string;
+  name: string;
+  onion: string;
+  at: number;
+}
+
+export function isSyncAddress(value: unknown): value is SyncAddress {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Partial<SyncAddress>;
+
+  return typeof entry.device === "string" && entry.device.length > 0 &&
+    typeof entry.onion === "string" &&
+    /^[a-z2-7]{56}\.onion$/.test(entry.onion);
+}
+
+/**
+ * The current address for each device, newest wins.
+ *
+ * An address changes when a device is reinstalled, so the roster is a log of
+ * announcements rather than a set — and reading it means taking the latest per
+ * device rather than all of them. Dialling a stale one costs a timeout, which
+ * on Tor is expensive enough to be worth avoiding.
+ */
+export function roster(entries: readonly SyncAddress[]): SyncAddress[] {
+  const latest = new Map<string, SyncAddress>();
+
+  for (const entry of entries) {
+    if (!isSyncAddress(entry)) continue;
+
+    const held = latest.get(entry.device);
+    if (!held || entry.at > held.at) latest.set(entry.device, entry);
+  }
+
+  return [...latest.values()].sort((a, b) => b.at - a.at);
+}
+
+/** Everyone but this device — the ones worth dialling. */
+export function others(
+  entries: readonly SyncAddress[],
+  device: string,
+): SyncAddress[] {
+  return roster(entries).filter((entry) => entry.device !== device);
+}
+
 /**
  * A fresh device id.
  *

@@ -36,6 +36,8 @@ const SHIM_ALIASES = {
   "node:path": join(HERE, "src/shim/path.ts"),
   "node:net": join(HERE, "src/shim/net.ts"),
   "node:events": join(HERE, "src/shim/events.ts"),
+  "node:dgram": join(HERE, "src/shim/dgram.ts"),
+  "node:os": join(HERE, "src/shim/os.ts"),
   electron: join(HERE, "src/shim/electron.ts"),
 
   // The native plugins, which cannot load outside a WebView. The interop test

@@ -50,6 +50,9 @@ final class TorService {
     /// The loopback port tor forwards onion traffic to. The transport listens there.
     private var forwardTo: UInt16 = 0
 
+    /// Where the sync service forwards. The device link listens there.
+    private var forwardSyncTo: UInt16 = 0
+
     /// Where tor writes the control port it chose. An ordinary file.
     private var controlPortFile: URL?
 
@@ -59,6 +62,9 @@ final class TorService {
     private(set) var running = false
     private(set) var bootstrapped = false
     private(set) var onion: String?
+
+    /// This device's sync address, once its own service is published.
+    private(set) var syncOnion: String?
     private(set) var socksPort: UInt16 = 0
     private(set) var lastError: String?
 
@@ -77,11 +83,12 @@ final class TorService {
      * reported as events rather than waited for. A promise held open that long
      * is indistinguishable from a hang.
      */
-    func start(localPort: UInt16) {
+    func start(localPort: UInt16, syncPort: UInt16 = 0) {
         if running { return }
 
         lastError = nil
         forwardTo = localPort
+        forwardSyncTo = syncPort
 
         let configuration = TorConfiguration()
         configuration.ignoreMissingTorrc = true
@@ -90,6 +97,13 @@ final class TorService {
         do {
             let dataDirectory = try Self.dataDirectory()
             let serviceDirectory = try Self.serviceDirectory()
+            let syncDirectory = try Self.syncDirectory()
+
+            // Where the second service forwards to. The same listener as the
+            // first when nothing else was given, because the link server and
+            // the peer transport both speak on demand and a device with one
+            // port is still reachable at both addresses.
+            let syncPort = forwardSyncTo > 0 ? forwardSyncTo : localPort
 
             configuration.dataDirectory = dataDirectory
 
@@ -138,6 +152,33 @@ final class TorService {
 
                 // Version 3 addresses. The default now, stated anyway: v2 is
                 // retired and an old default would be silently insecure.
+                "--HiddenServiceVersion", "3",
+
+                // ---- the second service: this device's sync address -------
+                //
+                // A separate onion, with its own key, used by nothing but the
+                // other devices signed in as the same person.
+                //
+                // It has to be separate from the one above. The account's
+                // address is published by exactly one device at a time — that
+                // is what stops two of them fighting over it — so dialling it
+                // reaches whichever device is already holding, which is
+                // precisely the one that does not need to be reached. A phone
+                // that wants to take the account over from a desktop at home
+                // has no way to say so through an address the desktop owns.
+                //
+                // Published unconditionally, including while this device is
+                // displaced. A device that is not holding is the one that most
+                // needs to be reachable: it is how it finds out what it missed
+                // and how it takes the account back.
+                //
+                // The ordering is load-bearing. tor applies each
+                // `HiddenServicePort` to whichever `HiddenServiceDir`
+                // preceded it, so these four arguments are one unit and
+                // splitting them would silently point both services at the
+                // same port.
+                "--HiddenServiceDir", syncDirectory.path,
+                "--HiddenServicePort", "80 127.0.0.1:\(syncPort)",
                 "--HiddenServiceVersion", "3",
 
                 // Never a relay. The default already, said out loud because a
@@ -358,11 +399,39 @@ final class TorService {
         guard let directory = try? Self.serviceDirectory() else { return }
         let hostname = directory.appendingPathComponent("hostname")
 
+        // The sync address, read on the same pass.
+        //
+        // It publishes on its own schedule and may well arrive first, so it is
+        // picked up whenever it appears rather than waited for — a device that
+        // is reachable by its siblings before it is reachable by its friends
+        // is a perfectly ordinary state and worth reporting as soon as it is
+        // true.
+        if syncOnion == nil, let syncDirectory = try? Self.syncDirectory() {
+            let syncHostname = syncDirectory.appendingPathComponent("hostname")
+
+            if let text = try? String(contentsOf: syncHostname, encoding: .utf8) {
+                let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !address.isEmpty {
+                    syncOnion = address
+                    emit("sync", ["syncOnion": address])
+                }
+            }
+        }
+
         if let text = try? String(contentsOf: hostname, encoding: .utf8) {
             let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !address.isEmpty {
                 onion = address
-                emit("published", ["onion": address, "socksPort": Int(socksPort)])
+                emit("published", [
+                    "onion": address,
+                    "syncOnion": syncOnion as Any,
+                    "socksPort": Int(socksPort),
+                ])
+
+                // Kept going if the sync address has not appeared yet. The two
+                // services publish independently and stopping here would leave
+                // the second one permanently unreported.
+                if syncOnion == nil { self.keepReadingSyncAddress() }
                 return
             }
         }
@@ -376,6 +445,41 @@ final class TorService {
 
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [weak self] in
             self?.readOnionAddress(attempt: attempt + 1)
+        }
+    }
+
+    /**
+     * Keep looking for the sync address after the account address has arrived.
+     *
+     * The two services publish independently, and the account one usually wins
+     * because it is listed first. `readOnionAddress` returns as soon as it has
+     * what it was called for, so without this the second address would be
+     * looked for exactly once and then never again — and a device whose
+     * siblings cannot reach it has no way to say so.
+     */
+    private func keepReadingSyncAddress(attempt: Int = 0) {
+        if syncOnion != nil { return }
+
+        if let directory = try? Self.syncDirectory(),
+           let text = try? String(
+               contentsOf: directory.appendingPathComponent("hostname"),
+               encoding: .utf8
+           ) {
+            let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !address.isEmpty {
+                syncOnion = address
+                emit("sync", ["syncOnion": address])
+                return
+            }
+        }
+
+        // Two minutes, matching the account service. Given up on quietly: a
+        // device with no sync address still works, it simply has to be the one
+        // that dials rather than the one that answers.
+        guard attempt < 30 else { return }
+
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.keepReadingSyncAddress(attempt: attempt + 1)
         }
     }
 
@@ -393,6 +497,7 @@ final class TorService {
         bootstrapped = false
         socksPort = 0
         onion = nil
+        syncOnion = nil
 
         emit("stopped", [:])
     }
@@ -461,6 +566,29 @@ final class TorService {
     private static func serviceDirectory() throws -> URL {
         let directory = try dataDirectory()
             .appendingPathComponent("service", isDirectory: true)
+
+        try create(directory)
+
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: directory.path
+        )
+
+        return directory
+    }
+
+    /**
+     * The second service's directory: this device's own address.
+     *
+     * Beside the first rather than inside it, because tor takes a directory
+     * per service and will refuse to share one. Same protection, same
+     * exclusion from backup — a sync key restored onto a second phone would
+     * give two devices one sync address, which is the same collision this
+     * whole arrangement exists to avoid, one level down.
+     */
+    private static func syncDirectory() throws -> URL {
+        let directory = try dataDirectory()
+            .appendingPathComponent("sync-service", isDirectory: true)
 
         try create(directory)
 

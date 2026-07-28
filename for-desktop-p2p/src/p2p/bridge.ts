@@ -23,19 +23,25 @@ import { BlobStore, blobId } from "./blobs";
 import {
   CLAIM,
   type Claim,
+  SYNC,
+  type SyncAddress,
   claimFor,
   holds,
   isClaim,
+  isSyncAddress,
   newDeviceId,
+  others,
+  roster,
   standing,
 } from "./devices";
-import { LinkService, type LinkProgress } from "./link";
+import { LinkService, WORTH_SYNCING, type LinkProgress } from "./link";
 import { CommunityStore } from "./store";
 import {
   TorService,
   checkOnionKey,
   compareVersions,
   readOnionKey,
+  socksConnect,
   torVersion,
   writeOnionKey,
   type OnionKey,
@@ -99,6 +105,8 @@ const CHANNEL = {
   linkClose: "p2p:linkClose",
   linkPeers: "p2p:linkPeers",
   linkTo: "p2p:linkTo",
+  syncDevices: "p2p:syncDevices",
+  syncWith: "p2p:syncWith",
   putBlob: "p2p:putBlob",
   getBlob: "p2p:getBlob",
   hasBlob: "p2p:hasBlob",
@@ -490,6 +498,12 @@ function deviceInfo() {
     linking: !!link,
     linkPort: link?.port ?? 0,
     onion: tor?.address,
+
+    // Where your other devices reach this one. Shown so it can be typed or
+    // scanned on a device that has never met this one — after that the roster
+    // carries it and nobody has to look at it again.
+    syncOnion: syncTor?.address,
+    known: others(syncAddresses(), me.id),
   };
 }
 
@@ -534,8 +548,225 @@ async function publishIfHolding(): Promise<string | undefined> {
   }
 }
 
+// ---- reaching your own devices from anywhere --------------------------------
+//
+// The local network is the fast path and not the general one. Two devices in
+// different places still have to converge — that is the difference between an
+// identity that works across your devices and one that works across your
+// devices while they are in the same room.
+//
+// So each device publishes a *second* onion service, used only by its
+// siblings. Its address goes in the private index log, which syncs, so every
+// device learns where every other device is. A fresh install gets the first
+// address from the identity backup it was restored from, which is enough to
+// make contact once; after that the roster keeps itself.
+//
+// Onion services need no port forwarding and no fixed address, so this works
+// from mobile data, behind carrier NAT, from another country.
+
+/** Tor's second service on this device: the one only your devices dial. */
+let syncTor: TorService | undefined;
+
+/** The port the link server is listening on, for Tor to forward to. */
+let syncPort = 0;
+
+/** Guards against two syncs to the same device at once. */
+const syncing = new Set<string>();
+
+function syncAddresses(): SyncAddress[] {
+  try {
+    return storeFor(INDEX).events()
+      .filter((event) => event.type === SYNC)
+      .map((event) => decryptPayload(INDEX, event.payload))
+      .filter(isSyncAddress);
+  } catch {
+    return [];
+  }
+}
+
+/** Announce where this device can be reached, if it has moved. */
+function recordSyncAddress(onion: string): void {
+  const me = thisDevice();
+  const known = roster(syncAddresses()).find((entry) => entry.device === me.id);
+
+  if (known && known.onion === onion && known.name === me.name) return;
+
+  try {
+    storeFor(INDEX).append(SYNC, {
+      device: me.id, name: me.name, onion, at: Date.now(),
+    });
+  } catch (error) {
+    log("[link]", `could not record this device's sync address: ${String(error)}`);
+  }
+}
+
+/**
+ * Publish this device's sync service.
+ *
+ * Separate from the account's address in every way that matters: its own key,
+ * its own directory, published unconditionally rather than only when this
+ * device is holding. A device that has been displaced is exactly the one that
+ * most needs to be reachable — it is how it finds out what it missed, and how
+ * it takes the account back.
+ */
+async function startSyncService(): Promise<string | undefined> {
+  if (!syncPort) return undefined;
+  if (syncTor?.address) return syncTor.address;
+
+  try {
+    syncTor = new TorService({
+      dataDir: join(root(), "tor-sync"),
+      torPath: torExecutable(),
+      targetPort: syncPort,
+      role: "sync",
+    });
+
+    syncTor.on("log", (line: string) => log("[link]", line));
+
+    const onion = await syncTor.start();
+    log("[link]", `this device can be reached for sync at ${onion}`);
+
+    recordSyncAddress(onion);
+    announceDevices();
+
+    return onion;
+  } catch (error) {
+    // Not fatal. A device that cannot publish a sync address can still dial
+    // the ones that can, and one reachable device in the set is enough for
+    // everything to converge.
+    log("[link]", `no sync address on this device: ${(error as Error).message}`);
+    return undefined;
+  }
+}
+
+/**
+ * Sync with one of your devices over Tor.
+ *
+ * Files are left out. They are the large part by far, they can be fetched from
+ * whoever sent them, and pushing an attachment store through three relays to
+ * save a request that may never be made is a poor trade for both devices and
+ * for the network. Conversations, friends, servers, group chats and the outbox
+ * cannot be fetched from anywhere else, so those always travel.
+ */
+async function syncOverTor(entry: SyncAddress): Promise<LinkProgress | undefined> {
+  if (syncing.has(entry.device)) return undefined;
+  syncing.add(entry.device);
+
+  try {
+    await openLink({ announce: false });
+
+    const socket = await socksConnect(entry.onion, 80);
+    const progress = await link!.adopt(socket, { files: false });
+
+    log("[link]", `synced with ${entry.name} over Tor: ${progress.events} events`);
+
+    await publishIfHolding();
+    announceDevices({ synced: progress });
+
+    return progress;
+  } catch (error) {
+    log("[link]", `could not reach ${entry.name}: ${(error as Error).message}`);
+    return undefined;
+  } finally {
+    syncing.delete(entry.device);
+  }
+}
+
+/** Try every other device of yours, in turn. */
+async function syncAllDevices(): Promise<LinkProgress[]> {
+  const done: LinkProgress[] = [];
+
+  for (const entry of others(syncAddresses(), thisDevice().id)) {
+    const progress = await syncOverTor(entry);
+    if (progress) done.push(progress);
+  }
+
+  return done;
+}
+
+// ---- keeping the devices level, without being asked -------------------------
+//
+// Two schedules, because the two cases want different things.
+//
+// A *periodic* pass catches everything eventually and costs one Tor circuit
+// every few minutes. It is what makes an account that is left alone on two
+// machines converge without anybody thinking about it.
+//
+// A pass *after a change* is what makes it feel immediate — adding a friend on
+// a desktop and finding them on a phone a minute later, rather than after
+// whenever the timer next fires. It is debounced, because joining a server
+// writes several events in a row and each one should not be its own circuit.
+
+/** How often to catch up with no prompting at all. */
+const SYNC_EVERY_MS = 5 * 60 * 1000;
+
+/** How long to let a burst of changes settle before acting on it. */
+const SYNC_SETTLE_MS = 20 * 1000;
+
+let syncTimer: ReturnType<typeof setInterval> | undefined;
+let syncSoon: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Whether the user has already been told, this session, that a change would
+ * be worth syncing.
+ *
+ * Once. Somebody adding six friends in a row is doing one thing, and six
+ * notifications about it is a worse experience than none — the second and
+ * later ones carry no information and train people to dismiss the first.
+ */
+let recommended = false;
+
+function startSyncSchedule(): void {
+  if (syncTimer) return;
+
+  syncTimer = setInterval(() => {
+    if (!others(syncAddresses(), thisDevice().id).length) return;
+
+    void syncAllDevices().then((done) => {
+      if (done.some((one) => one.events > 0)) announceDevices();
+    });
+  }, SYNC_EVERY_MS);
+
+  // Left running while the app is, and not unref'd: this is a background task
+  // the user is relying on, not a nicety that should let the process exit.
+}
+
+/**
+ * Something changed that another device would want.
+ *
+ * Does two things, and they are separate on purpose. It schedules a sync,
+ * which handles it silently if the other device is reachable. And it tells the
+ * interface *once* per session, so that if the other device is switched off —
+ * which is the only case where this matters — the user finds out from a small
+ * note rather than from their phone being wrong tomorrow.
+ */
+function changedSomethingWorthSyncing(): void {
+  // Nothing to sync with. A single-device account should never see any of
+  // this, and checking here rather than in the interface means the interface
+  // cannot get it wrong.
+  if (!others(syncAddresses(), thisDevice().id).length) return;
+
+  if (syncSoon) clearTimeout(syncSoon);
+  syncSoon = setTimeout(() => {
+    syncSoon = undefined;
+    void syncAllDevices().then((done) => {
+      // Quietly, when it worked. The point of doing this automatically is that
+      // nobody has to be told about it.
+      if (done.length) {
+        recommended = false;
+        announceDevices();
+      }
+    });
+  }, SYNC_SETTLE_MS);
+
+  if (recommended) return;
+  recommended = true;
+
+  announceDevices({ recommend: true });
+}
+
 /** Start listening and announcing for other devices of yours. */
-async function openLink(): Promise<number> {
+async function openLink(options: { announce?: boolean } = {}): Promise<number> {
   if (link) return link.port;
 
   if (!identity) throw new Error("p2p: identity not initialised");
@@ -603,7 +834,9 @@ async function openLink(): Promise<number> {
   service.on("failed", (reason: string) => announceDevices({ failed: reason }));
 
   link = service;
-  return service.open();
+
+  syncPort = await service.open({ announce: options.announce !== false });
+  return syncPort;
 }
 
 function blobsFor(community: string): BlobStore {
@@ -861,6 +1094,18 @@ export function registerP2PHandlers(): void {
       // has one code path for "something happened" regardless of origin.
       event.sender.send(P2P_EVENT, community, [forRenderer(created)]);
 
+      // Your other devices care about some of this.
+      //
+      // Only the private index log, and only the handful of kinds another
+      // device would notice the absence of — see `WORTH_SYNCING`. Read
+      // receipts and window sizes change constantly and are nobody's business
+      // but this machine's, and syncing on every append would keep a Tor
+      // circuit permanently busy to no purpose.
+      if (community === INDEX && WORTH_SYNCING.has(type)) {
+        viewer = event.sender;
+        changedSomethingWorthSyncing();
+      }
+
       // Push straight to connected peers. Anyone offline picks it up from the
       // id exchange next time they connect, so this is a latency optimisation
       // rather than the delivery mechanism.
@@ -1082,6 +1327,7 @@ export function registerP2PHandlers(): void {
       dataDir: join(root(), "tor"),
       torPath: torExecutable(),
       targetPort: listening,
+      role: "account",
     });
 
     tor.on("log", (line: string) => log("[tor]", line));
@@ -1107,6 +1353,27 @@ export function registerP2PHandlers(): void {
     }
 
     announceDevices();
+
+    // The sync service, and a first pass at catching up.
+    //
+    // Deliberately not awaited. Publishing a second onion service takes as
+    // long as the first, and startup has no business waiting on it — the app
+    // is fully usable meanwhile, and everything this produces arrives as an
+    // event.
+    void (async () => {
+      await openLink({ announce: false });
+      await startSyncService();
+
+      // What the other devices did while this one was closed. Nothing here is
+      // urgent, and being wrong about the friends list for another minute
+      // costs less than a slow start.
+      await syncAllDevices();
+
+      // And from here on, without being asked.
+      startSyncSchedule();
+      announceDevices();
+    })().catch((error: Error) => log("[link]", error.message));
+
     return { port: listening, peers: [], onion };
   });
 
@@ -1620,8 +1887,23 @@ export function registerP2PHandlers(): void {
       log("[p2p]", `the onion key could not be read for export: ${String(error)}`);
     }
 
+    // Where the device that made this backup can be reached.
+    //
+    // This is what turns restoring an account from a copy into a restore that
+    // catches up. Without it a fresh device knows who it is and nothing about
+    // what has happened since the file was written, and the only way to fix
+    // that is to get both machines onto one network. With it, the new device
+    // dials the old one over Tor on first run and converges from anywhere.
+    //
+    // It is an address, not a key: it lets this device be *dialled*, and the
+    // handshake still demands a signature from the account's private key. A
+    // backup that leaks leaks the private key too, and next to that the
+    // address is not the part to worry about.
+    const syncOnion = syncTor?.address ??
+      roster(syncAddresses()).find((entry) => entry.device === thisDevice().id)?.onion;
+
     const payload = Buffer.from(
-      JSON.stringify({ v: 2, identity, index, onion, at: Date.now() }),
+      JSON.stringify({ v: 3, identity, index, onion, syncOnion, at: Date.now() }),
       "utf8",
     );
 
@@ -1684,6 +1966,7 @@ export function registerP2PHandlers(): void {
         identity: Identity;
         index?: SignedEvent[];
         onion?: OnionKey;
+        syncOnion?: string;
       };
 
       if (!parsed.identity || !parsed.identity.privateKey) {
@@ -1743,11 +2026,35 @@ export function registerP2PHandlers(): void {
       const me = thisDevice();
       addClaim(claimFor(claimsHeld(), me.id, me.name));
 
+      // Where the device this came from can be reached, so the first sync
+      // needs nothing typed and no shared network. Recorded even when the
+      // index already names it: a backup written after the last sync has the
+      // fresher address.
+      if (parsed.syncOnion && isSyncAddress({
+        device: "restored-from", name: "the device this was exported from",
+        onion: parsed.syncOnion, at: Date.now(),
+      })) {
+        storeFor(INDEX).append(SYNC, {
+          device: "restored-from",
+          name: "the device this was exported from",
+          onion: parsed.syncOnion,
+          at: Date.now(),
+        });
+      }
+
       storeFor(INDEX).close();
       stores.delete(INDEX);
 
       log("[p2p]", `identity replaced with ${parsed.identity.userId}`);
-      return { userId: parsed.identity.userId, onion };
+
+      return {
+        userId: parsed.identity.userId,
+        onion,
+
+        // The interface uses this to offer the catch-up straight away rather
+        // than leaving somebody to discover their friends list is a week old.
+        canSync: !!parsed.syncOnion,
+      };
     },
   );
 
@@ -1811,6 +2118,50 @@ export function registerP2PHandlers(): void {
   });
 
   ipcMain.handle(CHANNEL.linkPeers, () => link?.peers() ?? []);
+
+  /**
+   * Sync with your other devices over Tor.
+   *
+   * Everything except attachments, and from anywhere — this is the path that
+   * makes "the same account on my phone and my desktop" true rather than true
+   * while they are on the same wifi.
+   */
+  ipcMain.handle(CHANNEL.syncDevices, async (event) => {
+    viewer = event.sender;
+
+    const done = await syncAllDevices();
+    announceDevices();
+
+    return {
+      devices: done.length,
+      events: done.reduce((total, one) => total + one.events, 0),
+    };
+  });
+
+  /**
+   * Sync with a device at an address given by hand.
+   *
+   * The way in for a device that is not in the roster yet — the address shown
+   * on the other device, typed or scanned. Everything after this is automatic,
+   * because both ends record each other on the way through.
+   */
+  ipcMain.handle(CHANNEL.syncWith, async (event, onion: string) => {
+    viewer = event.sender;
+
+    const address = String(onion ?? "").trim().toLowerCase()
+      .replace(/^\w+:\/\//, "").split("/")[0];
+
+    if (!/^[a-z2-7]{56}\.onion$/.test(address)) {
+      throw new Error("that is not a sync address");
+    }
+
+    const progress = await syncOverTor({
+      device: "unknown", name: address.slice(0, 8), onion: address, at: Date.now(),
+    });
+
+    if (!progress) throw new Error("that device did not answer");
+    return progress;
+  });
 
   ipcMain.handle(CHANNEL.linkTo, async (event, host: string, port: number) => {
     viewer = event.sender;

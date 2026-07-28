@@ -344,6 +344,32 @@ export function randomBytes(size: number): Buffer {
   return Buffer.from(out);
 }
 
+/**
+ * Compare two buffers without leaking where they first differ.
+ *
+ * Node throws when the lengths differ rather than returning false, and callers
+ * are written expecting that — so this does too. Getting it wrong in the other
+ * direction would be worse than useless: a caller that relies on the throw to
+ * catch a malformed input would silently accept one.
+ *
+ * The loop has no early exit on purpose. That is the entire point of the
+ * function, and a compiler that short-circuits it would defeat it — which is
+ * why the result is accumulated rather than branched on.
+ */
+export function timingSafeEqual(
+  a: Buffer | Uint8Array,
+  b: Buffer | Uint8Array,
+): boolean {
+  if (a.length !== b.length) {
+    throw new RangeError("input buffers must have the same byte length");
+  }
+
+  let difference = 0;
+  for (let i = 0; i < a.length; i++) difference |= a[i] ^ b[i];
+
+  return difference === 0;
+}
+
 // ---- AES-256-GCM ------------------------------------------------------------
 //
 // Node splits the tag out: `cipher.final()` then `cipher.getAuthTag()`, and on

@@ -424,6 +424,22 @@
       }
 
       /* call overlay */
+      /* The resync note. Deliberately small and out of the way — it is a
+         suggestion about something that will sort itself out, not a problem. */
+      #resync {
+        position: fixed; left: 50%; transform: translateX(-50%);
+        bottom: 16px; z-index: 55;
+        display: flex; align-items: center; gap: 8px;
+        background: var(--side); border: 1px solid var(--line);
+        border-radius: 9px; padding: 8px 10px 8px 14px;
+        font-size: 12px; color: var(--dim);
+        box-shadow: 0 8px 26px rgba(0,0,0,.4);
+        max-width: min(560px, calc(100vw - 32px));
+      }
+      #resync.hide { display: none; }
+      #resync button { font-size: 12px; padding: 4px 8px; }
+      #resyncNo { color: var(--dim); padding: 4px 7px; }
+
       /* Another of your devices holds the address.
 
          Above the call overlay, because it is the more fundamental statement:
@@ -699,6 +715,24 @@
         <div id="deviceBtns"></div>
         <div id="deviceNote"></div>
       </div>
+    </div>
+
+    <!--
+      "Your other device does not know about this yet."
+
+      A strip rather than a dialog, and one per session rather than one per
+      change. Adding six friends in a row is one act; six notifications about
+      it carry no information after the first and teach people to dismiss the
+      thing without reading it.
+
+      Only ever shown to accounts that have actually linked a second device —
+      decided in the core, from the device roster, so this cannot appear for
+      somebody who has only ever used one machine.
+    -->
+    <div id="resync" class="hide">
+      <span id="resyncText"></span>
+      <button class="ghost" id="resyncGo"></button>
+      <button class="ghost" id="resyncNo">&#10005;</button>
     </div>
 
     <div id="modal"><div id="modalCard"></div></div>
@@ -1308,6 +1342,22 @@
             "Discarded": "Descartado",
             "Do not disturb": "No molestar",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "No uses la misma identidad en dos máquinas a la vez — ambas firmarían como la misma persona, y eso ya no se puede deshacer.",
+            "Your other devices do not know about this yet.": "Tus otros dispositivos todavía no saben esto.",
+            "This backup knows where the device it came from can be reached. Catching up now brings over anything added since it was written — friends, servers, group chats and anything still waiting to send.": "Esta copia sabe dónde localizar el dispositivo del que salió. Ponerse al día ahora trae todo lo añadido desde que se escribió — amistades, servidores, chats de grupo y lo que siga pendiente de enviar.",
+            "Catch up now": "Ponerse al día",
+            "Connecting over Tor — this takes a moment…": "Conectando por Tor — esto tarda un momento…",
+            "Brought over {n} events": "Traídos {n} eventos",
+            "Already up to date": "Ya está al día",
+            "Could not reach the other device — try again later": "No se ha podido contactar con el otro dispositivo — inténtalo más tarde",
+            "You can skip this, but until it runs your friends list and servers are as old as the backup file.": "Puedes saltártelo, pero hasta que se haga tu lista de amistades y tus servidores serán tan antiguos como el archivo de copia.",
+            "Tor published your address — your friend code is ready": "Tor ha publicado tu dirección — tu código de amistad está listo",
+            "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "¿No están en la misma red? Tus dispositivos también se alcanzan por Tor. No hay que abrir puertos — basta con la dirección de abajo, y solo le sirve a quien ya tenga tu clave.",
+            "Copy this device's sync address": "Copiar la dirección de sincronización de este dispositivo",
+            "Or enter the other device's sync address": "O introduce la dirección de sincronización del otro dispositivo",
+            "Sync over Tor": "Sincronizar por Tor",
+            "Copied {events} events from {name}.": "Copiados {events} eventos desde {name}.",
+            "Sync now": "Sincronizar ahora",
+            "Syncing…": "Sincronizando…",
             "Signed in on {name}": "Sesión iniciada en {name}",
             "another device": "otro dispositivo",
             "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable.": "Tu cuenta solo puede responder en un dispositivo a la vez, así que este no está recibiendo. Todo lo que ya está aquí se puede seguir leyendo.",
@@ -1962,6 +2012,22 @@
             "Discarded": "Abandonné",
             "Do not disturb": "Ne pas déranger",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "N'utilisez pas la même identité sur deux machines à la fois — les deux signeraient comme la même personne, et rien ne peut le démêler ensuite.",
+            "Your other devices do not know about this yet.": "Vos autres appareils ne le savent pas encore.",
+            "This backup knows where the device it came from can be reached. Catching up now brings over anything added since it was written — friends, servers, group chats and anything still waiting to send.": "Cette sauvegarde sait où joindre l'appareil dont elle provient. Se mettre à jour maintenant récupère tout ce qui a été ajouté depuis — amis, serveurs, discussions de groupe et ce qui attend encore d'être envoyé.",
+            "Catch up now": "Se mettre à jour",
+            "Connecting over Tor — this takes a moment…": "Connexion via Tor — cela prend un instant…",
+            "Brought over {n} events": "{n} événements récupérés",
+            "Already up to date": "Déjà à jour",
+            "Could not reach the other device — try again later": "Impossible de joindre l'autre appareil — réessayez plus tard",
+            "You can skip this, but until it runs your friends list and servers are as old as the backup file.": "Vous pouvez passer, mais tant que ce n'est pas fait votre liste d'amis et vos serveurs datent du fichier de sauvegarde.",
+            "Tor published your address — your friend code is ready": "Tor a publié votre adresse — votre code d'ami est prêt",
+            "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "Pas sur le même réseau ? Vos appareils se joignent aussi via Tor. Rien à rediriger — l'adresse ci-dessous suffit, et elle n'est utile qu'à quelqu'un qui a déjà votre clé.",
+            "Copy this device's sync address": "Copier l'adresse de synchronisation de cet appareil",
+            "Or enter the other device's sync address": "Ou saisissez l'adresse de synchronisation de l'autre appareil",
+            "Sync over Tor": "Synchroniser via Tor",
+            "Copied {events} events from {name}.": "{events} événements copiés depuis {name}.",
+            "Sync now": "Synchroniser maintenant",
+            "Syncing…": "Synchronisation…",
             "Signed in on {name}": "Connecté sur {name}",
             "another device": "un autre appareil",
             "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable.": "Votre compte ne peut répondre que sur un appareil à la fois, donc celui-ci ne reçoit rien. Tout ce qui est déjà ici reste lisible.",
@@ -2616,6 +2682,22 @@
             "Discarded": "Verworfen",
             "Do not disturb": "Bitte nicht stören",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "Verwende dieselbe Identität nicht auf zwei Rechnern gleichzeitig — beide würden als dieselbe Person signieren, und das lässt sich danach nicht mehr entwirren.",
+            "Your other devices do not know about this yet.": "Deine anderen Geräte wissen davon noch nichts.",
+            "This backup knows where the device it came from can be reached. Catching up now brings over anything added since it was written — friends, servers, group chats and anything still waiting to send.": "Diese Sicherung weiß, wo das Gerät zu erreichen ist, von dem sie stammt. Jetzt nachzuholen bringt alles mit, was seitdem dazugekommen ist — Freunde, Server, Gruppenchats und alles, was noch auf den Versand wartet.",
+            "Catch up now": "Jetzt nachholen",
+            "Connecting over Tor — this takes a moment…": "Verbindung über Tor — das dauert einen Moment…",
+            "Brought over {n} events": "{n} Ereignisse übernommen",
+            "Already up to date": "Schon aktuell",
+            "Could not reach the other device — try again later": "Das andere Gerät war nicht erreichbar — versuche es später noch einmal",
+            "You can skip this, but until it runs your friends list and servers are as old as the backup file.": "Du kannst das überspringen, aber bis dahin sind deine Freundesliste und deine Server so alt wie die Sicherungsdatei.",
+            "Tor published your address — your friend code is ready": "Tor hat deine Adresse veröffentlicht — dein Freundescode ist fertig",
+            "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "Nicht im selben Netzwerk? Deine Geräte erreichen sich auch über Tor. Es muss nichts weitergeleitet werden — die Adresse unten genügt, und sie nützt nur jemandem, der deinen Schlüssel ohnehin hat.",
+            "Copy this device's sync address": "Sync-Adresse dieses Geräts kopieren",
+            "Or enter the other device's sync address": "Oder gib die Sync-Adresse des anderen Geräts ein",
+            "Sync over Tor": "Über Tor synchronisieren",
+            "Copied {events} events from {name}.": "{events} Ereignisse von {name} kopiert.",
+            "Sync now": "Jetzt synchronisieren",
+            "Syncing…": "Wird synchronisiert…",
             "Signed in on {name}": "Angemeldet auf {name}",
             "another device": "einem anderen Gerät",
             "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable.": "Dein Konto kann immer nur auf einem Gerät antworten, deshalb empfängt dieses nichts. Alles, was schon hier ist, bleibt lesbar.",
@@ -3270,6 +3352,22 @@
             "Discarded": "Descartado",
             "Do not disturb": "Não incomodar",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "Não uses a mesma identidade em duas máquinas ao mesmo tempo — ambas assinariam como a mesma pessoa, e isso não se desfaz depois.",
+            "Your other devices do not know about this yet.": "Os teus outros dispositivos ainda não sabem disto.",
+            "This backup knows where the device it came from can be reached. Catching up now brings over anything added since it was written — friends, servers, group chats and anything still waiting to send.": "Esta cópia sabe onde encontrar o dispositivo de onde veio. Pôr em dia agora traz tudo o que foi acrescentado desde então — amigos, servidores, conversas de grupo e o que ainda espera para ser enviado.",
+            "Catch up now": "Pôr em dia",
+            "Connecting over Tor — this takes a moment…": "A ligar por Tor — isto demora um momento…",
+            "Brought over {n} events": "Trazidos {n} eventos",
+            "Already up to date": "Já está atualizado",
+            "Could not reach the other device — try again later": "Não foi possível contactar o outro dispositivo — tenta mais tarde",
+            "You can skip this, but until it runs your friends list and servers are as old as the backup file.": "Podes saltar isto, mas até correr a tua lista de amigos e os teus servidores são tão antigos como o ficheiro de cópia.",
+            "Tor published your address — your friend code is ready": "O Tor publicou o teu endereço — o teu código de amigo está pronto",
+            "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "Não estão na mesma rede? Os teus dispositivos também se alcançam por Tor. Não é preciso encaminhar nada — o endereço abaixo chega, e só serve a quem já tem a tua chave.",
+            "Copy this device's sync address": "Copiar o endereço de sincronização deste dispositivo",
+            "Or enter the other device's sync address": "Ou introduz o endereço de sincronização do outro dispositivo",
+            "Sync over Tor": "Sincronizar por Tor",
+            "Copied {events} events from {name}.": "Copiados {events} eventos de {name}.",
+            "Sync now": "Sincronizar agora",
+            "Syncing…": "A sincronizar…",
             "Signed in on {name}": "Sessão iniciada em {name}",
             "another device": "outro dispositivo",
             "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable.": "A tua conta só pode responder num dispositivo de cada vez, por isso este não está a receber. Tudo o que já está aqui continua legível.",
@@ -10202,6 +10300,49 @@
                   : t("That file carried no address, so this device will publish a new one. Friend codes you gave out before will not reach it — send people a new code.");
                 c2.appendChild(a);
 
+                // ---- catch up, before anything else ------------------
+                //
+                // A restored account is as old as the file it came from. Every
+                // friend added, server joined and message sent on the other
+                // device since then is missing, and there is nothing on this
+                // screen to suggest that — it looks complete.
+                //
+                // So the catch-up is offered here rather than buried in
+                // settings, and skipping it says what skipping it costs.
+                if (res.canSync) {
+                  var sy = document.createElement("div");
+                  sy.className = "muted";
+                  sy.textContent =
+                    t("This backup knows where the device it came from can be reached. Catching up now brings over anything added since it was written — friends, servers, group chats and anything still waiting to send.");
+                  c2.appendChild(sy);
+
+                  var syb = document.createElement("button");
+                  syb.textContent = t("Catch up now");
+                  syb.onclick = async function () {
+                    syb.disabled = true;
+                    syb.textContent = t("Connecting over Tor — this takes a moment…");
+
+                    try {
+                      var got = await window.p2p.syncDevices();
+                      syb.textContent = got.events
+                        ? t("Brought over {n} events", { n: got.events })
+                        : t("Already up to date");
+                      await refreshDevices();
+                    } catch (e) {
+                      syb.disabled = false;
+                      syb.textContent = t("Could not reach the other device — try again later");
+                    }
+                  };
+                  c2.appendChild(syb);
+
+                  var skip = document.createElement("div");
+                  skip.className = "muted";
+                  skip.style.fontSize = "11px";
+                  skip.textContent =
+                    t("You can skip this, but until it runs your friends list and servers are as old as the backup file.");
+                  c2.appendChild(skip);
+                }
+
                 buttons(c2, t("Close"), closeModal);
               });
             } catch (e) {
@@ -10226,6 +10367,56 @@
       // account across the local network first so that taking over does not
       // mean starting empty.
       // ===================================================================
+
+      /**
+       * Keep asking until Tor has published an address.
+       *
+       * `myOnion` used to be read exactly once, immediately after the network
+       * started, and never again. On the desktop that is very nearly correct —
+       * starting Tor there does not return until the hostname file exists — so
+       * the address was always present by the time anything asked.
+       *
+       * On a phone it never was. Tor is linked into the app and publishing a
+       * descriptor takes another minute or two after the circuit is up, so the
+       * one read always came back empty and stayed empty: the friend code said
+       * "waiting for Tor" for the whole session, over an onion service that
+       * had been live almost the entire time.
+       *
+       * Polling, because there is no event for this that crosses the bridge on
+       * both platforms, and a value that settles once in the life of the app
+       * does not justify inventing one.
+       */
+      function waitForOnion() {
+        var tries = 0;
+
+        var timer = setInterval(async function () {
+          tries++;
+
+          // Ten minutes. A device that has not published by then is not going
+          // to without something changing, and the network panel already says
+          // so in its own words.
+          if (myOnion || tries > 200) { clearInterval(timer); return; }
+
+          try {
+            var info = await window.p2p.netInfo();
+            if (!info || !info.onion) return;
+
+            myOnion = info.onion;
+            clearInterval(timer);
+
+            // The profile that went out without an address gets republished,
+            // so everyone who has this account saved learns where to reach it.
+            publishProfile();
+
+            // Said, because the panels that show it are built when they are
+            // opened — somebody who has been staring at "waiting for Tor"
+            // would otherwise have no reason to look again.
+            flash(t("Tor published your address — your friend code is ready"));
+          } catch (e) {
+            // Between states. Ask again.
+          }
+        }, 3000);
+      }
 
       var devices = null;
 
@@ -10280,6 +10471,59 @@
         // going to hit: the other device does not find out until they meet.
         $("deviceNote").textContent =
           t("{name} keeps answering until the two are on the same network again. Copy across first if it has messages this device has never seen.", { name: by.name || t("the other device") });
+      }
+
+      /**
+       * The resync note.
+       *
+       * Shown once a session, dismissed for good when dismissed, and never
+       * shown at all to an account that has only ever run on one device — the
+       * core decides that from the device roster rather than the interface
+       * guessing, so there is one place it can be got wrong instead of two.
+       *
+       * It is a suggestion, not a warning. The sync is already scheduled by
+       * the time this appears; all this adds is a way to hurry it along, and a
+       * reason for the other device being behind if it happens to be off.
+       */
+      var resyncDismissed = false;
+
+      function showResync() {
+        if (resyncDismissed) return;
+
+        var bar = $("resync");
+        if (!bar) return;
+
+        $("resyncText").textContent =
+          t("Your other devices do not know about this yet.");
+
+        var go = $("resyncGo");
+        go.textContent = t("Sync now");
+        go.onclick = async function () {
+          go.disabled = true;
+          go.textContent = t("Syncing…");
+          try {
+            var got = await window.p2p.syncDevices();
+            go.textContent = got.events
+              ? t("Brought over {n} events", { n: got.events })
+              : t("Already up to date");
+            await refreshDevices();
+          } catch (e) {
+            go.textContent = t("Could not reach the other device — try again later");
+          }
+          setTimeout(function () { hideResync(); }, 2200);
+        };
+
+        $("resyncNo").onclick = function () {
+          resyncDismissed = true;
+          hideResync();
+        };
+
+        bar.className = "";
+      }
+
+      function hideResync() {
+        var bar = $("resync");
+        if (bar) bar.className = "hide";
       }
 
       async function refreshDevices() {
@@ -10379,6 +10623,64 @@
               list.appendChild(row);
             });
           }
+
+          // ---- over Tor, from anywhere ---------------------------------
+          //
+          // The local network is the fast path, not the only one. Two devices
+          // in different places still have to end up holding the same friends
+          // list — so each publishes a private onion address that only its
+          // siblings dial, and everything but attachments travels over it.
+          var far = document.createElement("div");
+          far.className = "muted";
+          far.style.fontSize = "11px";
+          far.style.marginTop = "10px";
+          far.textContent =
+            t("Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.");
+          card.appendChild(far);
+
+          if (devices && devices.syncOnion) {
+            var mineAddr = document.createElement("div");
+            mineAddr.className = "code";
+            mineAddr.style.cssText = "word-break:break-all;font-size:11px";
+            mineAddr.textContent = devices.syncOnion;
+            card.appendChild(mineAddr);
+
+            var copyAddr = document.createElement("button");
+            copyAddr.className = "ghost";
+            copyAddr.textContent = t("Copy this device's sync address");
+            copyAddr.onclick = function () {
+              navigator.clipboard.writeText(devices.syncOnion);
+              copyAddr.textContent = t("Copied");
+              setTimeout(function () {
+                copyAddr.textContent = t("Copy this device's sync address");
+              }, 1200);
+            };
+            card.appendChild(copyAddr);
+          }
+
+          var other = textRow(card, t("Or enter the other device's sync address"),
+            "", "…….onion");
+
+          var dial = document.createElement("button");
+          dial.className = "ghost";
+          dial.textContent = t("Sync over Tor");
+          dial.onclick = async function () {
+            if (!other.value.trim()) return;
+            dial.disabled = true;
+            status.textContent = t("Connecting over Tor — this takes a moment…");
+
+            try {
+              var done = await window.p2p.syncWith(other.value.trim());
+              status.textContent = t("Copied {events} events from {name}.", {
+                events: done.events, name: done.name,
+              });
+              await refreshDevices();
+            } catch (e) {
+              status.textContent = String((e && e.message) || e);
+            }
+            dial.disabled = false;
+          };
+          card.appendChild(dial);
 
           window.p2p.linkOpen().then(function (open) {
             mine.textContent =
@@ -12188,6 +12490,31 @@
           dvb.textContent = t("Link a device");
           dvb.onclick = linkDialog;
           card.appendChild(dvb);
+
+          if (devices && devices.known && devices.known.length) {
+            var syn = document.createElement("button");
+            syn.className = "ghost";
+            syn.style.marginLeft = "6px";
+            syn.textContent = t("Sync now");
+            syn.onclick = async function () {
+              syn.disabled = true;
+              syn.textContent = t("Syncing…");
+              try {
+                var got = await window.p2p.syncDevices();
+                syn.textContent = got.events
+                  ? t("Brought over {n} events", { n: got.events })
+                  : t("Already up to date");
+                await refreshDevices();
+              } catch (e) {
+                syn.textContent = t("Could not reach the other device — try again later");
+              }
+              setTimeout(function () {
+                syn.disabled = false;
+                syn.textContent = t("Sync now");
+              }, 2500);
+            };
+            card.appendChild(syn);
+          }
 
           card.appendChild(br);
 
@@ -16673,6 +17000,8 @@
             // store can fail while the app is still starting, and the profile
             // is what everybody else reads a name and a face from.
             setTimeout(function () { publishProfile(); }, 30000);
+          } else {
+            waitForOnion();
           }
         } catch (e) { netPort = null; }
 
@@ -16696,6 +17025,12 @@
           window.p2p.onDevices(function (info) {
             devices = info;
             deviceOverlay();
+
+            if (info.recommend) showResync();
+
+            // A sync that actually ran answers the note, so it goes away
+            // rather than sitting there suggesting something already done.
+            if (info.synced) hideResync();
 
             if (info.synced && info.synced.done) {
               flash(t("Copied {events} events and {files} files from {name}.", {

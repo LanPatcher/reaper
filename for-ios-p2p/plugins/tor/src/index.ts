@@ -27,6 +27,8 @@ export type TorState =
   | "ready"
   /** The onion service is published. `onion` is set, and peers can reach us. */
   | "published"
+  /** This device's own sync address is published. `syncOnion` is set. */
+  | "sync"
   | "stopped"
   | "failed";
 
@@ -36,6 +38,16 @@ export interface TorEvent {
   summary?: string;
   socksPort?: number;
   onion?: string;
+
+  /**
+   * Where this device's *own* devices reach it.
+   *
+   * A second service with its own key, published whether or not this device
+   * currently holds the account address — a displaced device is the one that
+   * most needs to be reachable, because that is how it catches up and how it
+   * takes the account back.
+   */
+  syncOnion?: string;
   error?: string;
 }
 
@@ -53,6 +65,9 @@ export interface TorStatus {
    * resolves itself and the second does not.
    */
   onion: string | null;
+
+  /** This device's sync address, or null until its service is published. */
+  syncOnion: string | null;
   error?: string | null;
 }
 
@@ -80,7 +95,19 @@ export interface TorPlugin {
    * back to it, so a peer connecting to the onion address ends up on that
    * socket — which is the whole arrangement.
    */
-  start(options: { localPort: number }): Promise<{ running: boolean }>;
+  start(options: {
+    localPort: number;
+
+    /**
+     * Where the *sync* service forwards.
+     *
+     * The device link listens on its own port, separately from the peer
+     * transport, so the two onion services point at different places. Omitted
+     * means "the same port as the transport", which is wrong but harmless —
+     * it makes this device dialable at an address nothing is listening for.
+     */
+    syncPort?: number;
+  }): Promise<{ running: boolean }>;
 
   stop(): Promise<{ running: boolean }>;
   status(): Promise<TorStatus>;
@@ -129,6 +156,7 @@ export const Tor = registerPlugin<TorPlugin>("Tor", {
       bootstrapped: false,
       socksPort: 0,
       onion: null,
+      syncOnion: null,
       error: "not iOS",
     }),
     addListener: async () => ({ remove: async () => {} }),

@@ -43,7 +43,12 @@ public class TorPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        tor?.start(localPort: UInt16(port))
+        // A second port for the sync service, when the caller has one. The
+        // device link listens separately from the peer transport, so the two
+        // onion services forward to different places.
+        let syncPort = call.getInt("syncPort") ?? 0
+
+        tor?.start(localPort: UInt16(port), syncPort: UInt16(max(0, min(65535, syncPort))))
         call.resolve(["running": tor?.running ?? false])
     }
 
@@ -58,6 +63,10 @@ public class TorPlugin: CAPPlugin, CAPBridgedPlugin {
             "bootstrapped": tor?.bootstrapped ?? false,
             "socksPort": Int(tor?.socksPort ?? 0),
             "onion": tor?.onion as Any,
+
+            // Where this device's own siblings reach it. Separate from the
+            // account address on purpose — see TorService.swift.
+            "syncOnion": tor?.syncOnion as Any,
             "error": tor?.lastError as Any,
         ])
     }

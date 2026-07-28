@@ -390,6 +390,20 @@ contextBridge.exposeInMainWorld("p2p", {
     ipcRenderer.invoke("p2p:linkTo", host, port),
 
   /**
+   * Catch up with your other devices over Tor.
+   *
+   * Everything except attachments, from anywhere, with no port forwarding and
+   * without being on the same network. This is what makes friends, servers,
+   * group chats and the send queue the same on every device you own.
+   */
+  syncDevices: (): Promise<{ devices: number; events: number }> =>
+    ipcRenderer.invoke("p2p:syncDevices"),
+
+  /** Sync with a device whose sync address was typed or scanned. */
+  syncWith: (onion: string): Promise<LinkProgress> =>
+    ipcRenderer.invoke("p2p:syncWith", onion),
+
+  /**
    * Anything that changes about your devices.
    *
    * One subscription rather than three: losing the address, a device
@@ -422,9 +436,25 @@ interface DeviceInfo {
   linkPort: number;
   onion?: string;
 
+  /** Where your other devices reach this one, once Tor has published it. */
+  syncOnion?: string;
+
+  /** Your other devices, and where they can be reached. */
+  known: { device: string; name: string; onion: string; at: number }[];
+
   /** Present only on the event that reports one. */
   synced?: LinkProgress;
   failed?: string;
+
+  /**
+   * Something changed that your other devices have not been told yet.
+   *
+   * Sent once per session, and only when this account has actually linked
+   * another device. The sync is already scheduled by the time this arrives —
+   * it exists so that a device which happens to be switched off is a thing the
+   * user knows about rather than discovers tomorrow.
+   */
+  recommend?: boolean;
 }
 
 interface LinkPeer {
