@@ -49,7 +49,7 @@ const METHODS = [
   "torStatus",
   "putBlob", "getBlob", "hasBlob", "wantBlob", "sweepBlobs", "forgetBlob",
   "deviceInfo", "deviceName", "deviceTakeOver",
-  "pairPassword", "pairInvite", "pairJoin", "pairSync",
+  "pairInvite", "pairRevoke", "pairJoin", "pairSync",
   "linkOpen",
   "syncDevices", "syncWith",
 ] as const;

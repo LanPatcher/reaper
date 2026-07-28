@@ -41,6 +41,17 @@ const CONTROL_PORT = 9251;
  */
 const SOCKS_TIMEOUT_MS = 45000;
 
+/**
+ * How long to give tor to open that port at startup.
+ *
+ * Binding a loopback port is immediate; what is actually being waited on is
+ * the process starting, reading its torrc and getting far enough to listen —
+ * which on a cold machine with a slow disk is seconds, not milliseconds. Well
+ * short of the bootstrap, which happens after this and which nothing here
+ * blocks on.
+ */
+const SOCKS_BOOT_MS = 30000;
+
 export interface TorOptions {
   /** Directory for Tor's state and the onion service key. */
   dataDir: string;
@@ -152,14 +163,30 @@ export class TorService extends EventEmitter {
   }
 
   /**
-   * Start Tor and publish an onion service.
+   * Start Tor, and do not return until it can carry an outbound connection.
    *
-   * Resolves once the hostname file exists, which is Tor's signal that the
-   * service descriptor has been generated. Publication to the directory
-   * authorities takes a further few seconds; peers may not be able to reach
-   * the address immediately.
+   * Two things are waited for, in this order, and the order is the point:
+   *
+   *   1. **The SOCKS port**, always. This is what makes the process a client,
+   *      and it is what every dial goes through — including the dial that
+   *      links a brand-new device, which happens before this app has an
+   *      account, an address, or anything to publish. Waiting for it here is
+   *      what lets the rest of the app treat "Tor is up" as meaning "you can
+   *      reach somebody".
+   *
+   *   2. **The account address**, but only when the account service is
+   *      actually configured. This used to be waited for unconditionally, so a
+   *      client-only Tor — the one linking starts — sat for the full sixty
+   *      seconds on a hostname file for a service its own configuration did not
+   *      contain, and then threw. A minute of nothing, followed by an error
+   *      about publishing, on the one code path where publishing is not
+   *      wanted.
+   *
+   * Publication to the directory authorities takes a further few seconds after
+   * the hostname appears; peers may not be able to reach the address the
+   * instant this resolves.
    */
-  async start(): Promise<string> {
+  async start(): Promise<string | undefined> {
     if (!existsSync(this.#options.torPath)) {
       throw new Error(
         `tor not found at ${this.#options.torPath}\n` +
@@ -172,14 +199,30 @@ export class TorService extends EventEmitter {
     const serviceDir = join(dataDir, "onion");
     mkdirSync(serviceDir, { recursive: true, mode: 0o700 });
 
+    /**
+     * The client half, which is never conditional.
+     *
+     * SOCKS, the control port and the data directory are what make this a Tor
+     * *client* — the thing every outbound connection goes through. They have
+     * nothing to do with which services are published, and separating them
+     * from the service lines below is not tidiness.
+     *
+     * These three used to be in the same array as the hidden-service lines,
+     * and a device that was not publishing its account address emptied that
+     * array — all of it. The result was a tor with no `SocksPort`, which falls
+     * back to 9050, while `socksConnect` dials the 9250 configured here. Every
+     * outbound connection was refused, and the app reported the only thing it
+     * could see: Tor has not opened its SOCKS port.
+     *
+     * That is the state a brand-new device is in for its entire life up to the
+     * moment it links — `ensureTorClient` starts Tor with `account: false`
+     * precisely because there is no account to publish yet — so the one path
+     * that had to work before anything else was the one path guaranteed not to.
+     */
     const lines = [
       `SocksPort ${SOCKS_PORT}`,
       `ControlPort ${CONTROL_PORT}`,
       `DataDirectory ${join(dataDir, "state")}`,
-      `HiddenServiceDir ${serviceDir}`,
-      // Port 80 on the onion maps to our local listener, so peers dial a
-      // plain address with no port on the end of it.
-      `HiddenServicePort 80 127.0.0.1:${this.#options.targetPort}`,
     ];
 
     // Whether the *account* service is offered at all.
@@ -196,7 +239,12 @@ export class TorService extends EventEmitter {
     // and could not be reached to hand the account back — which is precisely
     // when reaching it matters most. Sync worked in one direction only, and the
     // "signed in elsewhere" screen had no way to resolve itself.
-    if (!this.#options.account) lines.length = 0;
+    if (this.#options.account) {
+      lines.push(`HiddenServiceDir ${serviceDir}`);
+      // Port 80 on the onion maps to our local listener, so peers dial a
+      // plain address with no port on the end of it.
+      lines.push(`HiddenServicePort 80 127.0.0.1:${this.#options.targetPort}`);
+    }
 
 
     // The second service, for this device's own devices.
@@ -235,16 +283,28 @@ export class TorService extends EventEmitter {
       this.#onionAddress = undefined;
     });
 
-    const hostnameFile = join(serviceDir, "hostname");
-    const address = await waitForFile(hostnameFile, 60000);
-
-    this.#onionAddress = address.trim();
-    this.emit("ready", this.#onionAddress);
+    // Before anything about addresses. A tor that has not opened SOCKS cannot
+    // carry the dial that linking is, and every second spent waiting for a
+    // descriptor first is a second the thing that actually matters is not
+    // being waited for.
+    await waitForSocks(SOCKS_BOOT_MS);
+    this.emit("log", `socks is accepting connections on ${SOCKS_PORT}`);
 
     // The sync service publishes on its own schedule, usually a few seconds
     // behind. Watched in the background rather than waited for, so nothing
     // that needs the first address is held up by the second.
     if (this.#options.syncPort) void this.#watchSync(join(syncDir, "hostname"));
+
+    // Client-only: there is no account descriptor to wait for, because none
+    // was configured. Returning here is what makes linking on a fresh device
+    // take seconds rather than time out after a minute.
+    if (!this.#options.account) return undefined;
+
+    const hostnameFile = join(serviceDir, "hostname");
+    const address = await waitForFile(hostnameFile, 60000);
+
+    this.#onionAddress = address.trim();
+    this.emit("ready", this.#onionAddress);
 
     return this.#onionAddress;
   }
@@ -530,6 +590,51 @@ export function compareVersions(a: string, b: string): number {
  * separately, and a watcher registered on a directory that does not exist yet
  * silently never fires.
  */
+/**
+ * Wait until Tor's SOCKS port accepts a connection.
+ *
+ * Asked by opening one and dropping it, rather than by reading a log line or
+ * trusting an elapsed timer. Those two were the alternatives and both are
+ * indirect: a log line means tor *said* it opened a port, and an elapsed timer
+ * means nothing at all. Opening the port is the same act the next caller is
+ * about to perform, so a success here is the only kind of evidence that
+ * transfers.
+ *
+ * Cheap enough to poll at this rate: it is a loopback connect against a port
+ * on the same machine, and it stops the first time it works.
+ */
+async function waitForSocks(timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    const open = await new Promise<boolean>((resolve) => {
+      const probe = new Socket();
+      let answered = false;
+
+      const settle = (ok: boolean) => {
+        if (answered) return;
+        answered = true;
+        probe.destroy();
+        resolve(ok);
+      };
+
+      probe.setTimeout(2000, () => settle(false));
+      probe.once("error", () => settle(false));
+      probe.connect(SOCKS_PORT, "127.0.0.1", () => settle(true));
+    });
+
+    if (open) return;
+
+    if (Date.now() > deadline) {
+      throw new Error(
+        `tor did not open its SOCKS port on ${SOCKS_PORT} within ${timeoutMs}ms`,
+      );
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+}
+
 async function waitForFile(path: string, timeoutMs: number): Promise<string> {
   const deadline = Date.now() + timeoutMs;
 

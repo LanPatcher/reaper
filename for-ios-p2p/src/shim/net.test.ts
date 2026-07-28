@@ -281,5 +281,79 @@ function within<T>(what: string, ms: number, work: Promise<T>): Promise<T | unde
   ck("and it arrives in the order it was sent", seen === "hello there");
 }
 
+// ---- two listeners, which this device genuinely has -------------------------
+//
+// The phone publishes two onion services. The account address forwards to the
+// chat transport; the sync address — the one a pairing code points at —
+// forwards to the pairing service. They are separate services with separate
+// keys, because a device has to be reachable for linking whether or not it is
+// the one currently answering for the account.
+//
+// This shim kept a single `listening` server and overwrote it on every bind.
+// `boot.ts` opens the pairing listener first and the transport second, so the
+// second bind silently replaced the first: Tor went on forwarding the sync
+// address to a port whose server no longer received anything, and every
+// attempt to link *to* the phone arrived nowhere. From the other device that
+// looks exactly like the phone being switched off, which is why it was
+// reported as linking working in only one direction.
+//
+// Worth more than the routing itself: handing a pairing connection to the chat
+// transport would not merely misdeliver it. The transport reads the first four
+// bytes as its own length prefix, gets nonsense, and destroys the socket — so
+// the far end sees "that device closed the connection", which is the error
+// this whole area has produced from four unrelated causes already.
+
+{
+  reset();
+
+  grantPort(51930);
+  const pairing = createServer(() => {});
+  await within("the pairing listener binds", 1000,
+    new Promise<void>((resolve) => { pairing.listen(0, () => resolve()); }));
+
+  grantPort(51931);
+  const chat = createServer(() => {});
+  await within("the transport listener binds", 1000,
+    new Promise<void>((resolve) => { chat.listen(0, () => resolve()); }));
+
+  ck("both listeners keep the port they were granted",
+     pairing.address()?.port === 51930 && chat.address()?.port === 51931,
+     `${pairing.address()?.port} / ${chat.address()?.port}`);
+
+  const arrived: string[] = [];
+  pairing.on("connection", () => arrived.push("pairing"));
+  chat.on("connection", () => arrived.push("chat"));
+
+  // Inbound on the sync address, which Tor forwards to the pairing port.
+  fire("accept", { id: "in-sync-1", port: 51930 });
+  fire("accept", { id: "in-chat-1", port: 51931 });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  ck("a connection on the sync port reaches the pairing service",
+     arrived[0] === "pairing", arrived.join(","));
+  ck("and one on the account port reaches the transport",
+     arrived[1] === "chat", arrived.join(","));
+
+  // Closing one must leave the other bound. `stopListening` used to take no
+  // port and cancelled everything, so shutting down either service took the
+  // other with it.
+  pairing.close();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  const stops = calls.filter((call) => call.name === "stopListening");
+  ck("closing a server names the port it is closing",
+     stops.length === 1 && stops[0].args.port === 51930,
+     JSON.stringify(stops));
+
+  arrived.length = 0;
+  fire("accept", { id: "in-chat-2", port: 51931 });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  ck("and the other one is still accepting", arrived[0] === "chat", arrived.join(","));
+
+  chat.close();
+}
+
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");
 process.exit(f ? 1 : 0);

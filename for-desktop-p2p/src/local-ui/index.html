@@ -685,15 +685,19 @@
         <button class="ghost setupBack">Back</button>
       </div>
 
+      <!-- The passphrase is a field to type into, not a secret to hide.
+           It is generated on the other device, shown next to the code there,
+           and is good for one link — so masking it only makes it harder to
+           check against the screen it was read from. -->
       <div id="setupLink" class="setupPane">
-        <p>On the device you already use, open <strong>Settings → Devices</strong> and choose <strong>Link a device</strong>. It will ask you to set a password and then show a code.</p>
+        <p>On the device you already use, open <strong>Settings → Devices</strong> and choose <strong>Link a device</strong>. It will show a code and a passphrase — you need both, and they last ten minutes.</p>
 
         <div class="field">
           <input id="setupCode" placeholder="paste the code" autocomplete="off" />
           <button class="ghost" id="setupScan" hidden>Scan</button>
         </div>
         <div class="field">
-          <input id="setupPass" type="password" placeholder="pairing password" autocomplete="off" />
+          <input id="setupPass" placeholder="passphrase" autocomplete="off" spellcheck="false" autocapitalize="characters" maxlength="20" />
           <button class="primary" id="setupJoin">Link</button>
         </div>
 
@@ -1448,6 +1452,23 @@
             "You can skip this, but until it runs your friends list and servers are as old as the backup file.": "Puedes saltártelo, pero hasta que se haga tu lista de amistades y tus servidores serán tan antiguos como el archivo de copia.",
             "Tor published your address — your friend code is ready": "Tor ha publicado tu dirección — tu código de amistad está listo",
             "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "¿No están en la misma red? Tus dispositivos también se alcanzan por Tor. No hay que abrir puertos — basta con la dirección de abajo, y solo le sirve a quien ya tenga tu clave.",
+            "This code has expired. Show a new one when you are ready to link a device.": "Este código ha caducado. Muestra uno nuevo cuando quieras enlazar un dispositivo.",
+            "Show a new code": "Mostrar un código nuevo",
+            "Preparing a code…": "Preparando un código…",
+            "Try again": "Reintentar",
+            "Scan this on your other device, then type the passphrase below. Both are needed, so a photograph of the code alone links nothing.": "Escanea esto en tu otro dispositivo y escribe la contraseña de abajo. Hacen falta las dos, así que una foto del código por sí sola no enlaza nada.",
+            "Links one device, once. Expires in {time}.": "Enlaza un dispositivo, una sola vez. Caduca en {time}.",
+            "Could not open the camera": "No se pudo abrir la cámara",
+            "Paste or scan the code first": "Pega o escanea primero el código",
+            "Enter the passphrase from the other device": "Escribe la contraseña del otro dispositivo",
+            "Linking over Tor — this can take a minute or two…": "Enlazando por Tor — esto puede tardar un minuto o dos…",
+            "Could not link": "No se pudo enlazar",
+            "That code may have expired — ask the other device for a new one and try again.": "Puede que ese código haya caducado — pide uno nuevo en el otro dispositivo e inténtalo de nuevo.",
+            "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable. Using this device copies anything new across first.": "Tu cuenta solo puede responder en un dispositivo a la vez, así que este no está recibiendo. Todo lo que ya está aquí se puede seguir leyendo. Usar este dispositivo copia antes lo nuevo.",
+            "Copying across and taking over…": "Copiando y tomando el relevo…",
+            "Take it anyway": "Tomarlo de todos modos",
+            "Use this if the other device is switched off or you no longer have it.": "Usa esto si el otro dispositivo está apagado o ya no lo tienes.",
+            "The other device did not answer.": "El otro dispositivo no respondió.",
             "Copy this device's sync address": "Copiar la dirección de sincronización de este dispositivo",
             "Or enter the other device's sync address": "O introduce la dirección de sincronización del otro dispositivo",
             "Sync over Tor": "Sincronizar por Tor",
@@ -2126,6 +2147,23 @@
             "You can skip this, but until it runs your friends list and servers are as old as the backup file.": "Vous pouvez passer, mais tant que ce n'est pas fait votre liste d'amis et vos serveurs datent du fichier de sauvegarde.",
             "Tor published your address — your friend code is ready": "Tor a publié votre adresse — votre code d'ami est prêt",
             "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "Pas sur le même réseau ? Vos appareils se joignent aussi via Tor. Rien à rediriger — l'adresse ci-dessous suffit, et elle n'est utile qu'à quelqu'un qui a déjà votre clé.",
+            "This code has expired. Show a new one when you are ready to link a device.": "Ce code a expiré. Affichez-en un nouveau quand vous serez prêt à associer un appareil.",
+            "Show a new code": "Afficher un nouveau code",
+            "Preparing a code…": "Préparation d'un code…",
+            "Try again": "Réessayer",
+            "Scan this on your other device, then type the passphrase below. Both are needed, so a photograph of the code alone links nothing.": "Scannez ceci sur votre autre appareil, puis saisissez la phrase secrète ci-dessous. Les deux sont nécessaires : une photo du code seul n'associe rien.",
+            "Links one device, once. Expires in {time}.": "Associe un appareil, une seule fois. Expire dans {time}.",
+            "Could not open the camera": "Impossible d'ouvrir la caméra",
+            "Paste or scan the code first": "Collez ou scannez d'abord le code",
+            "Enter the passphrase from the other device": "Saisissez la phrase secrète de l'autre appareil",
+            "Linking over Tor — this can take a minute or two…": "Association via Tor — cela peut prendre une minute ou deux…",
+            "Could not link": "Association impossible",
+            "That code may have expired — ask the other device for a new one and try again.": "Ce code a peut-être expiré — demandez-en un nouveau à l'autre appareil et réessayez.",
+            "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable. Using this device copies anything new across first.": "Votre compte ne peut répondre que sur un appareil à la fois, donc celui-ci ne reçoit rien. Tout ce qui est déjà ici reste lisible. Utiliser cet appareil copie d'abord les nouveautés.",
+            "Copying across and taking over…": "Copie en cours et reprise…",
+            "Take it anyway": "Reprendre quand même",
+            "Use this if the other device is switched off or you no longer have it.": "Utilisez ceci si l'autre appareil est éteint ou que vous ne l'avez plus.",
+            "The other device did not answer.": "L'autre appareil n'a pas répondu.",
             "Copy this device's sync address": "Copier l'adresse de synchronisation de cet appareil",
             "Or enter the other device's sync address": "Ou saisissez l'adresse de synchronisation de l'autre appareil",
             "Sync over Tor": "Synchroniser via Tor",
@@ -2804,6 +2842,23 @@
             "You can skip this, but until it runs your friends list and servers are as old as the backup file.": "Du kannst das überspringen, aber bis dahin sind deine Freundesliste und deine Server so alt wie die Sicherungsdatei.",
             "Tor published your address — your friend code is ready": "Tor hat deine Adresse veröffentlicht — dein Freundescode ist fertig",
             "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "Nicht im selben Netzwerk? Deine Geräte erreichen sich auch über Tor. Es muss nichts weitergeleitet werden — die Adresse unten genügt, und sie nützt nur jemandem, der deinen Schlüssel ohnehin hat.",
+            "This code has expired. Show a new one when you are ready to link a device.": "Dieser Code ist abgelaufen. Zeige einen neuen an, wenn du ein Gerät verbinden möchtest.",
+            "Show a new code": "Neuen Code anzeigen",
+            "Preparing a code…": "Code wird vorbereitet…",
+            "Try again": "Erneut versuchen",
+            "Scan this on your other device, then type the passphrase below. Both are needed, so a photograph of the code alone links nothing.": "Scanne das auf deinem anderen Gerät und gib dann die Passphrase unten ein. Beides wird gebraucht — ein Foto des Codes allein verbindet nichts.",
+            "Links one device, once. Expires in {time}.": "Verbindet ein Gerät, einmal. Läuft in {time} ab.",
+            "Could not open the camera": "Kamera konnte nicht geöffnet werden",
+            "Paste or scan the code first": "Füge den Code zuerst ein oder scanne ihn",
+            "Enter the passphrase from the other device": "Gib die Passphrase vom anderen Gerät ein",
+            "Linking over Tor — this can take a minute or two…": "Verbinden über Tor — das kann ein bis zwei Minuten dauern…",
+            "Could not link": "Verbinden fehlgeschlagen",
+            "That code may have expired — ask the other device for a new one and try again.": "Dieser Code ist möglicherweise abgelaufen — lass dir vom anderen Gerät einen neuen geben und versuche es erneut.",
+            "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable. Using this device copies anything new across first.": "Dein Konto kann nur auf einem Gerät gleichzeitig antworten, dieses empfängt also nichts. Alles, was schon hier ist, bleibt lesbar. Dieses Gerät zu nutzen kopiert zuerst alles Neue herüber.",
+            "Copying across and taking over…": "Wird kopiert und übernommen…",
+            "Take it anyway": "Trotzdem übernehmen",
+            "Use this if the other device is switched off or you no longer have it.": "Nutze das, wenn das andere Gerät ausgeschaltet ist oder du es nicht mehr hast.",
+            "The other device did not answer.": "Das andere Gerät hat nicht geantwortet.",
             "Copy this device's sync address": "Sync-Adresse dieses Geräts kopieren",
             "Or enter the other device's sync address": "Oder gib die Sync-Adresse des anderen Geräts ein",
             "Sync over Tor": "Über Tor synchronisieren",
@@ -3482,6 +3537,23 @@
             "You can skip this, but until it runs your friends list and servers are as old as the backup file.": "Podes saltar isto, mas até correr a tua lista de amigos e os teus servidores são tão antigos como o ficheiro de cópia.",
             "Tor published your address — your friend code is ready": "O Tor publicou o teu endereço — o teu código de amigo está pronto",
             "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "Não estão na mesma rede? Os teus dispositivos também se alcançam por Tor. Não é preciso encaminhar nada — o endereço abaixo chega, e só serve a quem já tem a tua chave.",
+            "This code has expired. Show a new one when you are ready to link a device.": "Este código expirou. Mostra um novo quando quiseres ligar um dispositivo.",
+            "Show a new code": "Mostrar um código novo",
+            "Preparing a code…": "A preparar um código…",
+            "Try again": "Tentar de novo",
+            "Scan this on your other device, then type the passphrase below. Both are needed, so a photograph of the code alone links nothing.": "Lê isto no teu outro dispositivo e escreve a frase-passe abaixo. São precisas as duas, por isso uma fotografia só do código não liga nada.",
+            "Links one device, once. Expires in {time}.": "Liga um dispositivo, uma vez. Expira em {time}.",
+            "Could not open the camera": "Não foi possível abrir a câmara",
+            "Paste or scan the code first": "Cola ou lê primeiro o código",
+            "Enter the passphrase from the other device": "Escreve a frase-passe do outro dispositivo",
+            "Linking over Tor — this can take a minute or two…": "A ligar por Tor — isto pode demorar um minuto ou dois…",
+            "Could not link": "Não foi possível ligar",
+            "That code may have expired — ask the other device for a new one and try again.": "Esse código pode ter expirado — pede um novo ao outro dispositivo e tenta de novo.",
+            "Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable. Using this device copies anything new across first.": "A tua conta só pode responder num dispositivo de cada vez, por isso este não está a receber. Tudo o que já está aqui continua legível. Usar este dispositivo copia primeiro o que há de novo.",
+            "Copying across and taking over…": "A copiar e a assumir…",
+            "Take it anyway": "Assumir mesmo assim",
+            "Use this if the other device is switched off or you no longer have it.": "Usa isto se o outro dispositivo estiver desligado ou já não o tiveres.",
+            "The other device did not answer.": "O outro dispositivo não respondeu.",
             "Copy this device's sync address": "Copiar o endereço de sincronização deste dispositivo",
             "Or enter the other device's sync address": "Ou introduz o endereço de sincronização do outro dispositivo",
             "Sync over Tor": "Sincronizar por Tor",
@@ -11076,113 +11148,48 @@
           mineText.style.cssText = "flex:1 1 200px;min-width:0";
           mineWrap.appendChild(mineText);
 
-          // ---- the password --------------------------------------------
-          //
-          // First, and gating the code below it, because the code is useless
-          // without it and showing them together invites setting one and
-          // forgetting the other. Linking hands over the entire account, so
-          // the only thing standing between a scanned code and somebody
-          // else's identity is this — and until it is set there is nothing to
-          // show.
-          var pwWrap = document.createElement("div");
-          pwWrap.style.cssText = "margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:8px";
+          /**
+           * The code on screen, and how long it has left.
+           *
+           * ## What replaced the pairing password
+           *
+           * There used to be a box here to choose one, and it was the source
+           * of most of what went wrong with this screen. It was stored in a
+           * file so it could be used again, and being stored is what made it
+           * outlive the moment it was for: it could not be revoked, a
+           * photograph of a code worked a week later, and on a phone the file
+           * was written through a debounced flush — so setting a password and
+           * force-quitting lost it, and the next launch said no password was
+           * set with no way to tell that from never having set one.
+           *
+           * Now the passphrase is generated with the code, shown beside it,
+           * and forgotten when either is used or replaced. Nothing is stored,
+           * so nothing can be stale, and every sync *after* the first link
+           * needs no passphrase at all — the two devices share the account by
+           * then, which is a better credential than anything a person types.
+           */
+          var invite = null;
+          var ticking = null;
 
-          // Placed above the code rather than appended after it. It is built
-          // here because `mineWrap` and `drawMine` have to be in scope, but on
-          // screen the password comes first — it is the thing that makes the
-          // code mean anything, and a reader who meets the code first has
-          // already been given something to copy before being told why it is
-          // safe to.
-          card.insertBefore(pwWrap, far);
-
-          var pwTitle = document.createElement("div");
-          pwTitle.style.cssText = "font-weight:600;margin-bottom:4px";
-          pwTitle.textContent = t("Pairing password");
-          pwWrap.appendChild(pwTitle);
-
-          var pwNote = document.createElement("div");
-          pwNote.className = "muted";
-          pwNote.style.fontSize = "11px";
-          pwNote.textContent =
-            t("You will type this on the other device. The code below is encrypted with it, so a photograph of your screen is worth nothing without it — and nobody can link to your account by scanning alone.");
-          pwWrap.appendChild(pwNote);
-
-          var pwRow = document.createElement("div");
-          pwRow.style.cssText = "display:flex;gap:6px;margin-top:8px;flex-wrap:wrap";
-          pwWrap.appendChild(pwRow);
-
-          var pwInput = document.createElement("input");
-          pwInput.type = "password";
-          pwInput.placeholder = t("at least 8 characters");
-          pwInput.autocomplete = "new-password";
-          pwInput.style.cssText = "flex:1 1 180px;min-width:0";
-          pwRow.appendChild(pwInput);
-
-          var pwSave = document.createElement("button");
-          pwSave.className = "primary";
-          pwSave.textContent = t("Set password");
-          pwRow.appendChild(pwSave);
-
-          var pwState = document.createElement("div");
-          pwState.className = "muted";
-          pwState.style.fontSize = "11px";
-          pwState.style.marginTop = "6px";
-          pwWrap.appendChild(pwState);
-
-          var hasPassword = false;
-
-          window.p2p.pairPassword().then(function (state) {
-            hasPassword = Boolean(state && state.set);
-            showPasswordState();
-            if (hasPassword) drawMine();
-          });
-
-          function showPasswordState() {
-            pwState.textContent = hasPassword
-              ? t("A password is set. Setting a new one replaces it — devices already linked stay linked.")
-              : t("No password set yet. Set one to get a code.");
-            mineWrap.style.display = hasPassword ? "flex" : "none";
-            far.style.display = hasPassword ? "block" : "none";
+          function stopTicking() {
+            if (ticking) { clearInterval(ticking); ticking = null; }
           }
 
-          pwSave.onclick = async function () {
-            pwSave.disabled = true;
-
-            try {
-              await window.p2p.pairPassword(pwInput.value);
-              hasPassword = true;
-              pwInput.value = "";
-              showPasswordState();
-              await drawMine();
-            } catch (e) {
-              pwState.textContent = String((e && e.message) || e);
-            }
-
-            pwSave.disabled = false;
-          };
-
-          /**
-           * How long a shown code is good for.
-           *
-           * A pairing code is an address plus a way in, sitting on a screen.
-           * It is meant to be scanned within a minute or two of being asked
-           * for, so leaving it up indefinitely is only a risk — somebody walks
-           * past a monitor, or it stays on a shared display long after the
-           * person who wanted it has gone.
-           *
-           * Ten minutes is long enough to find your other device, plug it in
-           * and get through a Tor circuit, and short enough that an abandoned
-           * screen stops being an invitation.
-           */
-          var INVITE_MINUTES = 10;
-          var expiryTimer = null;
+          /** How long is left, as something worth reading. */
+          function timeLeft(expiresAt) {
+            var left = Math.max(0, expiresAt - Date.now());
+            var mins = Math.floor(left / 60000);
+            var secs = Math.floor((left % 60000) / 1000);
+            return mins + ":" + (secs < 10 ? "0" : "") + secs;
+          }
 
           function expireInvite() {
-            if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; }
+            stopTicking();
+            invite = null;
 
             // Hidden, not merely marked stale. A code still legible on screen
-            // invites another attempt, and the failure it produces would be a
-            // timeout somewhere else entirely.
+            // invites another attempt, and the failure that produces is a
+            // refusal from the far end two minutes later.
             qrBox.textContent = "";
             qrBox.style.display = "none";
             mineText.textContent = "";
@@ -11191,7 +11198,7 @@
             gone.className = "muted";
             gone.style.fontSize = "12px";
             gone.textContent =
-              t("This code has expired. Codes last ten minutes so one cannot be left on screen indefinitely.");
+              t("This code has expired. Show a new one when you are ready to link a device.");
             mineText.appendChild(gone);
 
             var again = document.createElement("button");
@@ -11203,30 +11210,56 @@
           }
 
           async function drawMine() {
-            if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; }
+            stopTicking();
 
             qrBox.textContent = "";
             mineText.textContent = "";
+            qrBox.style.display = "none";
 
-            if (!hasPassword) { qrBox.style.display = "none"; return; }
+            var waiting = document.createElement("div");
+            waiting.className = "muted";
+            waiting.style.fontSize = "12px";
+            waiting.textContent = t("Preparing a code…");
+            mineText.appendChild(waiting);
 
-            var invite;
-
+            // Asking for a new code drops whatever was on offer, in the main
+            // process as well as on screen. Two live codes is a state nobody
+            // asked for and the second one could only ever be one somebody had
+            // walked away from.
             try {
               invite = await window.p2p.pairInvite();
             } catch (e) {
-              qrBox.style.display = "none";
+              invite = null;
+              mineText.textContent = "";
 
-              // Tor not ready is the common case and reads as breakage unless
-              // it is named. It takes a minute or two from a cold start.
+              // Tor not being ready is the common case on a cold start and
+              // reads as breakage unless it is named. Retried rather than
+              // reported and abandoned: the address arrives a minute or two
+              // after launch and nothing else has to happen for it to.
               var why = document.createElement("div");
               why.className = "muted";
               why.style.fontSize = "12px";
               why.textContent = String((e && e.message) || e);
               mineText.appendChild(why);
+
+              var retry = document.createElement("button");
+              retry.className = "ghost";
+              retry.style.marginTop = "8px";
+              retry.textContent = t("Try again");
+              retry.onclick = function () { drawMine(); };
+              mineText.appendChild(retry);
+
+              // And without being asked, because the thing being waited for
+              // resolves itself. A person who presses the button, is told to
+              // wait, and has to press it again has been given a chore.
+              ticking = setInterval(function () {
+                if (!document.body.contains(retry)) { stopTicking(); return; }
+                drawMine();
+              }, 8000);
               return;
             }
 
+            mineText.textContent = "";
             qrBox.style.display = "block";
             qrBox.appendChild(qrElement(invite.code, 148));
 
@@ -11234,8 +11267,28 @@
             label.className = "muted";
             label.style.fontSize = "11px";
             label.textContent =
-              t("Scan this on your other device and enter the password. The code is useless to anyone who does not have it.");
+              t("Scan this on your other device, then type the passphrase below. Both are needed, so a photograph of the code alone links nothing.");
             mineText.appendChild(label);
+
+            // The passphrase, given the prominence it needs: it is the one
+            // thing here a person has to read off one screen and type into
+            // another, and it was previously the one thing not shown at all.
+            var passRow = document.createElement("div");
+            passRow.style.cssText =
+              "margin:8px 0;padding:8px 10px;border:1px solid var(--line);border-radius:8px";
+            mineText.appendChild(passRow);
+
+            var passLabel = document.createElement("div");
+            passLabel.className = "muted";
+            passLabel.style.fontSize = "11px";
+            passLabel.textContent = t("Passphrase");
+            passRow.appendChild(passLabel);
+
+            var pass = document.createElement("div");
+            pass.className = "code selectable";
+            pass.style.cssText = "font-size:20px;letter-spacing:2px;font-weight:600";
+            pass.textContent = invite.password;
+            passRow.appendChild(pass);
 
             var code = document.createElement("div");
             code.className = "code selectable";
@@ -11246,10 +11299,34 @@
             var lasts = document.createElement("div");
             lasts.className = "muted";
             lasts.style.fontSize = "11px";
-            lasts.textContent = t("This code works for ten minutes.");
             mineText.appendChild(lasts);
 
-            expiryTimer = setTimeout(expireInvite, INVITE_MINUTES * 60 * 1000);
+            // Driven by the expiry the main process sealed into the code, not
+            // by a timer started when the picture was drawn. Those two used to
+            // be different numbers — the interface hid the image after ten
+            // minutes while the code itself went on working — and the one that
+            // decides is the one the other device checks against.
+            var showLeft = function () {
+              if (!invite) { stopTicking(); return; }
+              if (Date.now() >= invite.expiresAt) { expireInvite(); return; }
+
+              lasts.textContent = t("Links one device, once. Expires in {time}.", {
+                time: timeLeft(invite.expiresAt),
+              });
+            };
+
+            showLeft();
+            ticking = setInterval(showLeft, 1000);
+
+            var buttonRow = document.createElement("div");
+            buttonRow.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin-top:6px";
+            mineText.appendChild(buttonRow);
+
+            var again = document.createElement("button");
+            again.className = "ghost";
+            again.textContent = t("Show a new code");
+            again.onclick = function () { drawMine(); };
+            buttonRow.appendChild(again);
 
             var address = invite.onion;
 
@@ -11263,7 +11340,7 @@
                 copyAddr.textContent = t("Copy this device's sync address");
               }, 1200);
             };
-            mineText.appendChild(copyAddr);
+            buttonRow.appendChild(copyAddr);
           }
 
           drawMine();
@@ -11320,7 +11397,29 @@
             dialRow.appendChild(scan);
           }
 
-          buttons(card, t("Done"), closeModal);
+          /**
+           * Closing withdraws the code.
+           *
+           * The point of a one-time invite is that it is live for exactly as
+           * long as somebody is looking at it. Leaving it valid after the
+           * window is gone puts the only limit back on the ten-minute expiry —
+           * which is the arrangement this replaced, only now with nothing on
+           * screen to say a code exists at all.
+           *
+           * Best effort: a build with no `pairRevoke` is one where the code
+           * expires on its own anyway, and failing to close the dialog over it
+           * would be worse than the code outliving it by a few minutes.
+           */
+          buttons(card, t("Done"), function () {
+            stopTicking();
+
+            if (invite && window.p2p.pairRevoke) {
+              try { window.p2p.pairRevoke(invite.session); } catch (e) { /* gone */ }
+            }
+
+            invite = null;
+            closeModal();
+          });
         });
       }
 
@@ -18370,10 +18469,15 @@
           var pass = $("setupPass").value;
 
           if (!code) { $("setupErr").textContent = t("Paste or scan the code first"); return; }
-          if (!pass) { $("setupErr").textContent = t("Enter the pairing password"); return; }
+          if (!pass) { $("setupErr").textContent = t("Enter the passphrase from the other device"); return; }
 
           $("setupJoin").disabled = true;
-          $("setupErr").textContent = t("Linking…");
+
+          // Said plainly, because this is the longest wait in the app and the
+          // one people interrupt. A cold Tor client has to bootstrap before
+          // the first circuit exists, and a blank screen for ninety seconds is
+          // indistinguishable from a button that did nothing.
+          $("setupErr").textContent = t("Linking over Tor — this can take a minute or two…");
 
           try {
             var res = await window.p2p.pairJoin(code, pass);
@@ -18386,6 +18490,11 @@
             // goes nowhere, because the other device is no longer offering to
             // pair. Reported as what it is, rather than as a network problem
             // the user cannot act on.
+            //
+            // "no longer valid" is deliberately not caught here: that sentence
+            // comes from the device that showed the code and already says the
+            // right thing, and rewriting it would replace a certainty with a
+            // guess.
             if (/timed out|never sent anything/i.test(why)) {
               why = t("That code may have expired — ask the other device for a new one and try again.");
             }

@@ -44,7 +44,30 @@ final class TcpSockets {
 
   private let queue = DispatchQueue(label: "chat.reaper.sockets")
   private var connections: [String: NWConnection] = [:]
-  private var listener: NWListener?
+
+  /**
+   * Every listener, by the port it ended up bound to.
+   *
+   * There used to be one, and `listen` began by cancelling it. That is correct
+   * for a device with one service and this device has two: the account address
+   * forwards to the chat transport, and the sync address — the one a QR code
+   * points at — forwards to the pairing service. They are separate onion
+   * services with separate keys precisely so that a device can be reached for
+   * linking whether or not it is answering for the account.
+   *
+   * `boot.ts` opens the pairing listener first and the transport second, so
+   * the second call cancelled the first. Tor went on forwarding the sync
+   * address to a port nothing was bound to any more, and every attempt to link
+   * *to* this phone reached a closed port. From the other device that is
+   * indistinguishable from the phone being switched off, which is why it read
+   * as "linking only works in one direction".
+   *
+   * Keyed by bound port rather than by an id from the caller, because the port
+   * is the thing Tor is configured with and therefore the thing an inbound
+   * connection can actually be attributed to.
+   */
+  private var listeners: [UInt16: NWListener] = [:]
+
   private let emit: Events
 
   init(emit: @escaping Events) {
@@ -136,7 +159,14 @@ final class TcpSockets {
    * value read one line too early.
    */
   func listen(port: UInt16, then: @escaping (Result<UInt16, Error>) -> Void) {
-    stopListening()
+    // A specific port asked for twice is the same listener asked for twice —
+    // `PairService.open()` and `transport.listen()` are both idempotent on the
+    // JavaScript side and may be reached more than once. Only an exact repeat
+    // is treated that way; asking for zero always binds something new.
+    if port != 0, listeners[port] != nil {
+      then(.success(port))
+      return
+    }
 
     let options = NWProtocolTCP.Options()
     options.noDelay = true
@@ -170,7 +200,7 @@ final class TcpSockets {
       then(outcome)
     }
 
-    listener.stateUpdateHandler = { state in
+    listener.stateUpdateHandler = { [weak self] state in
       switch state {
       case .ready:
         guard let bound = listener.port?.rawValue else {
@@ -180,6 +210,13 @@ final class TcpSockets {
           )))
           return
         }
+
+        // Recorded under the port it actually got, which for a request of zero
+        // is not known until now. `stopListening` and the accept handler both
+        // work from this map, so registering late is the only correct moment:
+        // a listener filed under the port that was *asked* for would be filed
+        // under zero.
+        self?.listeners[bound] = listener
         settle(.success(bound))
 
       case .failed(let error):
@@ -217,10 +254,23 @@ final class TcpSockets {
       let id = "in-\(UUID().uuidString)"
       self.connections[id] = connection
 
+      // Which local port this arrived on, so the JavaScript side can hand it
+      // to the right server. Two onion services forward to two ports here and
+      // they speak different protocols — chat frames and pairing frames — so a
+      // connection given to the wrong one is not merely misrouted. It is read
+      // as a corrupt length prefix and the socket is destroyed, which is the
+      // "that device closed the connection" this app has produced before from
+      // a different cause.
+      //
+      // Read off the listener rather than the connection: `localEndpoint` on
+      // an inbound NWConnection is not populated on every path, and the
+      // listener's port is the value Tor was actually configured with.
+      let arrivedOn = Int(listener.port?.rawValue ?? 0)
+
       connection.stateUpdateHandler = { state in
         switch state {
         case .ready:
-          self.emit(id, "accept", [:])
+          self.emit(id, "accept", ["port": arrivedOn])
           self.read(id: id, connection: connection)
         case .failed(let error):
           self.emit(id, "error", ["message": error.localizedDescription])
@@ -236,12 +286,17 @@ final class TcpSockets {
     }
 
     listener.start(queue: queue)
-    self.listener = listener
   }
 
-  func stopListening() {
-    listener?.cancel()
-    listener = nil
+  /** Stop one listener, or every one of them. */
+  func stopListening(port: UInt16 = 0) {
+    if port == 0 {
+      for listener in listeners.values { listener.cancel() }
+      listeners.removeAll()
+      return
+    }
+
+    listeners.removeValue(forKey: port)?.cancel()
   }
 
   // ---- moving bytes --------------------------------------------------------

@@ -350,6 +350,31 @@ export class TorService extends EventEmitter {
     return this.address;
   }
 
+  /**
+   * Publish the account address, or stop publishing it.
+   *
+   * On the desktop this rewrites the torrc and restarts the process. Here it
+   * cannot: `@reaper/tor` publishes both services from one configuration read
+   * at launch, and there is no call to withdraw one of them.
+   *
+   * It exists because `bridge.ts` — the same file, running here unchanged —
+   * calls it from `publishIfHolding` on every start. A class without it throws
+   * `tor.setAccount is not a function` inside the `netStart` handler, which
+   * rejects, which the interface reports as "could not start the transport": an
+   * error naming the transport, thrown by the address bookkeeping that runs
+   * after the transport has already started successfully.
+   *
+   * The consequence of it being a no-op is worth stating plainly rather than
+   * hiding: a phone that has been displaced goes on publishing the account
+   * descriptor until it is next launched, so for that window two devices
+   * answer at one address. Withdrawing it properly needs the native side to
+   * support a second configuration, which is a change to make deliberately and
+   * not as a side effect of this.
+   */
+  async setAccount(_publish: boolean): Promise<void> {
+    // Nothing to do, and nothing pretended.
+  }
+
   stop(): void {
     // Deliberately not stopping Tor.
     //

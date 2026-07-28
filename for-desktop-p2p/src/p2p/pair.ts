@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createServer, type Server, type Socket } from "node:net";
 import { brotliCompressSync, brotliDecompressSync } from "node:zlib";
@@ -88,6 +88,18 @@ import type { Summary } from "./vector";
  *     have everything it protects. Routine syncs use this.
  *
  * A greeting names which one it is using. Everything else is identical.
+ *
+ * ## What that buys, in the failures it removes
+ *
+ * Every routine sync after the first now authorises with something neither
+ * device has to remember and neither user has to type. That is the whole of
+ * the "my devices stopped syncing and I did not change anything" class of
+ * report: there is no longer a stored credential that can go missing, differ
+ * between two machines, or be half-written when the app was killed.
+ *
+ * And a code that has been used, replaced, or outlived its ten minutes is
+ * *absent* rather than merely stale — the lookup fails, and the refusal says
+ * to show a new one, which is the only thing that will actually help.
  */
 
 /** Length prefix plus one flag byte, exactly as the chat transport frames. */
@@ -125,12 +137,27 @@ export const PICTURES = "@avatars";
  * it does not expect, and every guard here reported that as though the peer
  * were trying to skip authorisation.
  *
- * Bumped whenever the shape of anything below changes.
+ * Bumped whenever the shape of anything below changes. Three is the first
+ * version where a greeting names which credential it is using.
  */
-const PROTOCOL = 2;
+const PROTOCOL = 3;
 
 /** How long a socket may sit idle before it is assumed dead. */
 const IDLE_MS = 120_000;
+
+/**
+ * How long a minted invite is good for.
+ *
+ * Long enough to find your other device, unlock it, open the app and get
+ * through a Tor circuit — which on a cold phone is genuinely a couple of
+ * minutes. Short enough that a code left on an unattended screen stops being
+ * an invitation.
+ *
+ * Enforced by the device that minted it, from its own clock. The expiry sealed
+ * into the QR is a courtesy to the scanning device so it can say "ask for a new
+ * one" without spending a circuit to be told the same thing.
+ */
+export const INVITE_TTL_MS = 10 * 60 * 1000;
 
 /* ---- what a pairing invite contains ------------------------------------- */
 
@@ -172,6 +199,25 @@ export interface Invite {
    * without spending a Tor circuit to find out. The minting device checks it
    * again anyway — a client-side check is a courtesy, not a control.
    */
+  expiresAt: number;
+}
+
+/** Everything the interface needs to put a fresh invite on screen. */
+export interface Minted {
+  /** The text a QR code carries. */
+  code: string;
+
+  /**
+   * Typed on the other device, and generated rather than chosen.
+   *
+   * A user-chosen password had to be stored to be useful twice, and being
+   * stored is what made it outlive the moment it was for. This one exists for
+   * one link, is never written down by either device, and is forgotten with
+   * the invite.
+   */
+  password: string;
+
+  session: string;
   expiresAt: number;
 }
 
@@ -280,6 +326,9 @@ const SESSION_BYTES = 6;
 
 const BODY_BYTES = ADDRESS_BYTES + EXPIRY_BYTES + SESSION_BYTES;
 
+/** Five bytes is exactly eight base32 characters, with nothing left over. */
+const PASSWORD_BYTES = 5;
+
 /**
  * How much clock difference between two devices to tolerate.
  *
@@ -297,8 +346,49 @@ export function newSession(): string {
   return randomBytes(SESSION_BYTES).toString("hex");
 }
 
+/**
+ * The passphrase for one invite, in the shape somebody has to type.
+ *
+ * Forty bits, which is far past what is reachable: a guess has to arrive over
+ * a Tor circuit, against a session id the guesser does not have, within ten
+ * minutes, and every attempt costs a scrypt. It is grouped in fours because
+ * eight unbroken characters get transcribed wrong and four do not.
+ */
+export function newPassword(): string {
+  const text = toBase32(randomBytes(PASSWORD_BYTES));
+  return `${text.slice(0, 4)}-${text.slice(4)}`;
+}
+
+/**
+ * What the user typed, as the thing that was generated.
+ *
+ * Applied on both sides, so the key derives the same whatever shape it arrives
+ * in. The two folds are the only substitutions that can be made safely: the
+ * alphabet above has no `0` and no `1`, so anybody who typed one meant the
+ * letter it looks like. Nothing else is guessed at — folding `8` to `B` would
+ * be helpful right up until an invite legitimately contains an `8`, which this
+ * alphabet cannot, but a future one might.
+ */
+export function foldPassword(text: string): string {
+  return text
+    .normalize("NFKC")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .replace(/0/g, "O")
+    .replace(/1/g, "I");
+}
+
+/**
+ * Seal an invite into the text a QR code carries.
+ *
+ * Takes the salt rather than choosing one, because the device that shows the
+ * code has to be able to derive the same key again when somebody links with it
+ * — and a salt generated in here and thrown away would leave it unable to.
+ * That is not hypothetical: it is exactly the shape of the bug where a code
+ * scanned perfectly and then failed to authorise.
+ */
 export function sealInvite(
-  invite: Omit<Invite, "salt" | "name"> & { name?: string },
+  invite: Omit<Invite, "name"> & { name?: string },
   password: string,
 ): string {
   const address = fromBase32(invite.onion.replace(/\.onion$/i, ""));
@@ -307,10 +397,16 @@ export function sealInvite(
     throw new Error("that is not a v3 onion address");
   }
 
-  const session = Buffer.from(invite.session, "hex");
+  const session = Buffer.from(invite.session ?? "", "hex");
 
   if (session.length !== SESSION_BYTES) {
     throw new Error(`a session id is ${SESSION_BYTES} bytes of hex`);
+  }
+
+  const salt = fromBase32(invite.salt ?? "");
+
+  if (!salt || salt.length !== SALT_BYTES) {
+    throw new Error(`a salt is ${SALT_BYTES} bytes of base32`);
   }
 
   const seconds = Math.floor(invite.expiresAt / 1000);
@@ -322,8 +418,7 @@ export function sealInvite(
   const expiry = Buffer.alloc(EXPIRY_BYTES);
   expiry.writeUInt32BE(seconds);
 
-  const salt = randomBytes(SALT_BYTES);
-  const key = inviteKey(password, toBase32(salt));
+  const key = inviteKey(password, invite.salt);
 
   const body = Buffer.concat([address, expiry, session]);
   const pad = keystream(key, body.length);
@@ -336,6 +431,29 @@ export function sealInvite(
     .digest().subarray(0, TAG_BYTES);
 
   return "R2" + toBase32(Buffer.concat([salt, body, tag]));
+}
+
+/**
+ * Mint a fresh invite: a code, the passphrase that opens it, and an expiry.
+ *
+ * Everything is generated here and nothing is written anywhere. The caller
+ * keeps it in memory for as long as the code is on screen — see `PairService`
+ * — which is what makes revocation and "gone after a restart" the same
+ * mechanism rather than two.
+ */
+export function mintInvite(
+  onion: string,
+  ttlMs = INVITE_TTL_MS,
+  now = Date.now(),
+): Minted & { salt: string } {
+  const salt = toBase32(randomBytes(SALT_BYTES));
+  const session = newSession();
+  const password = newPassword();
+  const expiresAt = now + ttlMs;
+
+  const code = sealInvite({ onion, salt, session, expiresAt }, password);
+
+  return { code, password, session, salt, expiresAt };
 }
 
 /**
@@ -434,25 +552,53 @@ function keystream(key: Buffer, length: number): Buffer {
 }
 
 /**
- * Stretch the password.
+ * Stretch the passphrase.
  *
  * scrypt rather than a plain hash, because this is the only thing standing
- * between a scanned code and an account, and people choose short passwords. N
- * is kept at 2^14 rather than something larger: it has to run on a phone, and
- * a pairing password is typed once during a deliberate act with the two
- * devices in the same room, not left standing as a permanent credential.
+ * between a scanned code and an account. N is kept at 2^14 rather than
+ * something larger: it has to run on a phone, and an invite passphrase is
+ * typed once during a deliberate act with the two devices in the same room,
+ * lives ten minutes, and is worth far less than a stored password would be.
  */
 function inviteKey(password: string, salt: string): Buffer {
-  // The salt is upper-case base32 as produced, but it arrives back as whatever
-  // the user typed. Folding it here rather than at the call sites means a code
-  // entered in lower case derives the same key — which it must, because a
-  // forty-character string typed by hand is not going to be typed in capitals.
-  return scryptSync(password.normalize("NFKC"), `reaper-pair.${salt.toUpperCase()}`, 32, {
+  // Both halves are folded rather than taken as typed. The salt arrives back
+  // as whatever a user copied out of a code, and the password as whatever they
+  // read off another screen — so a code entered in lower case, or with the
+  // grouping dash left in, has to derive the same key, because a person
+  // transcribing eight characters is not going to reproduce the punctuation.
+  return scryptSync(foldPassword(password), `reaper-pair.${salt.toUpperCase()}`, 32, {
     N: 1 << 14, r: 8, p: 1, maxmem: 64 * 1024 * 1024,
   });
 }
 
+/**
+ * The key routine syncs authorise with.
+ *
+ * Not stretched, and deliberately: the input is an account's private key, so
+ * there is nothing to guess and nothing a work factor would protect. What it
+ * has to be is *identical on every device holding this account and derivable
+ * on none other*, which a hash of the key material with a fixed label already
+ * is.
+ *
+ * The label matters more than it looks. Without it the same bytes would be
+ * usable as a proof somewhere else that also hashes the private key, and the
+ * whole point of this value is that it means one thing.
+ */
+function accountKey(secret: string): Buffer {
+  return createHash("sha256").update("reaper-pair.account\u0000").update(secret).digest();
+}
+
 /* ---- the wire ------------------------------------------------------------ */
+
+/**
+ * Which of the two credentials a greeting is authorising with.
+ *
+ * Named on the wire rather than inferred, because the two are indistinguishable
+ * from the proof alone — an HMAC that does not verify looks the same whichever
+ * key was meant — and "wrong password" and "this device is not linked to that
+ * account" send somebody to do completely different things.
+ */
+export type Credential = "invite" | "account";
 
 type Wire =
   /**
@@ -474,6 +620,19 @@ type Wire =
       nonce: string;
       proof: string;
       communities: string[];
+
+      /**
+       * Which credential this side is using, once it knows.
+       *
+       * Absent in exactly one message: the opening greeting of the side that
+       * answered the connection, which is sent before it has heard anything and
+       * therefore before there is anything to name. Every greeting that carries
+       * a proof carries this too.
+       */
+      cred?: Credential;
+
+      /** Which invite, when `cred` is `invite`. */
+      session?: string;
     }
   /** Refused, with a reason worth showing someone. */
   | { t: "no"; why: string }
@@ -490,7 +649,7 @@ type Wire =
   /**
    * The account itself: the signing key, and the key to the onion address.
    *
-   * Only ever sent to a device that has proved the pairing password, and only
+   * Only ever sent to a device that has proved the pairing credential, and only
    * when it asks. It travels inside a Tor circuit to an address that device
    * learned from a code shown on this screen — so the transport is already
    * authenticated and encrypted, and this adds no second envelope over it.
@@ -564,6 +723,71 @@ function frame(message: Wire): Buffer {
   return Buffer.concat([header, body]);
 }
 
+/* ---- invites, while they are live --------------------------------------- */
+
+/** One minted invite, as the device that showed it remembers it. */
+interface Live {
+  session: string;
+  password: string;
+  salt: string;
+  expiresAt: number;
+}
+
+/**
+ * The codes this device is currently offering.
+ *
+ * In memory and nowhere else, which is the entire revocation story:
+ *
+ *   - **Used** — removed when a pairing that presented it finishes.
+ *   - **Replaced** — showing a new code drops the old one, because two live
+ *     codes on one screen is a state no user asked for and cannot see.
+ *   - **Expired** — swept on every lookup, so an expired code is *absent* by
+ *     the time anything asks about it rather than present-and-stale.
+ *   - **Restarted** — the map goes with the process.
+ *
+ * Every one of those turns into the same answer at the far end: this code is
+ * not valid, show a new one. That is the answer the user needed in all four
+ * cases and got in none of them.
+ */
+class Invites {
+  readonly #live = new Map<string, Live>();
+
+  /**
+   * Only ever one.
+   *
+   * Minting drops whatever came before. The interface shows a single code at a
+   * time, so a second live invite could only be one somebody had walked away
+   * from — and leaving that usable is the thing the ten-minute expiry exists to
+   * stop, only worse because nothing on screen refers to it.
+   */
+  add(entry: Live): void {
+    this.#live.clear();
+    this.#live.set(entry.session, entry);
+  }
+
+  find(session: string, now = Date.now()): Live | undefined {
+    this.#sweep(now);
+    return this.#live.get(session);
+  }
+
+  /** Forget one code, or all of them. */
+  revoke(session?: string): void {
+    if (session === undefined) this.#live.clear();
+    else this.#live.delete(session);
+  }
+
+  list(now = Date.now()): Live[] {
+    this.#sweep(now);
+    return [...this.#live.values()];
+  }
+
+  #sweep(now: number): void {
+    for (const [session, entry] of this.#live) {
+      if (entry.expiresAt <= now) this.#live.delete(session);
+    }
+  }
+}
+
 /* ---- what the surrounding app has to provide ----------------------------- */
 
 export interface PairHooks {
@@ -576,8 +800,15 @@ export interface PairHooks {
   /** This device's own sync address, so the peer can reach back. */
   onion(): string;
 
-  /** The pairing password currently set, if any. */
-  password(): string | undefined;
+  /**
+   * Something every device holding this account can derive, and nothing else
+   * can.
+   *
+   * The account's private key, in practice. Returns undefined on a device that
+   * has no account yet — which is not a failure but the ordinary state of the
+   * device being linked, and is why an invite exists at all.
+   */
+  accountSecret(): string | undefined;
 
   communities(): string[];
   summary(community: string): Summary;
@@ -591,10 +822,15 @@ export interface PairHooks {
   /**
    * This device's account, ready to be handed to a sibling, if it has one.
    *
+   * May be asynchronous. On iOS the onion key lives behind a native call, and
+   * forcing it to be synchronous there meant a promise being serialised into
+   * the message where a key belonged — an account that arrived looking
+   * complete and could not publish at the address it named.
+   *
    * Returns undefined on a device that has nothing to give, which is how two
    * fresh devices pairing avoid handing each other empty accounts.
    */
-  identity?(): { identity: string; onionKey?: string } | undefined;
+  identity?(): PromiseLike<Account | undefined> | Account | undefined;
 
   /** Whether this device still needs an account of its own. */
   needsIdentity?(): boolean;
@@ -606,7 +842,7 @@ export interface PairHooks {
    * logs, the pictures — is the same account's history, so this has to land
    * before any of it is useful.
    */
-  adoptIdentity?(account: { identity: string; onionKey?: string }): void;
+  adoptIdentity?(account: Account): PromiseLike<void> | void;
 
   /** Is this device the one currently answering at the account address. */
   holding(): boolean;
@@ -638,6 +874,12 @@ export interface PairHooks {
   asked(peer: { device: string; name: string }): void;
 }
 
+/** An account, as it travels between two of your devices. */
+export interface Account {
+  identity: string;
+  onionKey?: string;
+}
+
 export interface PairResult {
   device: string;
   name: string;
@@ -651,6 +893,11 @@ export interface PairResult {
   done: boolean;
 }
 
+/** How a dialling session says which credential it means to use. */
+type Offer =
+  | { cred: "invite"; session: string; key: Buffer }
+  | { cred: "account"; key: Buffer };
+
 /* ---- the session --------------------------------------------------------- */
 
 /**
@@ -661,14 +908,42 @@ export interface PairResult {
  * then react. A session finishes when both ends have said `done`, which is the
  * only piece of sequencing in the whole protocol and is a pair of booleans
  * rather than an order.
+ *
+ * The one asymmetry is which side *chooses* the credential, and it is not a
+ * step in the exchange: the side that dialled knows what it scanned or which
+ * account it holds, and says so in every greeting it sends. The side that
+ * answered adopts whatever it is told and says the same thing back. Neither
+ * waits for the other to speak first.
  */
 class Session {
   readonly #socket: Socket;
   readonly #hooks: PairHooks;
+  readonly #invites: Invites;
   readonly #reader = new FrameReader();
 
   /** Ours, sent in the greeting, and what the peer must sign. */
   readonly #nonce = randomBytes(16).toString("hex");
+
+  /**
+   * The credential in force, once it is known.
+   *
+   * Set at construction on the side that dialled and on the first greeting on
+   * the side that answered. Until it is set there is nothing to verify a proof
+   * against, and a proof arriving before it is a peer that never said what it
+   * was doing.
+   */
+  #cred?: Credential;
+  #session?: string;
+  #key?: Buffer;
+
+  /**
+   * Whether the invite in force was looked up in *this* device's book.
+   *
+   * Only that device may consume it — the scanning side holds the same code but
+   * has no book to remove it from, and marking it used there would mean the
+   * code stayed live on the device that is actually showing it.
+   */
+  #minted = false;
 
   /**
    * How far this session got.
@@ -745,23 +1020,22 @@ class Session {
   #reject!: (error: Error) => void;
   #timer?: NodeJS.Timeout;
 
-  constructor(socket: Socket, hooks: PairHooks) {
+  constructor(socket: Socket, hooks: PairHooks, invites: Invites, offer?: Offer) {
     this.#socket = socket;
     this.#hooks = hooks;
+    this.#invites = invites;
+
+    if (offer) {
+      this.#cred = offer.cred;
+      this.#key = offer.key;
+      if (offer.cred === "invite") this.#session = offer.session;
+    }
   }
 
   run(): Promise<PairResult> {
     return new Promise<PairResult>((resolve, reject) => {
       this.#resolve = resolve;
       this.#reject = reject;
-
-      const password = this.#hooks.password();
-
-      if (!password) {
-        this.#send({ t: "no", why: "that device has no pairing password set" });
-        this.#fail("set a pairing password on this device first");
-        return;
-      }
 
       this.#socket.setNoDelay(true);
       this.#touch();
@@ -792,8 +1066,9 @@ class Session {
             "that device accepted the connection but never said anything — " +
             "it may be starting up, or the address may point at something else",
           greeted:
-            "that device stopped after the greeting, before the password was " +
-            "proved — check that both devices have the same pairing password",
+            "that device stopped after the greeting, before the code was " +
+            "accepted — the code may have already been used or run out, so " +
+            "show a new one on the other device",
           authorised:
             "that device disconnected just after linking, before sending " +
             "anything",
@@ -804,17 +1079,69 @@ class Session {
 
       // Immediately, and without waiting for anything. This is the part the
       // old protocol got wrong: there is nothing to wait for.
-      this.#send({
-        t: "hello",
-        v: PROTOCOL,
-        device: this.#hooks.device,
-        name: this.#hooks.name,
-        onion: this.#hooks.onion(),
-        nonce: this.#nonce,
-        proof: "",
-        communities: this.#hooks.communities(),
-      });
+      this.#greet("");
     });
+  }
+
+  /** A greeting, with or without a proof, naming whatever this side knows. */
+  #greet(proof: string): void {
+    this.#send({
+      t: "hello",
+      v: PROTOCOL,
+      device: this.#hooks.device,
+      name: this.#hooks.name,
+      onion: this.#hooks.onion(),
+      nonce: this.#nonce,
+      proof,
+      communities: this.#hooks.communities(),
+      cred: this.#cred,
+      session: this.#session,
+    });
+  }
+
+  /**
+   * Settle on a key from what the peer said it was using.
+   *
+   * Returns a refusal to send, or nothing when a key was found. Only ever
+   * reached on the side that answered the connection — the side that dialled
+   * brought its own.
+   */
+  #adoptCredential(msg: Wire & { t: "hello" }): string | undefined {
+    if (!msg.cred) {
+      return "that device did not say how it was authorising — it may be " +
+        "running an older version of Reaper";
+    }
+
+    if (msg.cred === "account") {
+      const secret = this.#hooks.accountSecret?.();
+
+      if (!secret) {
+        // Not a refusal of the peer — a statement about this device. A phone
+        // that has never been linked has no account secret and cannot be
+        // synced with; it has to be linked with a code first, and saying so is
+        // the difference between a solvable problem and a mystery.
+        return "this device has no account yet — link it with a pairing code first";
+      }
+
+      this.#cred = "account";
+      this.#key = accountKey(secret);
+      return undefined;
+    }
+
+    const live = this.#invites.find(msg.session ?? "");
+
+    if (!live) {
+      // The single most useful sentence in this file. Used, replaced, expired
+      // and lost-to-a-restart all arrive here, and all four have one answer.
+      return "that pairing code is no longer valid — show a new code on the " +
+        "other device and scan it again";
+    }
+
+    this.#cred = "invite";
+    this.#session = live.session;
+    this.#key = inviteKey(live.password, live.salt);
+    this.#minted = true;
+    return undefined;
   }
 
   /**
@@ -828,8 +1155,8 @@ class Session {
 
     switch (msg.t) {
       case "hello": {
-        // Before the password, because a version mismatch makes every other
-        // check meaningless — and reporting it as a password problem sends
+        // Before anything else, because a version mismatch makes every other
+        // check meaningless — and reporting it as a credential problem sends
         // somebody to re-type a password that was never wrong.
         const theirs = msg.v ?? 0;
 
@@ -844,35 +1171,33 @@ class Session {
           return;
         }
 
-        const password = this.#hooks.password();
-        if (!password) return;
+        // The opening greeting from the answering side carries no credential,
+        // and must not be treated as a peer that failed to name one.
+        if (!this.#key && (msg.cred || msg.proof)) {
+          const refusal = this.#adoptCredential(msg);
 
-        const expect = createHmac("sha256", inviteKey(password, "pair"))
-          .update(`${msg.device}:${this.#nonce}`)
-          .digest("hex");
+          // `#fail` writes the reason to the wire itself. Sending one here as
+          // well put two `no` frames back to back, which a peer reading them
+          // out of a single TCP chunk has to split correctly to see either —
+          // and the second one carries nothing the first did not.
+          if (refusal) { this.#fail(refusal); return; }
+        }
 
         // Answer any greeting that has not been answered, whether or not it
         // carried a proof of its own. Waiting specifically for the empty one
         // is what turned a single missed message into a deadlock.
-        if (!this.#answered && msg.nonce) {
+        if (!this.#answered && msg.nonce && this.#key) {
           this.#answered = true;
           this.#result.device = msg.device;
           this.#result.name = msg.name || "a device";
           this.#result.onion = msg.onion || "";
           this.#stage = "greeted";
 
-          this.#send({
-            t: "hello",
-            v: PROTOCOL,
-            device: this.#hooks.device,
-            name: this.#hooks.name,
-            onion: this.#hooks.onion(),
-            nonce: this.#nonce,
-            proof: createHmac("sha256", inviteKey(password, "pair"))
+          this.#greet(
+            createHmac("sha256", this.#key)
               .update(`${this.#hooks.device}:${msg.nonce}`)
               .digest("hex"),
-            communities: this.#hooks.communities(),
-          });
+          );
 
           // Falls through rather than returning when this greeting also
           // carried a proof: one message can both ask and answer, and treating
@@ -880,12 +1205,46 @@ class Session {
           if (!msg.proof) return;
         }
 
-        if (msg.proof.length !== expect.length ||
-            !timingSafeEqual(Buffer.from(msg.proof), Buffer.from(expect))) {
-          this.#send({ t: "no", why: "that is a different account or a different password" });
-          this.#fail("the password did not match");
+        if (!msg.proof) return;
+
+        if (!this.#key) {
+          // A proof against nothing. Reachable only from a peer that sent one
+          // without ever naming a credential, which the check above refuses —
+          // kept because the alternative is an exception inside a handler.
+          this.#fail("that device sent a proof without saying what it was proving");
           return;
         }
+
+        const expect = createHmac("sha256", this.#key)
+          .update(`${msg.device}:${this.#nonce}`)
+          .digest("hex");
+
+        if (msg.proof.length !== expect.length ||
+            !timingSafeEqual(Buffer.from(msg.proof), Buffer.from(expect))) {
+          // Named by which credential was in force. "Wrong passphrase" and
+          // "different account" send somebody to do entirely different things,
+          // and the proof alone cannot tell them apart — a failed HMAC looks
+          // identical either way, which is exactly why the greeting says which
+          // key it meant.
+          this.#fail(
+            this.#cred === "invite"
+              ? "that passphrase does not match the one shown on the other device"
+              : "that is a different account",
+          );
+          return;
+        }
+
+        // One authorisation per session.
+        //
+        // A second valid greeting is not an attack and not a fault — a peer
+        // that answered twice, or a greeting duplicated by a relay, is enough
+        // — but acting on it twice is. Everything below re-adds every
+        // community to `#open`, and the `end` that closed each of them the
+        // first time has already been sent and will not be sent again. The
+        // session would then sit waiting for messages nobody is going to
+        // write, and time out two minutes later having transferred everything
+        // successfully.
+        if (this.#authorised) return;
 
         this.#authorised = true;
         this.#stage = "authorised";
@@ -945,14 +1304,14 @@ class Session {
       default:
         // Everything below needs the peer to have proved itself. Reaching here
         // unauthorised is not a protocol slip to be tolerated — it is someone
-        // who found the address trying to skip the password.
+        // who found the address trying to skip the credential.
         if (!this.#authorised) {
           // Bounded, so a peer that never proves itself cannot use this to
           // spend memory. The limit is far above anything an honest opening
           // exchange produces — a claim, a summary per community, and a
           // picture list.
           if (this.#pending.length >= 256) {
-            this.#fail("that device sent too much before proving the password");
+            this.#fail("that device sent too much before proving the code");
             return;
           }
 
@@ -1021,17 +1380,28 @@ class Session {
       }
 
       case "whoami": {
-        const account = this.#hooks.identity?.();
+        // Resolved rather than read, because on iOS the onion key comes back
+        // from a native call. Nothing waits on this: the protocol has no
+        // ordering, so an answer that arrives three messages later is as good
+        // as one that arrives immediately.
+        void Promise.resolve(this.#hooks.identity?.()).then(
+          (account) => {
+            if (!account) {
+              // Nothing to give. Said rather than ignored, so the asking device
+              // stops waiting for it — two devices that both have nothing would
+              // otherwise sit until the idle timer.
+              this.#send({ t: "iam", identity: "" });
+              return;
+            }
 
-        if (!account) {
-          // Nothing to give. Said rather than ignored, so the asking device
-          // stops waiting for it — two devices that both have nothing would
-          // otherwise sit until the idle timer.
-          this.#send({ t: "iam", identity: "" });
-          return;
-        }
+            this.#send({ t: "iam", identity: account.identity, onionKey: account.onionKey });
+          },
+          (error: Error) => {
+            this.#hooks.trace?.(`could not read this device's account: ${error.message}`);
+            this.#send({ t: "iam", identity: "" });
+          },
+        );
 
-        this.#send({ t: "iam", identity: account.identity, onionKey: account.onionKey });
         return;
       }
 
@@ -1044,19 +1414,21 @@ class Session {
           return;
         }
 
-        try {
+        void Promise.resolve(
           this.#hooks.adoptIdentity?.({
             identity: msg.identity,
             onionKey: msg.onionKey,
-          });
+          }),
+        ).then(
+          () => {
+            this.#result.adopted = true;
+            this.#maybeDone();
+          },
+          (error: Error) => {
+            this.#fail(`could not take on the account: ${error.message}`);
+          },
+        );
 
-          this.#result.adopted = true;
-        } catch (error) {
-          this.#fail(`could not take on the account: ${(error as Error).message}`);
-          return;
-        }
-
-        this.#maybeDone();
         return;
       }
 
@@ -1094,6 +1466,20 @@ class Session {
 
     if (this.#saidDone && this.#heardDone) {
       this.#result.done = true;
+
+      // Spent, and only now.
+      //
+      // Deliberately not at the moment the proof verified. A code burnt on
+      // authorisation is gone even when the transfer that followed it failed
+      // — so a link interrupted by a dropped circuit would leave the user
+      // holding a code that no longer works and no indication why. This way a
+      // failed attempt can simply be retried, and only a link that actually
+      // completed uses the code up.
+      if (this.#minted && this.#session) {
+        this.#invites.revoke(this.#session);
+        this.#hooks.trace?.("that pairing code has been used and is now spent");
+      }
+
       this.#socket.end();
       this.#settle();
     }
@@ -1139,10 +1525,10 @@ class Session {
    * Give up, and say so to both sides.
    *
    * The `no` is the part worth having. Without it a session that failed here —
-   * a hook that threw, a password that did not match, a frame that would not
-   * parse — simply stopped writing, and the peer learned only that a socket
-   * had closed. Both devices then reported "the other one hung up", which is
-   * true of exactly one of them and useless on both.
+   * a hook that threw, a code that did not match, a frame that would not parse
+   * — simply stopped writing, and the peer learned only that a socket had
+   * closed. Both devices then reported "the other one hung up", which is true
+   * of exactly one of them and useless on both.
    *
    * Sent before destroying, and only when this side has not already refused,
    * so the reason survives the trip.
@@ -1185,7 +1571,8 @@ class Session {
 /* ---- the service --------------------------------------------------------- */
 
 /**
- * Listens for siblings, and runs a session over any socket handed to it.
+ * Listens for siblings, runs a session over any socket handed to it, and holds
+ * whatever invites are currently on screen.
  *
  * It does not dial. Opening a Tor circuit belongs to the code that knows what
  * an onion address is, and keeping that out of here is what lets the same
@@ -1193,6 +1580,7 @@ class Session {
  */
 export class PairService extends EventEmitter {
   readonly #hooks: PairHooks;
+  readonly #invites = new Invites();
   #server?: Server;
   #port?: number;
 
@@ -1209,7 +1597,7 @@ export class PairService extends EventEmitter {
     if (this.#port) return this.#port;
 
     const server = createServer((socket) => {
-      new Session(socket, this.#hooks).run()
+      this.answer(socket)
         .then((result) => this.emit("paired", result))
         .catch((error: Error) => this.emit("failed", error.message));
     });
@@ -1229,12 +1617,97 @@ export class PairService extends EventEmitter {
     return this.#port;
   }
 
-  /** Run a session over a socket somebody else connected. */
-  adopt(socket: Socket): Promise<PairResult> {
-    return new Session(socket, this.#hooks).run();
+  /**
+   * Run an answering session over a socket somebody else accepted.
+   *
+   * The side that answers never chooses a credential — it adopts whatever the
+   * dialling side names, which is why this takes nothing but the socket. Used
+   * by `open` above, and by the tests that put a phone's socket on one end of
+   * a real connection without going through a server.
+   */
+  answer(socket: Socket): Promise<PairResult> {
+    return new Session(socket, this.#hooks, this.#invites).run();
+  }
+
+  /**
+   * Offer a fresh code, dropping whatever was offered before.
+   *
+   * The passphrase is returned so the interface can show it. It is never
+   * written down, never reused, and is gone the moment the invite is revoked,
+   * used or expires.
+   */
+  mint(onion: string, ttlMs = INVITE_TTL_MS): Minted {
+    const minted = mintInvite(onion, ttlMs);
+
+    this.#invites.add({
+      session: minted.session,
+      password: minted.password,
+      salt: minted.salt,
+      expiresAt: minted.expiresAt,
+    });
+
+    return {
+      code: minted.code,
+      password: minted.password,
+      session: minted.session,
+      expiresAt: minted.expiresAt,
+    };
+  }
+
+  /** Withdraw one code, or every code this device is offering. */
+  revoke(session?: string): void {
+    this.#invites.revoke(session);
+  }
+
+  /** Which codes are still live, for an interface that has to say so. */
+  offering(): { session: string; expiresAt: number }[] {
+    return this.#invites.list().map(({ session, expiresAt }) => ({ session, expiresAt }));
+  }
+
+  /**
+   * Link to a device using a code scanned or pasted here.
+   *
+   * The socket is dialled by the caller — see `pairOverTor` — because opening
+   * a Tor circuit is not this class's business on either platform.
+   */
+  join(socket: Socket, invite: Invite, password: string): Promise<PairResult> {
+    return new Session(socket, this.#hooks, this.#invites, {
+      cred: "invite",
+      session: invite.session,
+      key: inviteKey(password, invite.salt),
+    }).run();
+  }
+
+  /**
+   * Catch up with a device already linked to this account.
+   *
+   * Needs no code and no typing, because both devices hold the account — which
+   * is the whole reason the first link hands the identity over.
+   */
+  sync(socket: Socket): Promise<PairResult> {
+    const secret = this.#hooks.accountSecret();
+
+    if (!secret) {
+      // Refused here rather than on the wire, because there is nothing to say
+      // to the peer: this device has no account, so it has nothing to prove
+      // and nothing to sync. It needs linking with a code first.
+      socket.destroy();
+
+      return Promise.reject(new Error(
+        "this device is not linked to an account yet — scan a pairing code from " +
+        "one of your other devices first",
+      ));
+    }
+
+    return new Session(socket, this.#hooks, this.#invites, {
+      cred: "account",
+      key: accountKey(secret),
+    }).run();
   }
 
   async close(): Promise<void> {
+    this.#invites.revoke();
+
     const server = this.#server;
     if (!server) return;
 

@@ -108,8 +108,16 @@ public class SocketPlugin: CAPPlugin, CAPBridgedPlugin {
     }
   }
 
+  /**
+   * Stop one listener, or all of them.
+   *
+   * The port is what identifies it. This device runs two — the chat transport
+   * behind the account address and the pairing service behind the sync address
+   * — so a `stopListening` with no port used to take both down, and the caller
+   * that meant to close one closed the other as collateral.
+   */
   @objc func stopListening(_ call: CAPPluginCall) {
-    sockets?.stopListening()
+    sockets?.stopListening(port: UInt16(call.getInt("port") ?? 0))
     call.resolve()
   }
 

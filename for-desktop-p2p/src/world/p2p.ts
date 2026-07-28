@@ -390,14 +390,32 @@ contextBridge.exposeInMainWorld("p2p", {
   syncDevices: (): Promise<{ devices: number; events: number }> =>
     ipcRenderer.invoke("p2p:syncDevices"),
 
-  /** Sync with a device whose sync address was typed or scanned. */
-  /** Whether a pairing password is set, or set one. Never returns it. */
-  pairPassword: (password?: string): Promise<{ set: boolean }> =>
-    ipcRenderer.invoke("p2p:pairPassword", password),
+  /**
+   * A one-time code for another device to scan, and the passphrase for it.
+   *
+   * Asking again replaces whatever was offered before, so there is never more
+   * than one live code. Both halves are generated in the main process and
+   * neither is written to disk — the code stops working when it is used, when
+   * it is revoked, when it runs out, or when the app closes, whichever comes
+   * first.
+   */
+  pairInvite: (): Promise<{
+    code: string;
+    password: string;
+    session: string;
+    expiresAt: number;
+    onion: string;
+    name: string;
+  }> => ipcRenderer.invoke("p2p:pairInvite"),
 
-  /** A code for another device to scan. */
-  pairInvite: (): Promise<{ code: string; onion: string; name: string }> =>
-    ipcRenderer.invoke("p2p:pairInvite"),
+  /**
+   * Withdraw a code before it runs out.
+   *
+   * Called when the dialog closes, so a code is only live while it is on
+   * screen. Omit the session to withdraw every code this device is offering.
+   */
+  pairRevoke: (session?: string): Promise<{ offering: { session: string; expiresAt: number }[] }> =>
+    ipcRenderer.invoke("p2p:pairRevoke", session),
 
   /** Join the account behind a scanned or pasted code. */
   pairJoin: (code: string, password: string): Promise<{ ok: boolean; error?: string }> =>

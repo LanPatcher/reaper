@@ -18,6 +18,20 @@ export interface SocketEvent {
   id: string;
 }
 
+/**
+ * An inbound connection, and which local port it landed on.
+ *
+ * The port is what tells the two services apart. This device publishes two
+ * onion addresses — the account one, which Tor forwards to the chat transport,
+ * and the sync one, which it forwards to the pairing service — and they speak
+ * different protocols. Without this the JavaScript side had to guess, and it
+ * guessed by handing every accepted connection to whichever server had bound
+ * most recently.
+ */
+export interface SocketAccept extends SocketEvent {
+  port: number;
+}
+
 export interface SocketData extends SocketEvent {
   /** Base64. May be any fraction of a frame, or several — it is a stream. */
   data: string;
@@ -45,12 +59,20 @@ export interface SocketPlugin {
   send(options: { id: string; data: string }): Promise<void>;
   close(options: { id: string }): Promise<void>;
 
-  /** Accept connections on loopback, which is where Tor forwards them. */
+  /**
+   * Accept connections on loopback, which is where Tor forwards them.
+   *
+   * May be called more than once. This device runs two services on two ports
+   * and both have to stay bound at the same time — asking for a second one no
+   * longer closes the first.
+   */
   listen(options: { port?: number }): Promise<{ port: number }>;
-  stopListening(): Promise<void>;
+
+  /** Stop the listener on a port, or every listener when none is named. */
+  stopListening(options?: { port?: number }): Promise<void>;
 
   addListener(event: "connect", handler: (e: SocketEvent) => void): Promise<Handle>;
-  addListener(event: "accept", handler: (e: SocketEvent) => void): Promise<Handle>;
+  addListener(event: "accept", handler: (e: SocketAccept) => void): Promise<Handle>;
   addListener(event: "data", handler: (e: SocketData) => void): Promise<Handle>;
   addListener(event: "close", handler: (e: SocketEvent) => void): Promise<Handle>;
   addListener(event: "error", handler: (e: SocketError) => void): Promise<Handle>;
