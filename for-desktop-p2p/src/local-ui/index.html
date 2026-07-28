@@ -1361,6 +1361,7 @@
             "Discarded": "Descartado",
             "Do not disturb": "No molestar",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "No uses la misma identidad en dos máquinas a la vez — ambas firmarían como la misma persona, y eso ya no se puede deshacer.",
+            "This account has other devices. Only one of them can answer at your address at a time — if two are running, sync them so they can agree which.": "Esta cuenta tiene otros dispositivos. Solo uno puede responder en tu dirección a la vez — si hay dos en marcha, sincronízalos para que puedan ponerse de acuerdo.",
             "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Este dispositivo aún no tiene dirección de sincronización — Tor todavía la está publicando. Suele tardar un par de minutos tras arrancar. Mientras tanto puedes copiar desde el otro dispositivo.",
             "Scan this on your other device, or copy the address.": "Escanea esto en tu otro dispositivo, o copia la dirección.",
             "Scan a QR code": "Escanear un código QR",
@@ -2037,6 +2038,7 @@
             "Discarded": "Abandonné",
             "Do not disturb": "Ne pas déranger",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "N'utilisez pas la même identité sur deux machines à la fois — les deux signeraient comme la même personne, et rien ne peut le démêler ensuite.",
+            "This account has other devices. Only one of them can answer at your address at a time — if two are running, sync them so they can agree which.": "Ce compte a d'autres appareils. Un seul peut répondre à votre adresse à la fois — si deux fonctionnent, synchronisez-les pour qu'ils puissent se mettre d'accord.",
             "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Cet appareil n'a pas encore d'adresse de synchronisation — Tor est en train de la publier. Cela prend généralement une minute ou deux après le démarrage. Vous pouvez copier depuis l'autre appareil entre-temps.",
             "Scan this on your other device, or copy the address.": "Scannez ceci sur votre autre appareil, ou copiez l'adresse.",
             "Scan a QR code": "Scanner un code QR",
@@ -2713,6 +2715,7 @@
             "Discarded": "Verworfen",
             "Do not disturb": "Bitte nicht stören",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "Verwende dieselbe Identität nicht auf zwei Rechnern gleichzeitig — beide würden als dieselbe Person signieren, und das lässt sich danach nicht mehr entwirren.",
+            "This account has other devices. Only one of them can answer at your address at a time — if two are running, sync them so they can agree which.": "Dieses Konto hat weitere Geräte. Nur eines kann gleichzeitig unter deiner Adresse antworten — wenn zwei laufen, synchronisiere sie, damit sie sich einigen können.",
             "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Dieses Gerät hat noch keine Sync-Adresse — Tor veröffentlicht sie gerade. Das dauert nach dem Start meist ein bis zwei Minuten. In der Zwischenzeit kannst du vom anderen Gerät aus kopieren.",
             "Scan this on your other device, or copy the address.": "Scanne das auf deinem anderen Gerät, oder kopiere die Adresse.",
             "Scan a QR code": "QR-Code scannen",
@@ -3389,6 +3392,7 @@
             "Discarded": "Descartado",
             "Do not disturb": "Não incomodar",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "Não uses a mesma identidade em duas máquinas ao mesmo tempo — ambas assinariam como a mesma pessoa, e isso não se desfaz depois.",
+            "This account has other devices. Only one of them can answer at your address at a time — if two are running, sync them so they can agree which.": "Esta conta tem outros dispositivos. Só um pode responder no teu endereço de cada vez — se houver dois a correr, sincroniza-os para que possam decidir.",
             "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Este dispositivo ainda não tem endereço de sincronização — o Tor ainda o está a publicar. Costuma demorar um ou dois minutos depois de arrancar. Entretanto podes copiar a partir do outro dispositivo.",
             "Scan this on your other device, or copy the address.": "Lê isto no teu outro dispositivo, ou copia o endereço.",
             "Scan a QR code": "Ler um código QR",
@@ -15490,6 +15494,22 @@
         modal(t("Connection"), function (card) {
           var st = document.createElement("div");
           st.className = "listitem";
+          // Two devices publishing one address is not visible from either of
+          // them. Tor accepts both descriptors, neither device can see the
+          // other, and both report themselves reachable — which is exactly
+          // what makes it worth saying out loud here rather than leaving
+          // somebody to notice that messages arrive in the wrong place.
+          //
+          // Only when this account is known to have more than one device.
+          if (devices && devices.known && devices.known.length && myOnion) {
+            var warnTwo = document.createElement("div");
+            warnTwo.className = "warn";
+            warnTwo.style.fontSize = "11px";
+            warnTwo.textContent =
+              t("This account has other devices. Only one of them can answer at your address at a time — if two are running, sync them so they can agree which.");
+            card.appendChild(warnTwo);
+          }
+
           var dot = document.createElement("div");
           dot.className = "netdot" + (myOnion ? " on" : "");
           st.appendChild(dot);
