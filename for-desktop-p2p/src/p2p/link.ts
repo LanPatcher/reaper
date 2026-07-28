@@ -497,6 +497,26 @@ export class LinkService extends EventEmitter {
         if (!key) {
           if (inbox.length < 4) return;
           const length = inbox.readUInt32BE(0);
+
+          // A length that could not be a hello.
+          //
+          // Worth naming, because the likeliest cause is not corruption: it is
+          // having reached the *wrong service* on the right device. Both the
+          // chat transport and this listen on loopback ports, and if an onion
+          // service is pointed at the wrong one the bytes that arrive are a
+          // perfectly valid frame of a completely different protocol. Read as
+          // a length prefix that is nonsense, and reported until now as "that
+          // is not a Reaper device link" — true, unhelpful, and pointing at
+          // the wrong thing.
+          if (length === 0 || length > 64 * 1024) {
+            deliver({
+              t: "wrong-service",
+              saw: inbox.subarray(0, Math.min(16, inbox.length)).toString("hex"),
+            } as unknown as Message);
+            inbox = Buffer.alloc(0);
+            return;
+          }
+
           if (inbox.length < 4 + length) return;
 
           const body = inbox.subarray(4, 4 + length);
@@ -505,7 +525,14 @@ export class LinkService extends EventEmitter {
           try {
             deliver(JSON.parse(body.toString("utf8")) as Message);
           } catch {
-            socket.destroy();
+            // Framed like a link greeting and is not one. Reported rather than
+            // dropped, or the far end simply stops answering and the caller is
+            // told the device did not respond.
+            deliver({
+              t: "wrong-service",
+              saw: body.subarray(0, 24).toString("utf8"),
+            } as unknown as Message);
+            inbox = Buffer.alloc(0);
             return;
           }
           continue;
@@ -538,8 +565,26 @@ export class LinkService extends EventEmitter {
       });
 
       const hello = await receive();
-      if (hello.t !== "hello" || hello.v !== 1) {
-        throw new Error("that is not a Reaper device link");
+
+      if ((hello as { t: string }).t === "wrong-service") {
+        throw new Error(
+          "connected, but that address is not this account's sync service — " +
+          "it answered with something else (" +
+          (hello as unknown as { saw: string }).saw + ")",
+        );
+      }
+
+      if (hello.t !== "hello") {
+        throw new Error(
+          `expected a device link greeting and got "${String(hello.t)}"`,
+        );
+      }
+
+      if (hello.v !== 1) {
+        throw new Error(
+          `that device speaks version ${String(hello.v)} of the link protocol, ` +
+          "this one speaks 1 — one of them needs updating",
+        );
       }
 
       const [claimed, theirSalt] = String(hello.fingerprint).split(":");

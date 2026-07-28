@@ -550,7 +550,20 @@ async function publishIfHolding(): Promise<string | undefined> {
 /** The port the link server is listening on, for Tor to forward to. */
 let syncPort = 0;
 
-/** Guards against two syncs to the same device at once. */
+/**
+ * Syncs already in flight, keyed by address.
+ *
+ * By address rather than by device id, and that is the whole point of the
+ * change. A sync started by scanning a code does not know which device it is
+ * dialling yet — it has an address and nothing else — so it used the placeholder
+ * id "unknown", which collides with nothing and therefore guarded nothing.
+ *
+ * The automatic pass and the scan could then open two sessions to the same
+ * device at the same moment. Both are valid; the pair that finishes second
+ * finds the far end already mid-exchange and fails the handshake. So the data
+ * arrived *and* the button reported "that is not a Reaper device link" — a
+ * failure that was real, about a second connection nobody asked for.
+ */
 const syncing = new Set<string>();
 
 function syncAddresses(): SyncAddress[] {
@@ -606,11 +619,11 @@ function syncAddressNow(): string | undefined {
  * cannot be fetched from anywhere else, so those always travel.
  */
 async function syncOverTor(entry: SyncAddress): Promise<LinkProgress> {
-  if (syncing.has(entry.device)) {
+  if (syncing.has(entry.onion)) {
     throw new Error("already syncing with that device");
   }
 
-  syncing.add(entry.device);
+  syncing.add(entry.onion);
 
   try {
     await openLink({ announce: false });
@@ -637,7 +650,7 @@ async function syncOverTor(entry: SyncAddress): Promise<LinkProgress> {
     log("[link]", `could not sync with ${entry.name}: ${why}`);
     throw new Error(why);
   } finally {
-    syncing.delete(entry.device);
+    syncing.delete(entry.onion);
   }
 }
 
@@ -2121,8 +2134,23 @@ export function registerP2PHandlers(): void {
     // Publishing now, rather than after a restart. The address is already
     // configured; what was missing was permission to announce it.
     await publishIfHolding();
-
     announceDevices();
+
+    // And telling the device that just lost it.
+    //
+    // This was the missing half. Taking the address over wrote a claim into
+    // *this* device's index and stopped there, so the other device carried on
+    // believing it held the address and carried on publishing — two devices
+    // answering at once, which is the exact situation the claim exists to
+    // prevent, produced by the button that is supposed to resolve it.
+    //
+    // Not awaited: the other device may be switched off, and a hand-over that
+    // hangs until it answers would be worse than one that completes now and
+    // propagates when it can. The scheduled pass carries it either way.
+    void syncAllDevices()
+      .then(() => announceDevices())
+      .catch(() => { /* reported by syncOverTor */ });
+
     return deviceInfo();
   });
 
@@ -2190,6 +2218,12 @@ export function registerP2PHandlers(): void {
    */
   ipcMain.handle(CHANNEL.syncWith, async (event, onion: string) => {
     viewer = event.sender;
+
+    // A sync the user asked for takes precedence over one that was merely due.
+    // Cancelling the pending pass stops the two racing each other to the same
+    // address, which is how a working sync came to report a handshake failure.
+    if (syncSoon) clearTimeout(syncSoon);
+    syncSoon = undefined;
 
     const address = String(onion ?? "").trim().toLowerCase()
       .replace(/^\w+:\/\//, "").split("/")[0];
