@@ -226,6 +226,32 @@ html.members-open #members {
   padding: 11px 13px;
 }
 
+/* ---- dragging, which this platform does differently --------------------- */
+
+/* The server rail and the channel list set `draggable="true"` so they can be
+   reordered with a mouse. On a touch screen that turns a press-and-move into
+   the system's own drag: it takes the touch stream, shows a lift-and-drag
+   preview, and the swipe that was meant to close the conversation list never
+   reaches this app at all.
+
+   Suppressed rather than removed, because the attribute is set by the shared
+   interface and this file does not get to edit it — and because the desktop
+   behaviour it exists for is still correct on a desktop. Reordering by touch
+   needs its own long-press gesture, which is a separate piece of work; what
+   matters here is that a half-working native drag stops eating every swipe. */
+[draggable] {
+  -webkit-user-drag: none;
+  user-drag: none;
+}
+
+/* Vertical scrolling belongs to the list; horizontal belongs to the
+   slide-over. Saying so lets the browser start the scroll immediately instead
+   of waiting to find out whether this app is going to call preventDefault,
+   which is what makes a panel feel like it is lagging behind the finger. */
+#rail, #side, #members, #messages {
+  touch-action: pan-y;
+}
+
 /* ---- touch targets ------------------------------------------------------ */
 
 /* Apple's minimum is 44 points. The desktop rows are around half that, which
