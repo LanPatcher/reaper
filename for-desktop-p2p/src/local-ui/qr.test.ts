@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -120,6 +121,58 @@ for (const [text, expected] of Object.entries(VECTORS)) {
   // Refusing loudly beats emitting a truncated code that scans to half an
   // address.
   ck("too much to encode is refused rather than truncated", refused);
+}
+
+
+/* ---- the size the pairing invite actually is ----------------------------- */
+
+/**
+ * The encoder has to accept a real invite.
+ *
+ * This is here because it did not. The invite grew when pairing was rebuilt —
+ * a longer, encrypted payload where a bare onion address used to be — and the
+ * encoder stops at version 6, so the Devices screen showed "too much for a QR
+ * code this size" where the code belonged. Nothing connected the two files, so
+ * nothing caught it.
+ *
+ * Asserting the real thing rather than a length is the point: a constant here
+ * would drift the moment the invite format changed again, which is precisely
+ * the change that broke it.
+ */
+{
+  const { sealInvite } = await import("../p2p/pair");
+
+  const raw = Buffer.concat([randomBytes(34), Buffer.from([3])]);
+  const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0, value = 0, spelled = "";
+  for (const byte of raw) {
+    value = (value << 8) | byte; bits += 8;
+    while (bits >= 5) { spelled += B32[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+
+  const code = sealInvite(
+    { onion: spelled.toLowerCase() + ".onion", name: "Ray's desktop" },
+    "a pairing password",
+  );
+
+  let encoded = true;
+  let why = "";
+
+  try {
+    encoder(code);
+  } catch (error) {
+    encoded = false;
+    why = (error as Error).message;
+  }
+
+  ck("the encoder takes a real pairing invite", encoded, why);
+
+  // Room to spare, so a small format change does not put it over again.
+  ck(
+    "with room left before the encoder's limit",
+    code.length <= 100,
+    `${code.length} of 134 bytes`,
+  );
 }
 
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");
