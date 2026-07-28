@@ -245,8 +245,30 @@ async function startNetwork(): Promise<void> {
     announce();
   });
 
+  // The device link, before Tor rather than after it.
+  //
+  // Tor reads its configuration once, at startup, and this device publishes
+  // *two* onion services: the account address, and a second one that only the
+  // user's own devices dial. The second has to be told which local port to
+  // forward to, so that port has to exist before Tor is started — and the link
+  // server is what is listening on it.
+  //
+  // Opened here rather than left to `netStart`'s own background pass, which
+  // runs too late to be included in the configuration. Failing is survivable:
+  // without it this device can still dial its siblings, it just cannot be
+  // dialled by them, and one reachable device in the set is enough for
+  // everything to converge.
+  let syncPort = 0;
+
   try {
-    await Tor.start({ localPort: listening });
+    const link = await invoke("p2p:linkOpen") as { port: number };
+    syncPort = link.port;
+  } catch (error) {
+    console.warn("[boot] no device link on this device:", error);
+  }
+
+  try {
+    await Tor.start({ localPort: listening, syncPort });
   } catch (error) {
     status.network = "failed";
     status.error = `tor: ${(error as Error).message}`;

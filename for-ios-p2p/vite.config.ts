@@ -182,6 +182,15 @@ export default defineConfig({
       "node:path": resolve(__dirname, "src/shim/path.ts"),
       "node:net": resolve(__dirname, "src/shim/net.ts"),
       "node:events": resolve(__dirname, "src/shim/events.ts"),
+
+      // Both reached through `link.ts` and `bridge.ts`, and both absent in a
+      // WebView. Substituted rather than left alone, because Vite's answer to
+      // an unknown Node builtin is `__vite-browser-external` — a module whose
+      // every property throws *and* which fails the build outright when
+      // something imports a named export from it. That is what
+      // `import { createSocket } from "node:dgram"` did.
+      "node:dgram": resolve(__dirname, "src/shim/dgram.ts"),
+      "node:os": resolve(__dirname, "src/shim/os.ts"),
       // The whole desktop bridge runs here; see src/shim/electron.ts.
       electron: resolve(__dirname, "src/shim/electron.ts"),
       // The npm package, by path.

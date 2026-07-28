@@ -57,6 +57,20 @@ export interface TorOptions {
 
   /** Local port the onion service forwards to. */
   targetPort: number;
+
+  /**
+   * Which of this device's two services this is.
+   *
+   * "account" is the address in a friend code — the one exactly one of your
+   * devices publishes at a time. "sync" is this device's own address, which
+   * only your other devices dial and which is published unconditionally.
+   *
+   * The desktop keeps them apart by data directory and does not need to be
+   * told. iOS does: there, Tor is a single linked-in client publishing both
+   * services at once, so the shim has to know which address it is being asked
+   * for rather than inferring it from a path it does not own.
+   */
+  role?: "account" | "sync";
 }
 
 export class TorService extends EventEmitter {

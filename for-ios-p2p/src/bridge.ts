@@ -47,6 +47,7 @@ const METHODS = [
   "putBlob", "getBlob", "hasBlob", "wantBlob", "sweepBlobs", "forgetBlob",
   "deviceInfo", "deviceName", "deviceTakeOver",
   "linkOpen", "linkClose", "linkPeers", "linkTo",
+  "syncDevices", "syncWith",
 ] as const;
 
 type Surface = Record<string, unknown>;

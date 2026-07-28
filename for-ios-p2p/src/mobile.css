@@ -33,6 +33,21 @@ body {
   overflow: hidden;
 }
 
+/* ---- the title bar ------------------------------------------------------ */
+
+/* Minimise, maximise and close are desktop window controls, and iOS has no
+   windows. Worse than useless: tapping close on a phone quits an app that is
+   also the thing keeping the connection alive, and nothing about the gesture
+   suggests that is what it does. */
+#winbtns { display: none; }
+
+#titlebar {
+  /* Kept, because it carries the name and sits under the notch. Without the
+     inset it slides beneath the status bar and the wordmark is unreadable. */
+  padding-top: env(safe-area-inset-top);
+  -webkit-app-region: none;
+}
+
 /* ---- the left slide-over: servers and conversations ---------------------- */
 
 #rail, #side {
@@ -72,6 +87,29 @@ html.nav-open #side {
   transform: translateX(0);
 }
 
+/* Following the finger.
+
+   `--nav-drag` is set by `mobile.ts` while a drag is in progress and added to
+   whichever rest position the panel is in. The transition is switched off for
+   the duration, or every frame animates towards the last one and the panel
+   lags behind the finger by a fifth of a second — which reads as the gesture
+   not being tracked at all. */
+html.nav-dragging #rail,
+html.nav-dragging #side,
+html.nav-dragging #nav-scrim {
+  transition: none;
+}
+
+html.nav-dragging #rail,
+html.nav-dragging #side {
+  transform: translateX(calc(-100% + var(--nav-drag, 0px)));
+}
+
+html.nav-dragging.nav-open #rail,
+html.nav-dragging.nav-open #side {
+  transform: translateX(var(--nav-drag, 0px));
+}
+
 /* Tapping the messages closes it, which is the gesture people already expect
    from every other app that does this. */
 #nav-scrim {
@@ -82,6 +120,16 @@ html.nav-open #side {
   opacity: 0;
   pointer-events: none;
   transition: opacity .22s;
+}
+
+/* The button that opens the panel has to stay above the dimmer that appears
+   when it is open, or the second tap lands on the scrim instead of on the
+   button. Both close it, so it looked like it worked — until the panel was
+   open over a dialog, where the scrim swallowed the tap and the button
+   appeared dead. */
+#navBtn {
+  position: relative;
+  z-index: 45;
 }
 
 html.nav-open #nav-scrim {

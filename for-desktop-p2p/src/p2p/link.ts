@@ -30,26 +30,41 @@ import type { Summary } from "./vector";
  * can sign with the account's own private key, which is to say, one that
  * already has everything.
  *
- * ## Why the local network, when everything else is Tor
+ * ## Two ways to carry it
  *
- * `discovery.ts` records that LAN announcement was removed on purpose,
- * because it revealed a local address and undid the property Tor exists to
- * provide. That reasoning still holds for *peers*, and this does not
- * contradict it:
+ * The same exchange runs over either of two connections, and which one is used
+ * changes nothing about the protocol:
  *
- *   - It is off. It runs only while the user is on the linking screen, on both
- *     devices, and stops when they leave it.
- *   - It announces a hash, not an identity. The packet carries
- *     `sha256(publicKey ‖ salt)` with a fresh salt each time, which the other
- *     device can verify because it holds the same key and which tells an
- *     observer nothing they did not already have.
- *   - The alternative does not exist. Two devices sharing one identity share
- *     one onion address, so they cannot dial each other through Tor — the
- *     address resolves to whichever of them is publishing, which is at most
- *     one and possibly neither.
+ *   - **The local network**, for bulk. Fast, and the only sensible way to move
+ *     an attachment store. Discovery is by UDP broadcast, which is why it is
+ *     off unless the user is on the linking screen on both devices, and why
+ *     the packet carries `sha256(publicKey ‖ salt)` with a fresh salt rather
+ *     than anything that names the account.
  *
- * That last point is the real reason. This is not a convenience path around
- * Tor; it is the only path there is.
+ *   - **Tor**, for everything else. Each device publishes its own onion
+ *     service — a *sync address*, separate from the account's address — so any
+ *     of your devices can reach any other from anywhere, with no port
+ *     forwarding and without being on the same network. This is what makes a
+ *     phone able to take the account over while the desktop is still running
+ *     at home, and it is the path that carries friends, servers, group chats,
+ *     messages and the outbox.
+ *
+ * The account's own onion address cannot serve this. Exactly one device
+ * publishes it at a time — that is the whole point of `devices.ts` — so
+ * dialling it reaches whichever device is already holding, which is precisely
+ * the one that does not need to be reached.
+ *
+ * ## What a sync address is worth if it leaks
+ *
+ * Nothing but a connection. Knowing the address lets somebody open a socket;
+ * the handshake below then asks them to sign a challenge with the account's
+ * private key, and without it the exchange ends before a single log is named.
+ * Nor could a party that somehow got past it insert anything: every event in
+ * every log is signed by its author, and one that is not is dropped on merge.
+ *
+ * So an address that ends up somewhere it should not is a privacy leak — it
+ * says a device exists — and not an authority leak. That distinction is worth
+ * holding on to when deciding how carefully these have to be handled.
  *
  * ## The handshake
  *
@@ -65,6 +80,34 @@ import type { Summary } from "./vector";
 
 /** The port announcements go to. Chosen high and fixed so both sides agree. */
 export const LINK_DISCOVERY_PORT = 45817;
+
+/**
+ * Index events that another device would want to know about promptly.
+ *
+ * Not everything in the index log is worth a Tor circuit. Read receipts, mute
+ * settings and window sizes change constantly and matter to nobody but the
+ * device they happened on; a friend added or a server joined is something the
+ * user will look for on their phone within the hour and be confused not to
+ * find.
+ *
+ * The list is deliberately short. Syncing on every append would keep a circuit
+ * permanently busy for no benefit, and the periodic pass catches the rest
+ * within a few minutes anyway.
+ */
+export const WORTH_SYNCING = new Set([
+  "friend.add",
+  "friend.remove",
+  "friend.outgoing",
+  "friend.incoming",
+  "community.create",
+  "community.key",
+  "community.leave",
+  "group.create",
+  "group.left",
+  "profile.update",
+  "outbox.add",
+  "peer.enckey",
+]);
 
 /** How often to announce while linking is open. */
 const ANNOUNCE_EVERY_MS = 2000;
@@ -362,12 +405,35 @@ export class LinkService extends EventEmitter {
   }
 
   /**
+   * Sync with a device that is not on this network.
+   *
+   * The socket is handed in rather than opened here, because reaching another
+   * of your devices through Tor is the transport's business and this module
+   * should not know what an onion address is. Everything after the connection
+   * is identical — same handshake, same exchange, same convergence — which is
+   * the point: there is one sync protocol and two ways to carry it.
+   *
+   * `files` is how the two differ in practice. Over a local network the
+   * attachment store is worth copying wholesale; over Tor it is tens of
+   * megabytes through three relays, and the files can be fetched from the
+   * people who sent them anyway. Conversations, friends, servers and the
+   * outbox cannot be fetched from anywhere, so those always travel.
+   */
+  async adopt(socket: Socket, options: { files?: boolean } = {}): Promise<LinkProgress> {
+    return this.#session(socket, true, options.files !== false);
+  }
+
+  /**
    * One exchange, from handshake to done.
    *
    * `first` decides who speaks first at each step, which is what keeps this
    * from deadlocking with both sides waiting. The dialling device leads.
    */
-  async #session(socket: Socket, first: boolean): Promise<LinkProgress> {
+  async #session(
+    socket: Socket,
+    first: boolean,
+    files = true,
+  ): Promise<LinkProgress> {
     const identity = this.#hooks.identity;
 
     const mine = randomBytes(16).toString("hex");
@@ -527,9 +593,9 @@ export class LinkService extends EventEmitter {
       for (const community of [...all].sort()) {
         if (first) {
           await this.#offer(community, send, receive, progress);
-          await this.#ask(community, send, receive, progress);
+          await this.#ask(community, send, receive, progress, files);
         } else {
-          await this.#ask(community, send, receive, progress);
+          await this.#ask(community, send, receive, progress, files);
           await this.#offer(community, send, receive, progress);
         }
       }
@@ -607,6 +673,7 @@ export class LinkService extends EventEmitter {
     send: (m: Message) => void,
     receive: () => Promise<Message>,
     _progress: LinkProgress,
+    files = true,
   ): Promise<void> {
     const message = await receive();
     if (message.t !== "want") throw new Error("the link went out of step");
@@ -625,9 +692,14 @@ export class LinkService extends EventEmitter {
       send({ t: "give", community, events: missing.slice(at, at + 500) });
     }
 
+    // Skipped entirely when the link is running over Tor. Not a limitation
+    // being worked around — attachments can be fetched from the people who
+    // sent them, and pushing the whole store through three relays to save a
+    // request that will probably never be made is a poor trade for both
+    // devices and for the network.
     let held: string[] = [];
     try {
-      held = this.#hooks.blobIds(community);
+      if (files) held = this.#hooks.blobIds(community);
     } catch { /* none */ }
 
     const theirs = new Set(message.blobs);

@@ -86,7 +86,71 @@ export class TorService extends EventEmitter {
   address: string | undefined;
   running = false;
 
-  constructor(_options?: unknown) {
+  #watching: ReturnType<typeof setInterval> | undefined;
+
+  /**
+   * Which of this device's two addresses this object reports.
+   *
+   * The desktop runs two Tor processes with separate data directories and
+   * tells them apart by path. Here there is one linked-in client publishing
+   * both services, so the object has to be told which of the two it stands
+   * for — otherwise `bridge.ts` builds a sync service, asks it for its
+   * address, and is handed the account's. That would record the account
+   * address in the device roster, and every device of yours would then try to
+   * sync with whichever one is currently holding it: the exact device that
+   * does not need reaching.
+   */
+  #role: "account" | "sync";
+
+  /**
+   * Keep `address` and `running` in step with the plugin.
+   *
+   * `bridge.ts` answers `netInfo` from these two fields, and the interface
+   * builds the friend code out of the address it gets back. On the desktop
+   * `start()` does not return until Tor has written its hostname file, so the
+   * address is there by the time anything asks.
+   *
+   * Here it is not. Tor is started by `boot.ts` before this object exists, and
+   * publishing a descriptor takes another minute or two after that — so
+   * everything asking for the address got `undefined`, permanently, and the
+   * interface showed "waiting for Tor to publish your address" for the rest of
+   * the session with an onion service that had been live the whole time.
+   *
+   * Polling rather than subscribing because the plugin's events are already
+   * consumed by `boot.ts`, and two subscribers to one native listener is a
+   * coordination problem for a value that changes twice in the life of the
+   * app.
+   */
+  #watch(): void {
+    if (this.#watching) return;
+
+    const look = () => {
+      void Tor.status().then((status) => {
+        this.running = status.running;
+
+        const found = this.#role === "sync" ? status.syncOnion : status.onion;
+
+        if (found && found !== this.address) {
+          this.address = found;
+          this.emit("ready", found);
+        }
+
+        // Nothing left to wait for. The address does not change again without
+        // the app restarting.
+        if (this.address && this.#watching) {
+          clearInterval(this.#watching);
+          this.#watching = undefined;
+        }
+      }).catch(() => {
+        // Not running yet, or no plugin. The next tick asks again.
+      });
+    };
+
+    look();
+    this.#watching = setInterval(look, 3000);
+  }
+
+  constructor(options?: { role?: "account" | "sync" }) {
     // An EventEmitter, because the desktop's is one and `bridge.ts` — the same
     // file, running here unchanged — subscribes to it the moment it is built:
     //
@@ -101,14 +165,41 @@ export class TorService extends EventEmitter {
     // anything is added to it, and a listener silently thrown away is the same
     // class of bug as the one that froze this app on its startup screen.
     super();
+
+    // Defaulting to the account address, which is what every caller written
+    // before there were two of them means.
+    this.#role = options?.role ?? "account";
   }
 
-  async start(): Promise<void> {
+  async start(): Promise<string | undefined> {
     // Already running. See `boot.ts` — Tor is started before the store opens,
-    // because the transport needs its SOCKS port the moment it comes up.
+    // because the transport needs its SOCKS port the moment it comes up. What
+    // this does is start watching for the address it will eventually publish.
+    this.#watch();
+
+    const status = await Tor.status().catch(() => undefined);
+
+    const found = this.#role === "sync" ? status?.syncOnion : status?.onion;
+    if (found) this.address = found;
+    this.running = status?.running ?? false;
+
+    return this.address;
   }
 
-  stop(): void {}
+  stop(): void {
+    // Deliberately not stopping Tor.
+    //
+    // On the desktop this kills the process, and `bridge.ts` calls it when
+    // another device takes the address over. Here Tor is the app's only route
+    // to anyone — SOCKS included — so tearing it down would take outbound
+    // connections with it and leave a displaced device unable to reach even
+    // the device that displaced it.
+    //
+    // Ceasing to publish is what is actually wanted, and that is decided by
+    // whether the address is claimed rather than by whether Tor is alive.
+    if (this.#watching) clearInterval(this.#watching);
+    this.#watching = undefined;
+  }
 }
 
 /**
