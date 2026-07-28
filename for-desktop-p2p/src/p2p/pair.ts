@@ -955,7 +955,12 @@ class Session {
         // Half-close rather than destroy, so the bytes just written are
         // actually flushed — `destroy` discards anything still buffered, which
         // is how the explanation kept getting lost.
-        this.#socket.end();
+        // Guarded, because this runs inside the handler for something that
+        // has already gone wrong. A platform whose socket lacks `end` — as the
+        // iOS shim did — turns every failure into a crash *in the reporting*,
+        // which is strictly worse than the failure being reported.
+        if (typeof this.#socket.end === "function") this.#socket.end();
+        else this.#socket.destroy();
 
         // But not indefinitely. A peer that has already gone will never
         // acknowledge the close, and a half-closed socket waiting for it is an
