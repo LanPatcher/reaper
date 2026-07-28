@@ -29,6 +29,13 @@ public class KeepalivePlugin: CAPPlugin, CAPBridgedPlugin {
   private var handoff: UIBackgroundTaskIdentifier = .invalid
 
   override public func load() {
+    // The one notification this app sends: a warning, when it is swiped away,
+    // that nothing arrives until it is opened again. There is no push service
+    // here — that would need a server holding a token and a copy of the
+    // message — so the app has to say it itself on the way out. See
+    // `ClosedNotice`.
+    ClosedNotice.watch()
+
     NotificationCenter.default.addObserver(
       self,
       selector: #selector(leavingForeground),
