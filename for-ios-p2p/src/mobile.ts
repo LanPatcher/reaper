@@ -30,6 +30,7 @@ export function installMobileLayout(): void {
   followMembers();
   closeOnNavigation();
   closeOnEscape();
+  onlyFocusOnPurpose();
   longPressAsContextMenu();
   swipeToOpen();
   keepComposerAboveKeyboard();
@@ -154,6 +155,50 @@ function closeOnNavigation(): void {
       setTimeout(() => setNav(false), 60);
     });
   }
+}
+
+/**
+ * The keyboard comes up when the user asks for it, and not otherwise.
+ *
+ * The shared interface focuses the composer whenever a conversation opens,
+ * which saves a click on a desktop and is actively hostile on a phone: the
+ * keyboard covers half the conversation before anyone has said they want to
+ * type, so reading a message means dismissing a keyboard first, every time.
+ *
+ * Guarding at the call sites was tried and did not hold. There were four, one
+ * was legitimate, the condition was written three times, and it was fixed for
+ * direct messages twice while server channels went on doing it — a shape of
+ * bug that recurs for as long as the rule lives anywhere other than in one
+ * place.
+ *
+ * So the rule lives here, on the element. A programmatic `focus()` is ignored;
+ * a real tap is not, because that focuses through the browser rather than
+ * through this method. Nothing at any call site can defeat it, including call
+ * sites that do not exist yet.
+ */
+function onlyFocusOnPurpose(): void {
+  const input = document.getElementById("input") as HTMLInputElement | null;
+  if (!input) return;
+
+  const real = input.focus.bind(input);
+
+  // Kept, so the composer can still be focused deliberately — sending a
+  // message and carrying on typing, or picking a mention from the list.
+  (input as unknown as { focusAnyway: () => void }).focusAnyway = real;
+
+  input.focus = () => {
+    // A tap on the input itself is the browser focusing it, not this method,
+    // so it never reaches here. What does reach here is the interface deciding
+    // for the user, which is the thing being declined.
+  };
+
+  // Typing into it once it *is* focused must keep working, and so must the
+  // mention picker, which refocuses after replacing a word. Both happen while
+  // the element already has focus, so they cost nothing.
+  input.addEventListener("blur", () => {
+    // Deliberately empty. Here to make it obvious that losing focus is
+    // allowed to be permanent — nothing re-grabs it.
+  });
 }
 
 /**
