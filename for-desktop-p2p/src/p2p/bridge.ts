@@ -169,6 +169,14 @@ const TOR_KNOWN_GOOD = "0.4.8.10";
 const INDEX = "@index";
 
 /**
+ * Where profile pictures are kept.
+ *
+ * Private, like the index — the leading "@" keeps it out of `isShareable` — and
+ * named to match the renderer, which is the only other place it appears.
+ */
+const AVATARS = "@avatars";
+
+/**
  * Communities worth actively reconciling right now.
  *
  * Set by the renderer: whatever is open, plus anything still waiting for its
@@ -477,7 +485,7 @@ function deviceInfo() {
     // Where your other devices reach this one. Shown so it can be typed or
     // scanned on a device that has never met this one — after that the roster
     // carries it and nobody has to look at it again.
-    syncOnion: syncTor?.address,
+    syncOnion: syncAddressNow(),
     known: others(syncAddresses(), me.id),
   };
 }
@@ -539,9 +547,6 @@ async function publishIfHolding(): Promise<string | undefined> {
 // Onion services need no port forwarding and no fixed address, so this works
 // from mobile data, behind carrier NAT, from another country.
 
-/** Tor's second service on this device: the one only your devices dial. */
-let syncTor: TorService | undefined;
-
 /** The port the link server is listening on, for Tor to forward to. */
 let syncPort = 0;
 
@@ -576,42 +581,19 @@ function recordSyncAddress(onion: string): void {
 }
 
 /**
- * Publish this device's sync service.
+ * This device's sync address, if Tor has published it yet.
  *
- * Separate from the account's address in every way that matters: its own key,
- * its own directory, published unconditionally rather than only when this
- * device is holding. A device that has been displaced is exactly the one that
- * most needs to be reachable — it is how it finds out what it missed, and how
- * it takes the account back.
+ * There is no separate service to start any more. A second `TorService` was
+ * the obvious way to get a second address and it could never have worked: the
+ * SOCKS and control ports are fixed, so a second tor process fails to bind and
+ * exits at once. The result was a sync address that was permanently "still
+ * publishing" — nothing to copy, nothing to scan, and no sign that a process
+ * had died.
+ *
+ * One tor, two hidden services, exactly as the iOS client does it.
  */
-async function startSyncService(): Promise<string | undefined> {
-  if (!syncPort) return undefined;
-  if (syncTor?.address) return syncTor.address;
-
-  try {
-    syncTor = new TorService({
-      dataDir: join(root(), "tor-sync"),
-      torPath: torExecutable(),
-      targetPort: syncPort,
-      role: "sync",
-    });
-
-    syncTor.on("log", (line: string) => log("[link]", line));
-
-    const onion = await syncTor.start();
-    log("[link]", `this device can be reached for sync at ${onion}`);
-
-    recordSyncAddress(onion);
-    announceDevices();
-
-    return onion;
-  } catch (error) {
-    // Not fatal. A device that cannot publish a sync address can still dial
-    // the ones that can, and one reachable device in the set is enough for
-    // everything to converge.
-    log("[link]", `no sync address on this device: ${(error as Error).message}`);
-    return undefined;
-  }
+function syncAddressNow(): string | undefined {
+  return tor?.syncAddress;
 }
 
 /**
@@ -1298,11 +1280,30 @@ export function registerP2PHandlers(): void {
     // worked, but it announced a local IP on the network — one fallback that
     // reveals an address undoes the property the rest of this design exists
     // to provide.
+    // The device link listens before Tor is configured, because Tor has to be
+    // told which local port its *second* service forwards to and it reads its
+    // configuration once. Failing here is survivable: without a sync address
+    // this device can still dial its siblings, it simply cannot be dialled.
+    let forSync = 0;
+    try {
+      forSync = await openLink({ announce: false });
+    } catch (error) {
+      log("[link]", `no device link on this device: ${String(error)}`);
+    }
+
     tor = new TorService({
       dataDir: join(root(), "tor"),
       torPath: torExecutable(),
       targetPort: listening,
+      syncPort: forSync,
       role: "account",
+    });
+
+    // The sync address arrives a few seconds after the first one.
+    tor.on("sync", (address: string) => {
+      log("[link]", `this device can be reached for sync at ${address}`);
+      recordSyncAddress(address);
+      announceDevices();
     });
 
     tor.on("log", (line: string) => log("[tor]", line));
@@ -1336,9 +1337,6 @@ export function registerP2PHandlers(): void {
     // is fully usable meanwhile, and everything this produces arrives as an
     // event.
     void (async () => {
-      await openLink({ announce: false });
-      await startSyncService();
-
       // What the other devices did while this one was closed. Nothing here is
       // urgent, and being wrong about the friends list for another minute
       // costs less than a slow start.
@@ -1874,10 +1872,43 @@ export function registerP2PHandlers(): void {
     // handshake still demands a signature from the account's private key. A
     // backup that leaks leaks the private key too, and next to that the
     // address is not the part to worry about.
-    const syncOnion = syncTor?.address ??
+    const syncOnion = syncAddressNow() ??
       roster(syncAddresses()).find((entry) => entry.device === thisDevice().id)?.onion;
 
-    return packBundle({ identity, index, onion, syncOnion }, passphrase);
+    // Your own profile picture and banner, by hash.
+    //
+    // Read from the index rather than kept anywhere: `profile.update` names
+    // the images this account uses, and the bytes are in the avatar store.
+    // Only the ones this identity authored, so a backup does not quietly
+    // include every face this device has ever seen.
+    const avatars: Record<string, string> = {};
+
+    try {
+      const store = blobsFor(AVATARS);
+
+      for (const event of index) {
+        if (event.type !== "profile.update") continue;
+        if (event.author !== identity.userId) continue;
+
+        const payload = decryptPayload(INDEX, event.payload) as {
+          avatarId?: string; bannerId?: string;
+        };
+
+        for (const id of [payload?.avatarId, payload?.bannerId]) {
+          if (!id || avatars[id]) continue;
+          const bytes = store.read(id);
+          if (bytes) avatars[id] = bytes.toString("base64");
+        }
+      }
+    } catch (error) {
+      // A backup without a picture is worth far more than no backup.
+      log("[p2p]", `profile images left out of the export: ${String(error)}`);
+    }
+
+    return packBundle(
+      { identity, index, onion, syncOnion, avatars },
+      passphrase,
+    );
   });
 
   /**
@@ -1952,6 +1983,17 @@ export function registerP2PHandlers(): void {
         stores.delete(INDEX);
       } else {
         log("[p2p]", "that backup carries no index — friends and servers will be missing");
+      }
+
+      // The face that goes with the name.
+      for (const [id, base64] of Object.entries(parsed.avatars ?? {})) {
+        try {
+          blobsFor(AVATARS).accept(id, Buffer.from(base64, "base64"));
+        } catch {
+          // Named by its hash, so anything that does not match is dropped by
+          // `accept` rather than written under a name other devices will ask
+          // for and believe.
+        }
       }
 
       // Restoring an account onto a device means answering here from now on.

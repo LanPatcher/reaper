@@ -302,5 +302,58 @@ function makeKey(): { key: OnionKey; publicKey: Buffer } {
      exporter.includes("try {") && exporter.includes("catch"));
 }
 
+
+// ---- the file tor is actually given ----------------------------------------
+//
+// The sync address never appeared, and the reason was not in any code that
+// looked like it was about addresses: this ran a *second* tor process for the
+// second service. The SOCKS and control ports are fixed constants, so that
+// process could never bind, exited at once, and published nothing — leaving a
+// screen that said the address was still being generated, for ever, with no
+// sign anywhere that anything had died.
+//
+// One process, two services. This reads the configuration that gets written,
+// because the ordering in it is load-bearing and invisible: tor applies each
+// `HiddenServicePort` to whichever `HiddenServiceDir` came before it, so a
+// file that is merely *correct line by line* can still point both services at
+// one port.
+
+{
+  const source = readFileSync(join(process.cwd(), "src/p2p/tor.ts"), "utf8");
+  const start = source.slice(source.indexOf("async start()"));
+
+  const socks = (start.match(/SocksPort/g) ?? []).length;
+  ck("exactly one SOCKS port is asked for", socks === 1, String(socks));
+
+  const control = (start.match(/ControlPort/g) ?? []).length;
+  ck("and exactly one control port", control === 1, String(control));
+
+  // Both services, and in pairs.
+  const dirs = start.indexOf("HiddenServiceDir ${serviceDir}");
+  const port = start.indexOf("HiddenServicePort 80 127.0.0.1:${this.#options.targetPort}");
+  const syncDir = start.indexOf("HiddenServiceDir ${syncDir}");
+  const syncPort = start.indexOf("HiddenServicePort 80 127.0.0.1:${this.#options.syncPort}");
+
+  ck("both services are configured", dirs >= 0 && syncDir >= 0);
+
+  ck("each directory is followed by its own port",
+     dirs < port && port < syncDir && syncDir < syncPort);
+
+  // The thing that broke it. A second `new TorService` for the sync address
+  // reads as reasonable and cannot work.
+  const bridge = readFileSync(join(process.cwd(), "src/p2p/bridge.ts"), "utf8");
+  const instances = (bridge.match(/new TorService\(/g) ?? []).length;
+
+  ck("the bridge starts tor once, not twice", instances === 1, String(instances));
+
+  // And the link server has to be listening before tor is configured, because
+  // tor is told the port it forwards to and reads its configuration once.
+  const opened = bridge.indexOf("forSync = await openLink");
+  const created = bridge.indexOf("new TorService(");
+
+  ck("the device link is listening before tor is configured",
+     opened >= 0 && opened < created);
+}
+
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");
 process.exit(f ? 1 : 0);

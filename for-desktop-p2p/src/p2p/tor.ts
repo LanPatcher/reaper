@@ -59,6 +59,21 @@ export interface TorOptions {
   targetPort: number;
 
   /**
+   * Local port the *sync* service forwards to, if there is one.
+   *
+   * One tor process, two hidden services. Running a second copy of tor for the
+   * second address was the obvious arrangement and it cannot work: the SOCKS
+   * and control ports below are fixed, so the second process fails to bind,
+   * exits immediately, and never publishes anything. The symptom was a sync
+   * address that was permanently "still being published" — no address to copy,
+   * no code to scan, and nothing on screen suggesting a process had died.
+   *
+   * tor hosts as many services as it is given directories for, which is what
+   * the iOS client already does.
+   */
+  syncPort?: number;
+
+  /**
    * Which of this device's two services this is.
    *
    * "account" is the address in a friend code — the one exactly one of your
@@ -77,6 +92,7 @@ export class TorService extends EventEmitter {
   #process: ChildProcess | undefined;
   #options: TorOptions;
   #onionAddress: string | undefined;
+  #syncAddress: string | undefined;
 
   constructor(options: TorOptions) {
     super();
@@ -86,6 +102,23 @@ export class TorService extends EventEmitter {
   /** `<56 chars>.onion`, once the service is published. */
   get address(): string | undefined {
     return this.#onionAddress;
+  }
+
+  /**
+   * Where this device's *own* devices reach it.
+   *
+   * A second service with its own key. Separate from the address above because
+   * exactly one device publishes that one at a time — so dialling it reaches
+   * whichever device is already holding, which is precisely the one that does
+   * not need to be reached.
+   *
+   * Published a little after the first, so this is undefined for a while after
+   * `start` resolves. Watched rather than waited for: a device that can be
+   * reached by its friends before it can be reached by its own laptop is a
+   * perfectly ordinary state.
+   */
+  get syncAddress(): string | undefined {
+    return this.#syncAddress;
   }
 
   get running(): boolean {
@@ -113,23 +146,36 @@ export class TorService extends EventEmitter {
     const serviceDir = join(dataDir, "onion");
     mkdirSync(serviceDir, { recursive: true, mode: 0o700 });
 
+    const lines = [
+      `SocksPort ${SOCKS_PORT}`,
+      `ControlPort ${CONTROL_PORT}`,
+      `DataDirectory ${join(dataDir, "state")}`,
+      `HiddenServiceDir ${serviceDir}`,
+      // Port 80 on the onion maps to our local listener, so peers dial a
+      // stable well-known port and never learn the local one.
+      `HiddenServicePort 80 127.0.0.1:${this.#options.targetPort}`,
+    ];
+
+    // The second service, for this device's own devices.
+    //
+    // These two lines are an ordered pair, and so are the two above: tor
+    // applies each `HiddenServicePort` to whichever `HiddenServiceDir`
+    // preceded it. Interleaving them, or sorting the file, silently points
+    // both services at one port.
+    const syncDir = join(dataDir, "sync");
+
+    if (this.#options.syncPort) {
+      mkdirSync(syncDir, { recursive: true, mode: 0o700 });
+      lines.push(`HiddenServiceDir ${syncDir}`);
+      lines.push(`HiddenServicePort 80 127.0.0.1:${this.#options.syncPort}`);
+    }
+
+    // Nothing here browses the web; refusing exit traffic avoids carrying
+    // anyone else's.
+    lines.push("ExitRelay 0");
+
     const torrc = join(dataDir, "torrc");
-    writeFileSync(
-      torrc,
-      [
-        `SocksPort ${SOCKS_PORT}`,
-        `ControlPort ${CONTROL_PORT}`,
-        `DataDirectory ${join(dataDir, "state")}`,
-        `HiddenServiceDir ${serviceDir}`,
-        // Port 80 on the onion maps to our local listener, so peers dial a
-        // stable well-known port and never learn the local one.
-        `HiddenServicePort 80 127.0.0.1:${this.#options.targetPort}`,
-        // Nothing here browses the web; refusing exit traffic avoids carrying
-        // anyone else's.
-        "ExitRelay 0",
-      ].join("\n"),
-      { mode: 0o600 },
-    );
+    writeFileSync(torrc, lines.join("\n"), { mode: 0o600 });
 
     this.#process = spawn(this.#options.torPath, ["-f", torrc], {
       stdio: ["ignore", "pipe", "pipe"],
@@ -152,13 +198,31 @@ export class TorService extends EventEmitter {
     this.#onionAddress = address.trim();
     this.emit("ready", this.#onionAddress);
 
+    // The sync service publishes on its own schedule, usually a few seconds
+    // behind. Watched in the background rather than waited for, so nothing
+    // that needs the first address is held up by the second.
+    if (this.#options.syncPort) void this.#watchSync(join(syncDir, "hostname"));
+
     return this.#onionAddress;
+  }
+
+  async #watchSync(hostnameFile: string): Promise<void> {
+    try {
+      const found = await waitForFile(hostnameFile, 120000);
+      this.#syncAddress = found.trim();
+      this.emit("sync", this.#syncAddress);
+    } catch {
+      // Given up on quietly. A device with no sync address still works — it
+      // simply has to be the one that dials rather than the one that answers.
+      this.emit("log", "the sync service did not publish an address");
+    }
   }
 
   stop(): void {
     this.#process?.kill();
     this.#process = undefined;
     this.#onionAddress = undefined;
+    this.#syncAddress = undefined;
   }
 }
 

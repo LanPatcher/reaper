@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -119,6 +120,39 @@ function storeIn(root: string, identity: ReturnType<typeof createIdentity>) {
 
   reopened.close();
   before.close();
+}
+
+// ---- your own face ----------------------------------------------------------
+//
+// Profile pictures are attachments, and attachments are deliberately left out
+// of a backup because they can be fetched again from whoever sent them. Your
+// own cannot: nobody else has them to send back. A restored account came up
+// with the right name and a blank grey circle, permanently.
+
+{
+  const identity = createIdentity();
+  const picture = randomBytes(6000);
+  const id = createHash("sha256").update(picture).digest("hex");
+
+  const file = await packBundle({
+    identity,
+    index: [],
+    avatars: { [id]: picture.toString("base64") },
+  }, "a long enough passphrase");
+
+  const opened = await unpackBundle(file, "a long enough passphrase");
+
+  ck("a backup carries your own picture",
+     !!opened.avatars && Object.keys(opened.avatars).length === 1);
+
+  const back = Buffer.from(opened.avatars![id], "base64");
+  ck("byte for byte", back.equals(picture));
+
+  // Named by its hash, which is what lets the import refuse anything that has
+  // been tampered with rather than writing it under a name other devices will
+  // ask for and believe.
+  ck("and still hashes to its own name",
+     createHash("sha256").update(back).digest("hex") === id);
 }
 
 // ---- the address for the first sync ----------------------------------------

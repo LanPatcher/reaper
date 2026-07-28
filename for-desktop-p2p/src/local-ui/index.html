@@ -15844,6 +15844,27 @@
             delete unfriended[uid];
           }
 
+          // The friends list is evidence too.
+          //
+          // Everything above is replayed out of the *direct conversation*, and
+          // that log is not in an identity backup — only the index is, because
+          // conversations re-sync from the person they are with and the index
+          // cannot re-sync from anywhere.
+          //
+          // So a restored account reads every friend as a stranger: the log
+          // has no `friend.accept` in it yet, the state stays "none", and the
+          // composer says "send a friend request first" to somebody who has
+          // been a friend for months. The friends list is right there in the
+          // index saying otherwise.
+          //
+          // Only when the conversation has nothing to say. An explicit
+          // `friend.end` still wins — `ended` is checked above — so this
+          // cannot revive a friendship that was actually ended.
+          if (state === "none" && !ended &&
+              friends.some(function (fr) { return fr.userId === uid; })) {
+            state = "accepted";
+          }
+
           requests[uid] = state;
 
           // After the state is settled, so the friendship check inside sees

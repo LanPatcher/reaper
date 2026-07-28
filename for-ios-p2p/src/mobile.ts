@@ -27,11 +27,42 @@ export function installMobileLayout(): void {
   root.classList.add("mobile");
 
   addScrim();
+  followMembers();
   closeOnNavigation();
   closeOnEscape();
   longPressAsContextMenu();
   swipeToOpen();
   keepComposerAboveKeyboard();
+}
+
+/**
+ * Mirror the member list's own state onto the document.
+ *
+ * The shared interface shows and hides `#members` with a `hide` class, which
+ * is all a desktop needs — the panel is a column that is either in the layout
+ * or is not. On a phone it is a slide-over driven by `members-open` on the
+ * root, and nothing was ever setting that. So the members button toggled a
+ * class this stylesheet does not read, and the user list could not be opened
+ * at all, anywhere.
+ *
+ * Watched rather than bound to the button, because `renderMembers` sets that
+ * class from several places — opening a conversation, changing view, a roster
+ * arriving — and a click handler would only catch one of them.
+ */
+function followMembers(): void {
+  const panel = document.getElementById("members");
+  if (!panel) return;
+
+  const sync = () => {
+    setMembers(!panel.classList.contains("hide"));
+  };
+
+  new MutationObserver(sync).observe(panel, {
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+
+  sync();
 }
 
 /**
@@ -188,7 +219,7 @@ function longPressAsContextMenu(): void {
 }
 
 /**
- * Swipe from the edge to open, swipe anywhere to close.
+ * Swipe anywhere on the conversation to open or close the list.
  *
  * Deliberately stateless, and that is a correction rather than a preference.
  *
@@ -207,9 +238,6 @@ function longPressAsContextMenu(): void {
  * state to be stranded in.
  */
 function swipeToOpen(): void {
-  /** How far in from the left edge a drag may start when closed. */
-  const EDGE = 40;
-
   /** How far the finger has to travel for a swipe to count. */
   const DISTANCE = 45;
 
@@ -229,10 +257,41 @@ function swipeToOpen(): void {
     startY = touch.clientY;
     startAt = event.timeStamp;
 
-    // Opening starts at the edge. Closing starts anywhere, because when the
-    // panel is open the whole screen belongs to it.
-    tracking = navOpen() || startX <= EDGE;
+    tracking = allowedHere(event.target as HTMLElement);
   }, { passive: true });
+
+  /**
+   * Where the swipe applies.
+   *
+   * Anywhere on the conversation, rather than from the left edge only. An edge
+   * gesture is discoverable by people who already expect it and invisible to
+   * everybody else, and with the menu button gone it was the only way in.
+   *
+   * Two exceptions, both because the swipe would be taking a gesture from
+   * something that has its own:
+   *
+   *   - **A dialog.** Settings is a tabbed panel that scrolls and has controls
+   *     to drag; closing the conversation list out from under it is never what
+   *     was meant, and the list is behind the dialog anyway.
+   *   - **The member list.** It is its own slide-over from the right. A left
+   *     swipe there should do nothing rather than operate the opposite panel.
+   */
+  const allowedHere = (target: HTMLElement | null): boolean => {
+    if (!target || !target.closest) return true;
+
+    // `#modal` is the settings and every other dialog; the interface shows it
+    // by removing a class, so its presence in the tree is not enough — it has
+    // to actually be on screen.
+    const dialog = document.getElementById("modal");
+    if (dialog && !dialog.classList.contains("hide") &&
+        getComputedStyle(dialog).display !== "none") {
+      return false;
+    }
+
+    if (target.closest("#members")) return false;
+
+    return true;
+  };
 
   const finish = (event: TouchEvent) => {
     if (!tracking) return;
