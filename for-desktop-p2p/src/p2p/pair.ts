@@ -366,6 +366,29 @@ type Wire =
     }
   /** Refused, with a reason worth showing someone. */
   | { t: "no"; why: string }
+  /**
+   * I have no account yet — send me yours.
+   *
+   * Sent by a device that has been linked but has never had an identity of its
+   * own, which is every device on its first pairing. Without this the whole
+   * feature does not work: the logs arrive, the claims arrive, and the device
+   * still has no private key, so it cannot be the account and sits on the
+   * setup screen with a synced copy of an account it cannot open.
+   */
+  | { t: "whoami" }
+  /**
+   * The account itself: the signing key, and the key to the onion address.
+   *
+   * Only ever sent to a device that has proved the pairing password, and only
+   * when it asks. It travels inside a Tor circuit to an address that device
+   * learned from a code shown on this screen — so the transport is already
+   * authenticated and encrypted, and this adds no second envelope over it.
+   *
+   * The onion key rides along because an account *is* its address: without it
+   * the linked device would come up as the same identity at a different
+   * address, and every friend code anyone has for you would stop working.
+   */
+  | { t: "iam"; identity: string; onionKey?: string }
   /** What this device holds for a community, so the peer can send the rest. */
   | { t: "have"; community: string; summary: Summary }
   /** Events the peer lacked. */
@@ -454,6 +477,26 @@ export interface PairHooks {
   readPicture(id: string): Buffer | undefined;
   writePicture(id: string, bytes: Buffer): void;
 
+  /**
+   * This device's account, ready to be handed to a sibling, if it has one.
+   *
+   * Returns undefined on a device that has nothing to give, which is how two
+   * fresh devices pairing avoid handing each other empty accounts.
+   */
+  identity?(): { identity: string; onionKey?: string } | undefined;
+
+  /** Whether this device still needs an account of its own. */
+  needsIdentity?(): boolean;
+
+  /**
+   * Take on the account that arrived.
+   *
+   * Called once, on a device that asked for it. Everything after this — the
+   * logs, the pictures — is the same account's history, so this has to land
+   * before any of it is useful.
+   */
+  adoptIdentity?(account: { identity: string; onionKey?: string }): void;
+
   /** Is this device the one currently answering at the account address. */
   holding(): boolean;
 
@@ -490,6 +533,9 @@ export interface PairResult {
   onion: string;
   events: number;
   pictures: number;
+
+  /** Whether this device took on the account during this pairing. */
+  adopted?: boolean;
   communities: number;
   done: boolean;
 }
@@ -581,7 +627,7 @@ class Session {
 
   readonly #result: PairResult = {
     device: "", name: "", onion: "",
-    events: 0, pictures: 0, communities: 0, done: false,
+    events: 0, pictures: 0, communities: 0, done: false, adopted: false,
   };
 
   #resolve!: (value: PairResult) => void;
@@ -763,6 +809,13 @@ class Session {
           this.#send({ t: "have", community, summary: this.#hooks.summary(community) });
         }
 
+        // Before anything else that matters: a device with no account cannot
+        // do anything with the history that follows.
+        if (this.#hooks.needsIdentity?.()) {
+          this.#open.add("@identity");
+          this.#send({ t: "whoami" });
+        }
+
         this.#send({ t: "pics", ids: this.#hooks.pictureIds() });
 
         // Anything that arrived while this side was still deriving its key.
@@ -850,6 +903,46 @@ class Session {
           this.#result.pictures += 1;
         } catch {
           // A picture that will not decode is not worth abandoning a sync for.
+        }
+
+        this.#maybeDone();
+        return;
+      }
+
+      case "whoami": {
+        const account = this.#hooks.identity?.();
+
+        if (!account) {
+          // Nothing to give. Said rather than ignored, so the asking device
+          // stops waiting for it — two devices that both have nothing would
+          // otherwise sit until the idle timer.
+          this.#send({ t: "iam", identity: "" });
+          return;
+        }
+
+        this.#send({ t: "iam", identity: account.identity, onionKey: account.onionKey });
+        return;
+      }
+
+      case "iam": {
+        this.#open.delete("@identity");
+
+        if (!msg.identity) {
+          this.#hooks.trace?.("that device has no account to share");
+          this.#maybeDone();
+          return;
+        }
+
+        try {
+          this.#hooks.adoptIdentity?.({
+            identity: msg.identity,
+            onionKey: msg.onionKey,
+          });
+
+          this.#result.adopted = true;
+        } catch (error) {
+          this.#fail(`could not take on the account: ${(error as Error).message}`);
+          return;
         }
 
         this.#maybeDone();

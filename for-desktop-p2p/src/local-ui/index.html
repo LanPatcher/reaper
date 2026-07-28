@@ -10875,7 +10875,7 @@
           t("Signed in on {name}", { name: by.name || t("another device") });
 
         $("deviceSub").textContent =
-          t("Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable.");
+          t("Your account can only answer at one device at a time, so this one is not receiving. Everything already here is still readable. Using this device copies anything new across first.");
 
         var btns = $("deviceBtns");
         btns.textContent = "";
@@ -10890,7 +10890,7 @@
 
         take.onclick = async function () {
           take.disabled = true;
-          take.textContent = t("Asking the other device…");
+          take.textContent = t("Copying across and taking over…");
 
           try {
             devices = await window.p2p.deviceTakeOver();
@@ -10937,11 +10937,14 @@
 
         btns.appendChild(take);
 
-        var sync = document.createElement("button");
-        sync.className = "ghost";
-        sync.textContent = t("Copy from the other device first");
-        sync.onclick = linkDialog;
-        btns.appendChild(sync);
+        // No "copy first" button any more.
+        //
+        // It asked the user to do by hand something the takeover already does:
+        // `deviceTakeOver` syncs every known device before it claims anything,
+        // because that is how it finds out whether the holder agrees. The two
+        // devices already know each other's sync addresses by this point, so
+        // presenting the copy as a separate prerequisite was offering a chore
+        // that had no effect on the outcome.
 
         // Said out loud, because it is the consequence people are actually
         // going to hit: the other device does not find out until they meet.

@@ -45,7 +45,9 @@ function event(body: string): SignedEvent {
 }
 
 /** A device, in memory, with just enough behind it to be synced. */
-function device(name: string, password: string, onion: string) {
+function device(name: string, password: string, onion: string, hasAccount = true) {
+  let account: string | undefined = hasAccount ? `{"userId":"u-${name}"}` : undefined;
+  let adoptedKey: string | undefined;
   const logs = new Map<string, SignedEvent[]>();
   const pictures = new Map<string, Buffer>();
   const learned: { device: string; name: string; onion: string }[] = [];
@@ -91,12 +93,20 @@ function device(name: string, password: string, onion: string) {
     wants: () => false,
     claimN: () => 0,
 
+    identity: () => account ? { identity: account, onionKey: "AAEC" } : undefined,
+    needsIdentity: () => !account,
+    adoptIdentity: (given) => { account = given.identity; adoptedKey = given.onionKey; },
+
     learn: (peer) => { learned.push(peer); },
     yield: () => {},
     asked: () => {},
   };
 
-  return { id, name, logs, pictures, learned, hooks };
+  return {
+    id, name, logs, pictures, learned, hooks,
+    get account() { return account; },
+    get adoptedKey() { return adoptedKey; },
+  };
 }
 
 /**
@@ -465,6 +475,77 @@ await lopsided();
   );
 
   mute.close();
+}
+
+/* ---- a device with no account of its own --------------------------------- */
+
+/**
+ * A fresh device has to come away with the account, not just its history.
+ *
+ * This is the whole point of linking and it was missing. Pairing carried the
+ * event logs and the pictures, and deliberately carried "no keys, no identity
+ * material" — which was defensible while a separate export/import existed to
+ * move the account. That was removed, and nothing replaced it.
+ *
+ * The result was a phone that synced everything, showed the right claims, knew
+ * which device was answering, and sat on the setup screen — holding a complete
+ * copy of an account it had no key to open.
+ *
+ * The onion key travels too. An account *is* its address: without it the
+ * linked device comes up as the same identity somewhere else entirely, and
+ * every friend code anybody holds for you stops working.
+ */
+{
+  const password = "correct horse";
+
+  const desktop = device("Ray's desktop", password, "d".repeat(56) + ".onion");
+  const fresh = device("Ray's phone", password, "p".repeat(56) + ".onion", false);
+
+  desktop.logs.set("@index", [event("a friend")]);
+
+  ck("a new device starts with no account", !fresh.account);
+
+  const listener = new PairService(fresh.hooks);
+  const port = await listener.open();
+
+  const result = await dial(new PairService(desktop.hooks), port);
+
+  ck("the pairing completes", Boolean(result?.done));
+  ck("and the new device now has the account", Boolean(fresh.account), String(fresh.account));
+  ck(
+    "  which is the same account, not a new one",
+    fresh.account === desktop.account,
+    `${fresh.account} vs ${desktop.account}`,
+  );
+  ck("  and the onion key came with it", fresh.adoptedKey === "AAEC");
+  ck("  and the history arrived too", (fresh.logs.get("@index") ?? []).length === 1);
+
+  await listener.close();
+}
+
+/**
+ * And a device that already has an account never replaces it.
+ *
+ * Receiving a second identity would silently discard the first, and every
+ * event this device had already signed would stop verifying against the key
+ * that replaced it.
+ */
+{
+  const password = "correct horse";
+
+  const one = device("one", password, "d".repeat(56) + ".onion");
+  const two = device("two", password, "p".repeat(56) + ".onion");
+
+  const before = two.account;
+
+  const listener = new PairService(two.hooks);
+  const port = await listener.open();
+
+  await dial(new PairService(one.hooks), port);
+
+  ck("a device that already has an account keeps it", two.account === before);
+
+  await listener.close();
 }
 
 /* ---- a greeting that goes missing ---------------------------------------- */
