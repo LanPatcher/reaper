@@ -98,9 +98,6 @@ const CHANNEL = {
   deviceName: "p2p:deviceName",
   deviceTakeOver: "p2p:deviceTakeOver",
   linkOpen: "p2p:linkOpen",
-  linkClose: "p2p:linkClose",
-  linkPeers: "p2p:linkPeers",
-  linkTo: "p2p:linkTo",
   syncDevices: "p2p:syncDevices",
   syncWith: "p2p:syncWith",
   putBlob: "p2p:putBlob",
@@ -626,7 +623,7 @@ async function syncOverTor(entry: SyncAddress): Promise<LinkProgress> {
   syncing.add(entry.onion);
 
   try {
-    await openLink({ announce: false });
+    await openLink();
 
     const socket = await socksConnect(entry.onion, 80);
     const progress = await link!.adopt(socket, { files: false });
@@ -752,7 +749,7 @@ function changedSomethingWorthSyncing(): void {
 }
 
 /** Start listening and announcing for other devices of yours. */
-async function openLink(options: { announce?: boolean } = {}): Promise<number> {
+async function openLink(): Promise<number> {
   if (link) return link.port;
 
   if (!identity) throw new Error("p2p: identity not initialised");
@@ -804,6 +801,32 @@ async function openLink(options: { announce?: boolean } = {}): Promise<number> {
 
     claims: claimsHeld,
     addClaim,
+
+    // Whether this device is actually publishing, not whether it believes it
+    // should be. `tor.address` is set only once the service is live.
+    holding: () => !!tor?.address,
+
+    // Set by the Reconnect button and cleared once the answer arrives, so a
+    // device only takes the address when somebody asked it to.
+    asking: () => wantsAddress,
+
+    defer: (device, name) => {
+      if (!tor?.address) return;
+
+      log("[link]", `${name} is already answering at this account's address`);
+      tor.stop();
+
+      addClaim({ device, name, n: (holder(claimsHeld())?.n ?? 0) + 1, at: Date.now() });
+      announceDevices();
+    },
+
+    handOver: (device, name) => {
+      log("[link]", `handing the address to ${name}`);
+      tor?.stop();
+
+      addClaim({ device, name, n: (holder(claimsHeld())?.n ?? 0) + 1, at: Date.now() });
+      announceDevices();
+    },
   });
 
   service.on("log", (line: string) => log("[link]", line));
@@ -821,7 +844,7 @@ async function openLink(options: { announce?: boolean } = {}): Promise<number> {
 
   link = service;
 
-  syncPort = await service.open({ announce: options.announce !== false });
+  syncPort = await service.open();
   return syncPort;
 }
 
@@ -1315,7 +1338,7 @@ export function registerP2PHandlers(): void {
     // this device can still dial its siblings, it simply cannot be dialled.
     let forSync = 0;
     try {
-      forSync = await openLink({ announce: false });
+      forSync = await openLink();
     } catch (error) {
       log("[link]", `no device link on this device: ${String(error)}`);
     }
@@ -2127,13 +2150,36 @@ export function registerP2PHandlers(): void {
   ipcMain.handle(CHANNEL.deviceTakeOver, async (event) => {
     viewer = event.sender;
 
-    const device = thisDevice();
-    const claim = claimFor(claimsHeld(), device.id, device.name);
-    addClaim(claim);
+    // Asked for, not taken.
+    //
+    // A device that is already publishing keeps the address — it has live
+    // connections and a descriptor in the directory, and a number written into
+    // a ledger somewhere else does not change either. So this records the
+    // request and the next sync settles it: the holder stops, and only then
+    // does this device start.
+    //
+    // The previous arrangement wrote a higher claim and started publishing
+    // immediately, which is how two devices came to answer at one address with
+    // neither of them wrong.
+    wantsAddress = true;
+    announceDevices();
 
-    // Publishing now, rather than after a restart. The address is already
-    // configured; what was missing was permission to announce it.
-    await publishIfHolding();
+    const settled = await syncAllDevices();
+
+    if (settled.length) {
+      // The other device gave it up during that exchange.
+      const device = thisDevice();
+      addClaim(claimFor(claimsHeld(), device.id, device.name));
+      wantsAddress = false;
+
+      await publishIfHolding();
+    } else {
+      // Nobody answered. The request stands and the next sync carries it,
+      // rather than this device seizing an address somebody may still be
+      // using.
+      log("[p2p]", "no other device answered — the address stays where it is");
+    }
+
     announceDevices();
 
     // And telling the device that just lost it.
@@ -2147,10 +2193,6 @@ export function registerP2PHandlers(): void {
     // Not awaited: the other device may be switched off, and a hand-over that
     // hangs until it answers would be worse than one that completes now and
     // propagates when it can. The scheduled pass carries it either way.
-    void syncAllDevices()
-      .then(() => announceDevices())
-      .catch(() => { /* reported by syncOverTor */ });
-
     return deviceInfo();
   });
 
@@ -2159,21 +2201,6 @@ export function registerP2PHandlers(): void {
     return { port: await openLink() };
   });
 
-  ipcMain.handle(CHANNEL.linkClose, () => {
-    link?.close();
-    link = undefined;
-    return true;
-  });
-
-  ipcMain.handle(CHANNEL.linkPeers, () => link?.peers() ?? []);
-
-  /**
-   * Sync with your other devices over Tor.
-   *
-   * Everything except attachments, and from anywhere — this is the path that
-   * makes "the same account on my phone and my desktop" true rather than true
-   * while they are on the same wifi.
-   */
   ipcMain.handle(CHANNEL.syncDevices, async (event) => {
     viewer = event.sender;
 
@@ -2241,27 +2268,6 @@ export function registerP2PHandlers(): void {
     });
   });
 
-  ipcMain.handle(CHANNEL.linkTo, async (event, host: string, port: number) => {
-    viewer = event.sender;
-
-    await openLink();
-    const progress = await link!.connect(host, port);
-
-    // The other device may have taken the address while this one was away, and
-    // the claims it just sent are how that is discovered.
-    await publishIfHolding();
-    announceDevices();
-
-    return progress;
-  });
-
-  // ---- attachments ------------------------------------------------------
-  //
-  // Bytes are stored here and named by their hash; the message event carries
-  // only that name. So sending a file no longer forces it onto everyone, and
-  // receiving one is a decision the reader's client makes.
-
-  /** Store bytes locally and return the id a message should quote. */
   ipcMain.handle(CHANNEL.putBlob, (_, community: string, base64: string) => {
     const data = Buffer.from(base64, "base64");
     const ref = blobsFor(community).write(data);

@@ -385,17 +385,26 @@ button,
 
 /* ---- text selection ----------------------------------------------------- */
 
-/* Long-press is the context menu on this platform, so the default text
-   selection has to be suppressed on the things being pressed — otherwise the
-   selection handles appear on top of the menu. Message *bodies* keep it,
-   because copying a message is a thing people do. */
-.row, .chan, .msg .who, .av, #rail, #topbar {
+/* Nothing is selectable except what you can type into.
+
+   Long-press is this platform's context menu, and the default response to it
+   is a blue selection with drag handles — which appears *on top of* the menu,
+   on a message, on a username, on anything held for half a second. Suppressing
+   it per element was tried and is endless: every new row, avatar and label is
+   another place it comes back.
+
+   Inverted instead. Nothing selects unless it is an input, a textarea or
+   something explicitly marked, which is the set of places a selection is
+   actually useful. Copying a message is done from its context menu, which is
+   what the long press was for. */
+* {
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
 }
 
-.msg .body, .msg .body * {
+input, textarea, [contenteditable="true"], .selectable, .code {
   -webkit-user-select: text;
   user-select: text;
+  -webkit-touch-callout: default;
 }
