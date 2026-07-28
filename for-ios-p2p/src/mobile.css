@@ -94,27 +94,23 @@ html.nav-open #side {
   transform: translateX(0);
 }
 
-/* Following the finger.
+/* A panel that is closed is not merely off to the left — it is hidden.
 
-   `--nav-drag` is set by `mobile.ts` while a drag is in progress and added to
-   whichever rest position the panel is in. The transition is switched off for
-   the duration, or every frame animates towards the last one and the panel
-   lags behind the finger by a fifth of a second — which reads as the gesture
-   not being tracked at all. */
-html.nav-dragging #rail,
-html.nav-dragging #side,
-html.nav-dragging #nav-scrim {
-  transition: none;
+   `translateX(-100%)` alone leaves it laid out, and any disagreement about how
+   wide it is shows as a strip of the conversation list bleeding down the edge
+   of the screen on top of the messages. `visibility` removes that whole class
+   of near-miss, and it still animates, because it is not a transitionable
+   property and simply flips at the end of the transition it is given. */
+#rail, #side, #members {
+  visibility: hidden;
+  transition: transform .22s cubic-bezier(.32, .72, 0, 1), visibility 0s .22s;
 }
 
-html.nav-dragging #rail,
-html.nav-dragging #side {
-  transform: translateX(calc(-100% + var(--nav-drag, 0px)));
-}
-
-html.nav-dragging.nav-open #rail,
-html.nav-dragging.nav-open #side {
-  transform: translateX(var(--nav-drag, 0px));
+html.nav-open #rail,
+html.nav-open #side,
+html.members-open #members {
+  visibility: visible;
+  transition: transform .22s cubic-bezier(.32, .72, 0, 1), visibility 0s;
 }
 
 /* Tapping the messages closes it, which is the gesture people already expect
@@ -127,16 +123,6 @@ html.nav-dragging.nav-open #side {
   opacity: 0;
   pointer-events: none;
   transition: opacity .22s;
-}
-
-/* The button that opens the panel has to stay above the dimmer that appears
-   when it is open, or the second tap lands on the scrim instead of on the
-   button. Both close it, so it looked like it worked — until the panel was
-   open over a dialog, where the scrim swallowed the tap and the button
-   appeared dead. */
-#navBtn {
-  position: relative;
-  z-index: 45;
 }
 
 html.nav-open #nav-scrim {
@@ -179,8 +165,9 @@ html.members-open #members {
 }
 
 #topbar {
-  /* Room for the menu button added by `mobile.ts`. */
-  padding-left: 4px;
+  /* No menu button any more — the conversation list opens with a swipe from
+     the left edge — so the channel name starts where the desktop's does. */
+  padding-left: 14px;
   gap: 6px;
 }
 
@@ -306,15 +293,44 @@ button,
   -webkit-overflow-scrolling: touch;
 }
 
+/* Back across the top on a phone.
+
+   The desktop puts these down the left, which is right there and wrong here:
+   a 136px column is a third of the screen, spent on navigation, permanently.
+   Across the top it costs one row.
+
+   `overflow-y: hidden` is the part that matters. A scrolling flex row will
+   take a vertical scrollbar for a couple of pixels of overflow it can do
+   nothing with, and on a touch screen that bar competes with the swipe that
+   was meant to move the tabs sideways. */
+#modalCard.tabbed .tabbedBody {
+  flex-direction: column;
+  gap: 10px;
+}
+
 #modalCard.tabbed .tabs {
-  /* The tab strip scrolls sideways rather than wrapping onto three rows. */
+  flex-direction: row;
+  width: auto;
+  border-right: none;
+  border-bottom: 1px solid var(--line);
+  padding-right: 0;
+  padding-bottom: 4px;
   overflow-x: auto;
+  overflow-y: hidden;
   flex-wrap: nowrap;
   -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
 }
 
 #modalCard.tabbed .tabs button {
   flex: 0 0 auto;
+  border-left: none;
+  border-bottom: 2px solid transparent;
+}
+
+#modalCard.tabbed .tabs button.on {
+  border-left-color: transparent;
+  border-bottom-color: var(--accent);
 }
 
 /* ---- the call overlay --------------------------------------------------- */

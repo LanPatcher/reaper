@@ -2,11 +2,11 @@
   "name": "reaper-ios",
   "version": "0.1.0",
   "private": true,
-  "description": "Reaper for iOS — serverless, end-to-end encrypted chat over Tor.",
+  "description": "Reaper for iOS \u2014 serverless, end-to-end encrypted chat over Tor.",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:plugins": "tsc -p plugins/keepalive && tsc -p plugins/socket && tsc -p plugins/tor",
+    "build:plugins": "tsc -p plugins/keepalive && tsc -p plugins/socket && tsc -p plugins/tor && tsc -p plugins/scanner",
     "build": "npm run build:plugins && vite build",
     "sync": "npm run build && cap sync ios",
     "shim:test": "node scripts/shim.mjs",
@@ -25,7 +25,8 @@
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "brotli-wasm": "^3.0.1",
-    "buffer": "^6.0.3"
+    "buffer": "^6.0.3",
+    "@reaper/scanner": "file:plugins/scanner"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.2",

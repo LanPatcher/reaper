@@ -85,10 +85,21 @@ public class TorPlugin: CAPPlugin, CAPBridgedPlugin {
     /**
      * Adopt an address from a backup.
      *
-     * The restart is the point. tor reads its service directory once at
-     * startup, so writing the key without restarting leaves the device
-     * publishing its old address while believing it has a new one — which is
-     * the confusing half-state this whole feature exists to prevent.
+     * The key is written and Tor is *not* restarted, which is the opposite of
+     * what the first version did and the reason importing an identity took the
+     * whole app down.
+     *
+     * Tor.framework runs tor on a `TorThread`, and tor is not built to be torn
+     * down and started again inside one process — it keeps global state that
+     * is initialised once. Cancelling that thread and starting a second one
+     * crashes the process, and it crashes natively, so nothing in JavaScript
+     * sees it: importing accepted the passphrase, wrote the key, and the app
+     * vanished.
+     *
+     * So the new address takes effect on the next launch, and the interface
+     * already says so — "close and reopen Reaper to finish". That was written
+     * before this was understood and turns out to be the only honest
+     * instruction available.
      */
     @objc func importKey(_ call: CAPPluginCall) {
         guard
@@ -108,8 +119,7 @@ public class TorPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
 
-        tor?.reload()
-        call.resolve(["hostname": hostname])
+        call.resolve(["hostname": hostname, "needsRestart": true])
     }
 
     deinit {

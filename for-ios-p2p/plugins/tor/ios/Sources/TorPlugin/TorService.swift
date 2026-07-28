@@ -745,21 +745,17 @@ final class TorService {
         }
     }
 
-    /**
-     * Restart onto a newly imported key.
-     *
-     * tor reads its service directory once, at startup. On a desktop the
-     * equivalent is "restart the app"; here Tor is a library in a process that
-     * is already running, so it is stopped and started in place and the caller
-     * sees the usual sequence of events as it comes back up.
-     */
-    func reload() {
-        guard running, forwardTo > 0 else { return }
-
-        let port = forwardTo
-        stop()
-        start(localPort: port)
-    }
+    // `reload()` used to live here, and it is gone rather than left unused.
+    //
+    // It stopped the client and started it again so an imported address would
+    // take effect immediately. tor is not built for that: it is a program with
+    // process-global state that is set up once, and Tor.framework runs it on a
+    // thread that cannot meaningfully be cancelled and replaced. Doing it
+    // crashed the app natively during an identity import, which is the worst
+    // possible moment and the hardest kind of crash to trace, because nothing
+    // on the JavaScript side is told anything at all.
+    //
+    // The address is picked up at the next launch instead.
 }
 
 enum TorKeyError: LocalizedError {

@@ -9,13 +9,9 @@ import type { SignedEvent } from "./events";
 import type { Identity } from "./identity";
 import { loadOrCreateIdentity } from "./identity";
 import { ElectronKeystore } from "./keystore";
-import {
-  createCipheriv,
-  createDecipheriv,
-  randomBytes,
-  scrypt as scryptCallback,
-} from "node:crypto";
+import { randomBytes } from "node:crypto";
 
+import { IDENTITY_KDF, packBundle, unpackBundle } from "./backup-bundle";
 import { agree, deriveKey, isSealed, open as openSealed, seal } from "./crypto";
 import { brotliCompressSync, brotliDecompressSync, constants } from "node:zlib";
 
@@ -146,56 +142,10 @@ export const P2P_AUDIO = "p2p:audio";
  */
 export const P2P_DEVICES = "p2p:devices";
 
-/**
- * How an exported identity is wrapped.
- *
- * Scrypt rather than a bare hash: a passphrase is low-entropy and the whole
- * account sits behind this one, so guessing has to be made expensive.
- *
- * `maxmem` is the part that is easy to get wrong, and getting it wrong is how
- * exporting was broken. Scrypt needs `128 * N * r` bytes — at N = 32768 and
- * r = 8 that is exactly 33,554,432, which is exactly Node's default ceiling,
- * and Node requires *less* than the ceiling rather than at most. So the
- * parameters that were chosen to be strong landed one byte over the line and
- * every export failed with an OpenSSL memory-limit error.
- *
- * Raising the ceiling rather than weakening the parameters, and stating it
- * explicitly rather than relying on a default that has moved before.
- *
- * Shared by export and import deliberately. Two copies of these numbers is a
- * file that can be written and never opened.
- */
-const IDENTITY_KDF = {
-  N: 2 ** 15,
-  r: 8,
-  p: 1,
-  maxmem: 96 * 1024 * 1024,
-} as const;
-
-/**
- * Derive the key, without stopping everything else.
- *
- * The synchronous version was doing thirty-two megabytes of allocation and
- * tens of thousands of rounds on whatever thread called it. On the desktop
- * that blocked the Electron main process for about a second, which is bad and
- * survivable. On a phone the same work runs in JavaScript in a WebView, takes
- * long enough that iOS decides the app has stopped responding, and the app is
- * killed — so importing an identity accepted the passphrase and then
- * disappeared, with nothing logged anywhere, because as far as the system was
- * concerned nothing had failed.
- *
- * Node runs this on its threadpool; the iOS shim yields to the event loop
- * between rounds. Both keep the caller responsive, which is the only thing
- * that was wrong with it.
- */
-function deriveIdentityKey(passphrase: string, salt: Buffer): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    scryptCallback(passphrase, salt, 32, IDENTITY_KDF, (error, key) => {
-      if (error) reject(error);
-      else resolve(key as Buffer);
-    });
-  });
-}
+// How the backup file is sealed, and the key derivation behind it, now live in
+// `backup-bundle.ts` — where they can be run by a test rather than only by
+// Electron. `IDENTITY_KDF` is re-exported through this module's imports so the
+// parameters have exactly one home.
 
 let identity: Identity | undefined;
 let transport: Transport | undefined;
@@ -1927,26 +1877,7 @@ export function registerP2PHandlers(): void {
     const syncOnion = syncTor?.address ??
       roster(syncAddresses()).find((entry) => entry.device === thisDevice().id)?.onion;
 
-    const payload = Buffer.from(
-      JSON.stringify({ v: 3, identity, index, onion, syncOnion, at: Date.now() }),
-      "utf8",
-    );
-
-    const salt = randomBytes(16);
-    const key = await deriveIdentityKey(passphrase, salt);
-    const nonce = randomBytes(12);
-
-    const cipher = createCipheriv("aes-256-gcm", key, nonce);
-    const body = Buffer.concat([cipher.update(payload), cipher.final()]);
-
-    return JSON.stringify({
-      reaper: "identity",
-      v: 1,
-      salt: salt.toString("base64"),
-      nonce: nonce.toString("base64"),
-      tag: cipher.getAuthTag().toString("base64"),
-      data: body.toString("base64"),
-    });
+    return packBundle({ identity, index, onion, syncOnion }, passphrase);
   });
 
   /**
@@ -1959,44 +1890,7 @@ export function registerP2PHandlers(): void {
   ipcMain.handle(
     CHANNEL.importIdentity,
     async (_, bundle: string, passphrase: string) => {
-      const outer = JSON.parse(bundle) as Record<string, string>;
-
-      // `mayhem` is the marker this file used to carry. Still accepted, because
-      // an export is a backup and a backup that stops working on the day the
-      // app is renamed is not a backup.
-      if (outer.reaper !== "identity" && outer.mayhem !== "identity") {
-        throw new Error("not a Reaper identity file");
-      }
-
-      const salt = Buffer.from(outer.salt, "base64");
-      const key = await deriveIdentityKey(passphrase, salt);
-
-      let plain: Buffer;
-      try {
-        const decipher = createDecipheriv(
-          "aes-256-gcm", key, Buffer.from(outer.nonce, "base64"),
-        );
-        decipher.setAuthTag(Buffer.from(outer.tag, "base64"));
-        plain = Buffer.concat([
-          decipher.update(Buffer.from(outer.data, "base64")),
-          decipher.final(),
-        ]);
-      } catch {
-        // Authentication failing means the wrong passphrase or a damaged
-        // file, and there is no way to tell which — saying so is honest.
-        throw new Error("wrong passphrase, or the file is damaged");
-      }
-
-      const parsed = JSON.parse(plain.toString("utf8")) as {
-        identity: Identity;
-        index?: SignedEvent[];
-        onion?: OnionKey;
-        syncOnion?: string;
-      };
-
-      if (!parsed.identity || !parsed.identity.privateKey) {
-        throw new Error("that file does not contain an identity");
-      }
+      const parsed = await unpackBundle(bundle, passphrase);
 
       // Checked before anything is destroyed.
       //
@@ -2029,11 +1923,35 @@ export function registerP2PHandlers(): void {
         log("[p2p]", "that bundle carries no onion address — this device will publish a new one");
       }
 
+      // Counted, and reported back.
+      //
+      // A restore that returns the right user id and an empty friends list
+      // looks exactly like a restore that worked, which is how one shipped.
+      // Saying "nothing came with it" at the moment it happens is the
+      // difference between a bug somebody notices and one they live with.
+      let restored = 0;
+      let friends = 0;
+      let servers = 0;
+
       if (parsed.index && parsed.index.length) {
         const store = storeFor(INDEX);
-        store.merge(parsed.index);
+        const result = store.merge(parsed.index);
+
+        restored = result.accepted.length;
+
+        for (const event of parsed.index) {
+          if (event.type === "friend.add") friends++;
+          if (event.type === "community.create") servers++;
+        }
+
+        if (result.rejected.length) {
+          log("[p2p]", `${result.rejected.length} events in that backup were refused`);
+        }
+
         store.close();
         stores.delete(INDEX);
+      } else {
+        log("[p2p]", "that backup carries no index — friends and servers will be missing");
       }
 
       // Restoring an account onto a device means answering here from now on.
@@ -2075,6 +1993,9 @@ export function registerP2PHandlers(): void {
       return {
         userId: parsed.identity.userId,
         onion,
+        restored,
+        friends,
+        servers,
 
         // The interface uses this to offer the catch-up straight away rather
         // than leaving somebody to discover their friends list is a week old.
