@@ -140,7 +140,7 @@ for (const [text, expected] of Object.entries(VECTORS)) {
  * the change that broke it.
  */
 {
-  const { sealInvite } = await import("../p2p/pair");
+  const { mintInvite } = await import("../p2p/pair");
 
   const raw = Buffer.concat([randomBytes(34), Buffer.from([3])]);
   const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -150,10 +150,11 @@ for (const [text, expected] of Object.entries(VECTORS)) {
     while (bits >= 5) { spelled += B32[(value >>> (bits - 5)) & 31]; bits -= 5; }
   }
 
-  const code = sealInvite(
-    { onion: spelled.toLowerCase() + ".onion", name: "Ray's desktop" },
-    "a pairing password",
-  );
+  // Minted rather than assembled by hand, so this is the code the app actually
+  // shows — salt, session id, expiry and all. A hand-built one would stay the
+  // same size while the real one grew, which is exactly how the encoder came to
+  // be handed something it could not take.
+  const { code } = mintInvite(spelled.toLowerCase() + ".onion");
 
   let encoded = true;
   let why = "";

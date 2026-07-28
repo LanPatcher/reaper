@@ -86,8 +86,11 @@ export const Socket = {
     return { port: grant ?? (asked || 51820) };
   },
 
-  async stopListening() {
-    calls.push({ name: "stopListening", args: {} });
+  async stopListening(args?: Record<string, unknown>) {
+    // Recorded with whatever was passed, because *which* listener is being
+    // closed is the thing worth asserting: this device runs two, and a call
+    // that names none closes both.
+    calls.push({ name: "stopListening", args: args ?? {} });
     return {};
   },
 

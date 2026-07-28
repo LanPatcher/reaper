@@ -41,6 +41,12 @@ const TARGETS = {
     "src/p2p/backup.test.ts",
     "src/p2p/onion.test.ts",
     "src/p2p/link.test.ts",
+
+    // The device link, which is the one thing in here that has failed on real
+    // hardware more often than in this file. It was written and then never
+    // added to this list, so every run reported a green suite for a feature
+    // nothing was exercising.
+    "src/p2p/pair.test.ts",
     "src/p2p/restore.test.ts",
     "src/local-ui/language.test.ts",
     "src/local-ui/appearance.test.ts",

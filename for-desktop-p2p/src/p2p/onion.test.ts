@@ -305,7 +305,19 @@ function makeKey(): { key: OnionKey; publicKey: Buffer } {
 
 {
   const source = readFileSync(join(process.cwd(), "src/p2p/tor.ts"), "utf8");
-  const start = source.slice(source.indexOf("async start()"));
+
+  // Comments stripped before anything is counted.
+  //
+  // These assertions are about the file tor is handed, and a comment is not
+  // part of it. Counting raw text meant that explaining *why* there is exactly
+  // one `SocksPort` — which is worth explaining, because emptying that array
+  // once left a device dialling a port tor was not listening on — made the
+  // count two and failed the test that the explanation was describing.
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/(^|[^:])\/\/.*$/gm, "$1");
+
+  const start = code.slice(code.indexOf("async start()"));
 
   const socks = (start.match(/SocksPort/g) ?? []).length;
   ck("exactly one SOCKS port is asked for", socks === 1, String(socks));

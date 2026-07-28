@@ -150,6 +150,30 @@ function explain(error) {
 `);
 }
 
+/**
+ * `real:net`, for a test that needs both socket implementations at once.
+ *
+ * `handshake.test.ts` puts the phone's socket on one side of a genuine TCP
+ * connection and Node's on the other, which it cannot do while every mention
+ * of `node:net` in the build resolves to the shim. So it imports the real one
+ * under a name nothing substitutes, and this turns that name back into Node's
+ * builtin — left external, so it is the same module the runtime already has.
+ *
+ * Without it the bundle kept the specifier verbatim and Node's ESM loader
+ * refused to load a URL with a scheme of `real:`. The suite had never run: it
+ * failed at import, before its first assertion, and the runner counted it as a
+ * failing suite rather than a missing one.
+ */
+const realNode = {
+  name: "real-node",
+  setup(build) {
+    build.onResolve({ filter: /^real:/ }, (args) => ({
+      path: `node:${args.path.slice("real:".length)}`,
+      external: true,
+    }));
+  },
+};
+
 /** The same substitution as `vite.config.ts`, in esbuild's shape. */
 const iosTor = {
   name: "ios-tor",
@@ -246,7 +270,7 @@ try {
               }
             : {}),
         },
-        plugins: shimmed ? [iosTor, workerStub] : [workerStub],
+        plugins: shimmed ? [realNode, iosTor, workerStub] : [realNode, workerStub],
 
         // A shimmed build must not leave `node:net` external, or the alias
         // above is ignored and the core quietly uses the real one.

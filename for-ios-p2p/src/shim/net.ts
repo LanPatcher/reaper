@@ -109,19 +109,45 @@ function wire(): void {
     sockets.get(id)?.failed(new Error(message));
   });
 
-  // Inbound connections arrive with an id nothing has claimed yet. They are
-  // handed to whichever server is listening — there is only ever one, since
-  // this device hosts exactly one onion service.
-  void Native.addListener("accept", ({ id }) => {
-    if (!listening) return;
+  // Inbound connections arrive with an id nothing has claimed yet, and the
+  // port they landed on says which service they were meant for.
+  //
+  // There used to be a single `listening` server and this handed every
+  // accepted connection to it, on the reasoning that the device hosts one
+  // onion service. It hosts two: the account address forwards to the chat
+  // transport, and the sync address — the one a pairing code points at —
+  // forwards to the pairing service. Binding the second replaced the first, so
+  // the sync address forwarded to a port nothing was listening on and this
+  // phone could not be linked *to* at all. Only the direction where the phone
+  // dialled out ever worked, which is exactly how it was reported.
+  void Native.addListener("accept", ({ id, port }) => {
+    const server = servers.get(port) ?? only();
+
+    if (!server) return;
 
     const socket = new Socket(id);
     sockets.set(id, socket);
-    listening.arrive(socket);
+    server.arrive(socket);
   });
 }
 
-let listening: Server | undefined;
+/** Every bound server, by the loopback port Tor forwards to. */
+const servers = new Map<number, Server>();
+
+/**
+ * The one server, when there is exactly one.
+ *
+ * A fallback for an accept that names no port — an older build of the native
+ * plugin, or the browser stub. With a single listener there is no ambiguity to
+ * resolve, and refusing the connection would break the common case to be
+ * strict about the rare one. With two listeners and no port there is no honest
+ * answer, so the connection is dropped rather than guessed at: handing pairing
+ * frames to the chat transport produces a corrupt-length error two layers
+ * away from the cause.
+ */
+function only(): Server | undefined {
+  return servers.size === 1 ? [...servers.values()][0] : undefined;
+}
 
 let nextId = 0;
 function freshId(): string {
@@ -434,7 +460,6 @@ export class Server extends EventEmitter {
     onListening?: () => void,
   ): this {
     const announce = typeof host === "function" ? host : onListening;
-    listening = this;
 
     void Native.listen({ port })
       .then(({ port: bound }) => {
@@ -452,6 +477,13 @@ export class Server extends EventEmitter {
         }
 
         this.#port = bound;
+
+        // Registered under the port that was granted, not the one asked for.
+        // `listen(0)` — which both callers use — means "choose one", so the
+        // requested port is zero and filing it under that would put every
+        // server in the same slot.
+        servers.set(bound, this);
+
         announce?.();
         this.emit("listening");
       })
@@ -474,9 +506,13 @@ export class Server extends EventEmitter {
     if (this.#closed) return this;
     this.#closed = true;
 
-    if (listening === this) listening = undefined;
+    const bound = this.#port;
+    if (bound) servers.delete(bound);
 
-    void Native.stopListening().then(() => {
+    // Named, or this closes the other service as well. The pairing listener
+    // and the chat transport are both open for the whole life of the app, and
+    // either one shutting down used to take both with it.
+    void Native.stopListening({ port: bound }).then(() => {
       onClosed?.();
       this.emit("close");
     });

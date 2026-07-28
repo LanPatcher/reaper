@@ -1,4 +1,5 @@
-import { cpSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import type { Socket } from "node:net";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -33,8 +34,8 @@ import {
 } from "./devices";
 import { WORTH_SYNCING, type LinkProgress } from "./link";
 import {
-  openInvite, PairService, sealInvite, PICTURES as PAIR_PICTURES,
-  type PairResult,
+  openInvite, PairService, PICTURES as PAIR_PICTURES,
+  type Invite, type PairResult,
 } from "./pair";
 import { CommunityStore } from "./store";
 import {
@@ -103,8 +104,8 @@ const CHANNEL = {
   linkOpen: "p2p:linkOpen",
   syncDevices: "p2p:syncDevices",
   syncWith: "p2p:syncWith",
-  pairPassword: "p2p:pairPassword",
   pairInvite: "p2p:pairInvite",
+  pairRevoke: "p2p:pairRevoke",
   pairJoin: "p2p:pairJoin",
   pairSync: "p2p:pairSync",
   putBlob: "p2p:putBlob",
@@ -653,7 +654,7 @@ async function syncOverTor(entry: SyncAddress): Promise<LinkProgress> {
   syncing.add(entry.onion);
 
   try {
-    const result = await pairOverTor(entry.onion);
+    const result = await syncWithSibling(entry.onion);
 
     log("[pair]", `synced with ${result.name || entry.name}: ${result.events} events`);
 
@@ -783,31 +784,104 @@ function changedSomethingWorthSyncing(): void {
   announceDevices({ recommend: true });
 }
 
-/** Start listening and announcing for other devices of yours. */
 /**
- * Where the pairing password lives.
+ * The secret every device holding this account can derive, and no other can.
  *
- * Stored as a scrypt-stretched verifier would be pointless here: both devices
- * need the password itself to derive the same key, so it is kept as written,
- * inside the account directory, which is already where the private key is. A
- * threat model in which this file is readable is one in which the account is
- * already gone.
+ * The account's own signing key, which is exactly the property wanted: a
+ * device has it if and only if it has already been linked, because being
+ * linked is how it got the key. `pair.ts` hashes it with a label before it
+ * goes anywhere near the wire, so this value itself is never sent.
+ *
+ * ## Why there is no longer a file here
+ *
+ * There was one — `pair-password`, holding whatever the user typed — and it
+ * was the source of three separate reports that read as different bugs:
+ *
+ *   - "The password stops working after a restart." On iOS that file is
+ *     written through a debounced flush, so setting a password and force-
+ *     quitting inside that window lost it, and the next launch reported no
+ *     password set with no way to tell that from never having set one.
+ *
+ *   - "It says the password is wrong and it is not." Two devices each holding
+ *     their own copy of a secret that has to match is a state that can differ,
+ *     and once it differed nothing on either screen said which one was stale.
+ *
+ *   - "The code I made last week still works." The password was the only thing
+ *     sealing an invite, so a code could not be revoked without changing it.
+ *
+ * All three are the same fault: a long-lived credential kept in two places.
+ * Deriving it removes the file, the copies, and the possibility of drift.
  */
-function passwordFile(): string {
-  return join(root(), "pair-password");
+function accountSecret(): string | undefined {
+  // An unclaimed key is not an account. See `claimed` below.
+  return claimed() ? identity?.privateKey : undefined;
 }
 
-function pairPassword(): string | undefined {
+/**
+ * Delete the pairing password left behind by an earlier version.
+ *
+ * Nothing reads it any more, which is exactly why it should not still be
+ * there: it is a password in plain text, in the same directory as the private
+ * key, that the user has no way to see or clear and no longer has any reason
+ * to have. A credential nothing uses is not harmless — it is one that can only
+ * ever leak.
+ *
+ * Best effort and silent. A file that will not delete is not worth failing
+ * startup over, and there is nothing the user could do about it anyway.
+ */
+function forgetOldPairPassword(): void {
   try {
-    const read = readFileSync(passwordFile(), "utf8").trim();
-    return read || undefined;
+    rmSync(join(root(), "pair-password"), { force: true });
   } catch {
-    return undefined;
+    // Read-only directory, or a permission the app does not have. The file is
+    // inert either way.
   }
 }
 
-function setPairPassword(password: string): void {
-  writeFileSync(passwordFile(), password, { mode: 0o600 });
+/**
+ * Whether the key on this device is an account somebody is actually using.
+ *
+ * ## Why this is not `Boolean(identity)`
+ *
+ * It was, and that single expression is why linking appeared to work and left
+ * the phone as a different person.
+ *
+ * `registerP2PHandlers` calls `loadOrCreateIdentity` before anything else, so
+ * a brand-new install *always* has a key — it is generated on first launch so
+ * the setup screen can show the user id it is offering them. `identity` is
+ * therefore never undefined, `needsIdentity` was never true, `whoami` was
+ * never sent, and the device being linked never asked for the account it had
+ * just been linked to. It synced every message, every friend and every server,
+ * signed by somebody it was not, and carried on as the throwaway identity it
+ * had generated sixty seconds earlier.
+ *
+ * What actually separates a set-up device from a fresh one is the same thing
+ * the interface uses to decide whether to show the setup screen: whether this
+ * key has ever claimed a username. Reading the same fact in both places is the
+ * point — the two cannot disagree about whether this device has an account.
+ *
+ * Memoised in one direction only. Claiming is permanent, so a `true` never
+ * needs re-checking; a `false` does, because the whole purpose of this is to
+ * notice the moment it stops being false.
+ */
+let everClaimed = false;
+
+function claimed(): boolean {
+  if (everClaimed) return true;
+  if (!identity) return false;
+
+  try {
+    everClaimed = storeFor(INDEX).events().some(
+      (event) =>
+        event.author === identity?.userId &&
+        (event.type === "profile.update" || event.type === "username.claim"),
+    );
+  } catch {
+    // No index on disk yet, which is as unclaimed as a device gets.
+    return false;
+  }
+
+  return everClaimed;
 }
 
 /**
@@ -835,7 +909,7 @@ async function openPair(): Promise<number> {
     // attempt leaves a record on *both* devices rather than only on whichever
     // one happened to raise the error.
     trace: (line) => log("[pair]", line),
-    password: () => pairPassword(),
+    accountSecret: () => accountSecret(),
 
     communities: () => {
       const dir = join(root(), "communities");
@@ -878,13 +952,30 @@ async function openPair(): Promise<number> {
      * hand, and wrapping it again would only add a second passphrase to get
      * wrong.
      */
-    identity: () => {
-      if (!identity) return undefined;
+    identity: async () => {
+      // Nothing to give from a device that has not been set up itself. Two
+      // fresh devices pairing would otherwise hand each other the throwaway
+      // keys they generated on first launch, and whichever answered first
+      // would win — an account nobody chose, on both of them.
+      if (!identity || !claimed()) return undefined;
 
       let onionKey: string | undefined;
 
       try {
-        onionKey = readOnionKey(join(root(), "tor", "onion"))?.toString("base64");
+        // The *data* directory, not the service directory inside it.
+        // `readOnionKey` appends `onion` itself — see `onionDir` — so passing
+        // the service directory looked for `tor/onion/onion`, found nothing,
+        // and returned undefined every time. The linked device then came up as
+        // the right account at a brand-new address, which is the failure where
+        // every friend code anybody holds for you silently stops working.
+        //
+        // Serialised as JSON because an onion key is three files, not one
+        // blob. It used to be sent as `readOnionKey(...)?.toString("base64")`
+        // — `toString` on an object, so the wire carried the seven characters
+        // "[object Object]" and the far end refused it as malformed, at which
+        // point the address was lost anyway but with an error to show for it.
+        const key = await readOnionKey(join(root(), "tor"));
+        if (key) onionKey = JSON.stringify(key);
       } catch {
         // An account with no published address yet. The identity is still
         // worth sending; the address can be republished from the key it
@@ -897,27 +988,53 @@ async function openPair(): Promise<number> {
     /**
      * Whether this device is still waiting for an account.
      *
-     * True only before one exists. Once a device has an identity it never asks
-     * again — receiving a second would silently replace the first, and any
-     * history signed by it would stop verifying.
+     * True until this device's key has claimed a username, which is the same
+     * question the interface asks before showing the setup screen. Once it has
+     * claimed one it never asks again — receiving a second account would
+     * silently replace the first, and every event this device had already
+     * signed would stop verifying against the key that replaced it.
      */
-    needsIdentity: () => !identity,
+    needsIdentity: () => !claimed(),
 
-    adoptIdentity: (account) => {
+    adoptIdentity: async (account) => {
       const arrived = JSON.parse(account.identity) as Identity;
 
       if (!arrived?.privateKey || !arrived?.userId) {
         throw new Error("that account arrived incomplete");
       }
 
+      // Checked here as well as in `needsIdentity`, because the two are read at
+      // different moments and only this one is destructive. Between them sits a
+      // whole session over a slow circuit.
+      if (claimed()) {
+        throw new Error("this device already has an account of its own");
+      }
+
       new ElectronKeystore().save(arrived);
       identity = arrived;
 
+      // Every open log was constructed around the key that has just been
+      // replaced — `CommunityStore` takes the identity once, at construction,
+      // and signs everything it appends with it. Left in place, the device
+      // would adopt the account and then go on writing as the throwaway key it
+      // was supposed to have stopped being, which is the same failure as never
+      // adopting at all except harder to see.
+      //
+      // Closed rather than dropped, so buffered appends reach disk first.
+      for (const store of stores.values()) store.close();
+      stores.clear();
+
       // The address travels with the account, or every friend code anybody
       // holds for this user stops working.
+      //
+      // Not fatal if it fails. An account at a new address is a real loss and
+      // worth a line in the log, but it is an account — refusing the whole
+      // pairing over it would leave the device with no identity at all, which
+      // is strictly worse.
       if (account.onionKey) {
         try {
-          writeOnionKey(join(root(), "tor", "onion"), Buffer.from(account.onionKey, "base64"));
+          await writeOnionKey(join(root(), "tor"), JSON.parse(account.onionKey) as OnionKey);
+          log("[pair]", "took on the account's onion address as well");
         } catch (error) {
           log("[pair]", `could not take on the onion key: ${String(error)}`);
         }
@@ -984,14 +1101,6 @@ async function openPair(): Promise<number> {
 }
 
 /**
- * Open a circuit to a sibling and run a pairing session over it.
- *
- * The session runs on the service that is already listening rather than on a
- * second one built for the occasion — `adopt` uses that service's own hooks,
- * so a dialled session and an answered session are the same code reading the
- * same account, and there is no second set of hooks to drift out of step.
- */
-/**
  * Make sure Tor is running as a *client*, whether or not there is an account.
  *
  * Tor is normally brought up by `netStart`, which the interface calls once it
@@ -1023,6 +1132,26 @@ async function ensureTorClient(): Promise<void> {
       role: "account",
       account: false,
     });
+
+    // Both, and both matter on this path more than on any other.
+    //
+    // This is the Tor a device runs while it has no account, so it is the one
+    // running during the single most reported failure in the app — and until
+    // now it was also the only one with nothing listening to it. A link that
+    // went wrong left no record of what tor had said about it, and the address
+    // this device publishes for its siblings arrived nowhere.
+    tor.on("log", (line: string) => log("[tor]", line));
+
+    tor.on("sync", (address: string) => {
+      log("[pair]", `this device can be reached for sync at ${address}`);
+
+      // Only once there is an account to write it into. On a device still
+      // waiting to be linked there is no identity to sign an index event with,
+      // and the address is carried in the greeting anyway — the sibling learns
+      // it from the pairing itself, which is the whole point of `learn`.
+      if (identity) recordSyncAddress(address);
+      announceDevices();
+    });
   }
 
   if (!tor.running) {
@@ -1031,11 +1160,37 @@ async function ensureTorClient(): Promise<void> {
   }
 }
 
-async function pairOverTor(onion: string): Promise<PairResult> {
+/**
+ * A circuit to one of your devices, with the pairing service up behind it.
+ *
+ * Both directions matter here. The socket is the outbound half; `openPair`
+ * being awaited first is the inbound half, and it is not incidental — the two
+ * sessions on a pairing are peers, and this device has to be answerable for
+ * the same reasons the other one does.
+ */
+async function dialSibling(onion: string): Promise<{ socket: Socket; service: PairService }> {
   await ensureTorClient();
 
   const socket = await socksConnect(onion, 80);
-  return pair!.adopt(socket);
+  return { socket, service: pair! };
+}
+
+/**
+ * Link to a device from a code scanned or pasted on this one.
+ *
+ * The only path that uses an invite. Everything after the first successful
+ * link goes through `syncWithSibling` instead, which needs no code, no typing
+ * and nothing stored.
+ */
+async function joinWithInvite(invite: Invite, password: string): Promise<PairResult> {
+  const { socket, service } = await dialSibling(invite.onion);
+  return service.join(socket, invite, password);
+}
+
+/** Catch up with a device that already shares this account. */
+async function syncWithSibling(onion: string): Promise<PairResult> {
+  const { socket, service } = await dialSibling(onion);
+  return service.sync(socket);
 }
 
 function blobsFor(community: string): BlobStore {
@@ -1268,6 +1423,8 @@ export function registerP2PHandlers(): void {
   migrateFromPreviousName();
 
   identity = loadOrCreateIdentity(new ElectronKeystore());
+
+  forgetOldPairPassword();
 
   // Public identity only. The private key never crosses this boundary.
   ipcMain.handle(CHANNEL.identity, () => ({
@@ -2269,84 +2426,99 @@ export function registerP2PHandlers(): void {
    * because both ends record each other on the way through.
    */
   /**
-   * Read or set the pairing password.
+   * Produce a code for the other device to scan, and the passphrase for it.
    *
-   * Returned as a boolean, never as the password itself. Settings has no
-   * reason to display it — it is typed on the other device, not read off this
-   * one — and a surface that can hand it back is a surface that a compromised
-   * renderer can ask.
-   */
-  ipcMain.handle(CHANNEL.pairPassword, async (_, password?: string) => {
-    if (password === undefined) return { set: Boolean(pairPassword()) };
-
-    const chosen = String(password);
-
-    // Eight is not a strong password, and this is not pretending otherwise.
-    // What stands behind it is that the address is only reachable by someone
-    // who already has the invite, and an invite is shown deliberately, for a
-    // few minutes, to a device in the same room. The length is there to stop
-    // "1234", not to survive an offline attack that nobody can mount.
-    if (chosen.length < 8) {
-      throw new Error("use at least 8 characters");
-    }
-
-    setPairPassword(chosen);
-    return { set: true };
-  });
-
-  /**
-   * Produce a code for the other device to scan.
+   * Both are generated here, both live only in this process, and asking again
+   * replaces them — so there is never more than one live code and never a code
+   * that outlives the window it was shown in.
    *
-   * Needs the sync onion to exist, which needs Tor to have published it. Said
-   * plainly rather than returning an invite that cannot be dialled — a QR code
-   * that scans cleanly and then times out is a much worse failure than being
-   * told to wait.
+   * Needs Tor to be up, for two separate reasons that used to be one confusing
+   * one. The sync address has to exist, because that is what the code points
+   * at; and the client has to be usable, because the device scanning this will
+   * be dialling straight back into it. Starting it here rather than waiting to
+   * be asked is what makes the first code appear on a cold app at all.
    */
   ipcMain.handle(CHANNEL.pairInvite, async (event) => {
     viewer = event.sender;
 
-    const password = pairPassword();
-    if (!password) throw new Error("set a pairing password first");
-
-    await openPair();
+    // Brings Tor up as a client and opens the listener, both idempotent. On a
+    // device with no account this is the only thing that ever starts Tor —
+    // `netStart` needs an identity and there is not one yet.
+    await ensureTorClient();
 
     const onion = tor?.syncAddress;
-    if (!onion) throw new Error("Tor has not published this device's sync address yet");
+
+    if (!onion) {
+      throw new Error(
+        "Tor has not published this device's address yet — this takes a minute " +
+        "or two from a cold start. Leave this open and it will appear.",
+      );
+    }
 
     const me = thisDevice();
+    const minted = pair!.mint(onion);
+
+    log("[pair]", `offering a pairing code, good until ${new Date(minted.expiresAt).toISOString()}`);
 
     return {
-      code: sealInvite({ onion, name: me.name }, password),
+      code: minted.code,
+      password: minted.password,
+      session: minted.session,
+      expiresAt: minted.expiresAt,
       onion,
       name: me.name,
     };
   });
 
   /**
+   * Withdraw a code before it expires.
+   *
+   * Called when the dialog closes and when the user asks for a new one, so a
+   * code stops being usable the moment it stops being on screen. Without this
+   * the ten-minute expiry was the only limit, and closing the window left a
+   * live invite behind with nothing to show it existed.
+   */
+  ipcMain.handle(CHANNEL.pairRevoke, async (event, session?: string) => {
+    viewer = event.sender;
+
+    // Deliberately not opening the service. Nothing to revoke on a device
+    // where it was never started, and starting it here would mean the act of
+    // cancelling a code could bring up a listener.
+    pair?.revoke(session ? String(session) : undefined);
+    return { offering: pair?.offering() ?? [] };
+  });
+
+  /**
    * Join an account from a code scanned or pasted on this device.
    *
-   * The password is stored before dialling, not after: it is the same password
-   * on both sides, and this device needs it to answer the *next* sync as well
-   * as to open this one.
+   * Nothing is stored. The passphrase opens the code, authorises the one
+   * session, and is forgotten — every sync after this authorises with the
+   * account itself, which this device is about to be given.
    */
   ipcMain.handle(CHANNEL.pairJoin, async (event, code: string, password: string) => {
     viewer = event.sender;
 
     const opened = openInvite(String(code ?? ""), String(password ?? ""));
 
-    if (!opened.ok) {
-      return {
-        ok: false,
-        error: opened.reason === "wrong-password"
-          ? "That password does not match the one on the other device."
-          : "That is not a Reaper pairing code.",
-      };
+    // Three failures with three different answers. Collapsing them is how
+    // somebody ends up re-typing a passphrase that was never wrong, or
+    // rescanning a code that scanned perfectly.
+    const REFUSALS: Record<string, string> = {
+      "wrong-password":
+        "That passphrase does not match the code. Check it against the other device.",
+      "not-an-invite":
+        "That is not a Reaper pairing code. Scan the square code on your other device, " +
+        "or paste the line of letters underneath it.",
+      expired:
+        "That code has run out. Ask the other device for a new one — codes last ten minutes.",
+    };
+
+    if (opened.ok !== true) {
+      return { ok: false, error: REFUSALS[opened.reason] ?? "That code could not be read." };
     }
 
-    setPairPassword(String(password));
-
     try {
-      const result = await pairOverTor(opened.invite.onion);
+      const result = await joinWithInvite(opened.invite, String(password));
       return { ok: true, result };
     } catch (error) {
       return { ok: false, error: (error as Error).message };
@@ -2363,7 +2535,7 @@ export function registerP2PHandlers(): void {
 
     for (const entry of others(syncAddresses(), me.id)) {
       try {
-        done.push(await pairOverTor(entry.onion));
+        done.push(await syncWithSibling(entry.onion));
       } catch (error) {
         failed.push({ name: entry.name, error: (error as Error).message });
       }
