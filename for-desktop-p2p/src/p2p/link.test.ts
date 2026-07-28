@@ -341,5 +341,127 @@ function event(author: string, body: string): SignedEvent {
      [holds(split, "a"), holds(split, "b")].filter(Boolean).length === 1);
 }
 
+
+/**
+ * The same link, over a connection that batches.
+ *
+ * ## What this is for
+ *
+ * Linking a device failed in the field for weeks while every test here passed,
+ * and the reason both of those were true at once is that loopback delivers a
+ * write as its own read. Tor does not. A circuit accumulates whatever is ready
+ * and hands it over in one piece, so the greeting, the proof and the first
+ * encrypted message arrive together, in a single chunk, routinely.
+ *
+ * That difference was load-bearing. The reader used to parse plaintext frames
+ * until a key existed and sealed ones after — but the key is assigned from an
+ * `await` continuation, which cannot run until the synchronous read loop that
+ * drained the chunk has finished. So the third message in a batch was a sealed
+ * frame handed to the plaintext parser, which read its magic bytes as a length
+ * and discarded the buffer. On loopback there was never a third message in the
+ * batch, and the bug was invisible.
+ *
+ * So the transport here is deliberately hostile in exactly the way Tor is: a
+ * relay that holds everything it receives and forwards it in one write. Any
+ * reader whose parsing depends on when something was scheduled fails this.
+ */
+async function batching(port: number, hold = 25): Promise<number> {
+  const { Socket, createServer } = await import("node:net");
+
+  const relay = createServer((near) => {
+    const far = new Socket();
+    far.connect(port, "127.0.0.1");
+
+    // One pump per direction. Everything received inside the window goes out
+    // as a single write, which is the whole point.
+    // Flushed on a fixed tick, not a timer started by each arrival.
+    //
+    // That distinction is the entire reproduction. A per-arrival window only
+    // spaces messages out, and since this protocol is strictly ping-pong
+    // through the handshake, spacing them out guarantees they arrive one at a
+    // time — which is the case that always worked.
+    //
+    // A shared clock does what a Tor circuit does: a message queued just
+    // before a flush and the reply it provokes a millisecond later go out
+    // together. That is how the greeting and the proof end up in one chunk,
+    // which makes the peer answer with its proof and its first *encrypted*
+    // message in one chunk, which is the case that failed.
+    const pump = (from: import("node:net").Socket, to: import("node:net").Socket) => {
+      let held: Buffer[] = [];
+
+      from.on("data", (chunk: Buffer) => { held.push(chunk); });
+      from.on("error", () => {});
+
+      const tick = setInterval(() => {
+        if (!held.length) return;
+        const batch = Buffer.concat(held);
+        held = [];
+        to.write(batch);
+      }, hold);
+
+      from.on("close", () => {
+        setTimeout(() => { clearInterval(tick); to.end(); }, hold * 3);
+      });
+    };
+
+    pump(near, far);
+    pump(far, near);
+  });
+
+  await new Promise<void>((done) => relay.listen(0, "127.0.0.1", () => done()));
+  return (relay.address() as { port: number }).port;
+}
+
+async function batched() {
+  const identity = createIdentity("Ray");
+
+  const desktop = device(identity, "Ray's desktop");
+  const phone = device(identity, "Ray's phone");
+
+  // Enough traffic that the handshake and the first real exchange overlap in
+  // one batch, which is the case that broke.
+  desktop.logs.set("@index", [
+    event(identity.userId, "a friend"),
+    event(identity.userId, "a server"),
+  ]);
+
+  const picture = randomBytes(2_000);
+  desktop.blobs.set("@avatars", new Map([
+    [createHash("sha256").update(picture).digest("hex"), picture],
+  ]));
+  desktop.logs.set("@avatars", [event(identity.userId, "an avatar")]);
+
+  desktop.claims.push({ device: desktop.id, name: "Ray's desktop", n: 1, at: 1000 });
+
+  const listener = new LinkService(phone.hooks);
+  const port = await listener.open();
+  const through = await batching(port);
+
+  let progress;
+  let failed = "";
+
+  try {
+    progress = await dial(new LinkService(desktop.hooks), through);
+  } catch (error) {
+    failed = (error as Error).message;
+  }
+
+  ck("a link survives a connection that batches its writes", !failed, failed);
+  ck("and completes", Boolean(progress?.done));
+  ck(
+    "and the private index crossed it",
+    (phone.logs.get("@index") ?? []).length === 2,
+    String((phone.logs.get("@index") ?? []).length),
+  );
+  ck(
+    "and so did the avatar",
+    (phone.blobs.get("@avatars")?.size ?? 0) === 1,
+  );
+
+  await listener.close();
+}
+
+await batched();
+
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");
 process.exit(f ? 1 : 0);

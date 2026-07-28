@@ -149,8 +149,25 @@
       .netdot { width: 8px; height: 8px; border-radius: 50%; background: #6b6b6b; flex-shrink: 0; }
       .netdot.on { background: var(--good); box-shadow: 0 0 6px var(--good); }
       #setupErr { color: var(--accent); min-height: 18px; font-size: 13px; }
-      #setupImport { background: none; border: none; color: var(--dim); font-size: 13px; text-decoration: underline; cursor: pointer; }
-      #setupImport:hover { color: var(--text); }
+      /* The two ways in, side by side and the same size, because neither is
+         the default. A smaller or plainer one reads as the afterthought. */
+      #setupPick { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; max-width: 560px; }
+      .pick {
+        flex: 1 1 240px; display: flex; flex-direction: column; gap: 4px;
+        align-items: flex-start; text-align: left; padding: 14px 16px;
+        background: var(--side); border: 1px solid var(--line); border-radius: 10px;
+        color: var(--text); cursor: pointer;
+      }
+      .pick:hover { border-color: var(--accent); }
+      .pick strong { font-size: 15px; }
+      .pick span { color: var(--dim); font-size: 13px; font-weight: 400; }
+
+      /* Neither pane is shown until one is picked. */
+      .setupPane { display: none; flex-direction: column; align-items: center; gap: 10px; max-width: 420px; }
+      .setupPane.show { display: flex; }
+      #setup.chosen #setupPick { display: none; }
+      #setup.chosen > p { display: none; }
+      .setupBack { font-size: 13px; }
       .id { color: var(--dim); font-size: 12px; font-family: ui-monospace, monospace; word-break: break-all; }
 
       /* rail */
@@ -640,14 +657,50 @@
   </head>
   <body>
     <div id="setup">
-      <h1>Pick a username</h1>
-      <p>No password and nothing to sign up for. Your account is a key already on this machine — the name is just what people see.</p>
-      <div class="field">
-        <input id="setupInput" placeholder="username" autocomplete="off" maxlength="32" />
-        <button class="primary" id="setupGo">Continue</button>
+      <h1>Set up Reaper</h1>
+      <p>Two ways in, and the difference matters: a new name is a brand new account, while linking joins an account you already have on another device.</p>
+
+      <!-- Presented as a choice rather than a form with an escape hatch
+           underneath it. Someone who already has an account on their desktop
+           and is opening the app on a phone was, before this, shown a "pick a
+           username" box — which is the wrong thing for them, looks like the
+           only thing on offer, and quietly makes a second account. -->
+      <div id="setupPick">
+        <button class="pick" id="pickNew">
+          <strong>Choose a name</strong>
+          <span>Start a new account on this device.</span>
+        </button>
+        <button class="pick" id="pickLink">
+          <strong>Link a device</strong>
+          <span>Already using Reaper somewhere else? Bring that account here.</span>
+        </button>
       </div>
+
+      <div id="setupNew" class="setupPane">
+        <p>No password and nothing to sign up for. Your account is a key already on this machine — the name is just what people see.</p>
+        <div class="field">
+          <input id="setupInput" placeholder="username" autocomplete="off" maxlength="32" />
+          <button class="primary" id="setupGo">Continue</button>
+        </div>
+        <button class="ghost setupBack">Back</button>
+      </div>
+
+      <div id="setupLink" class="setupPane">
+        <p>On the device you already use, open <strong>Settings → Devices</strong> and choose <strong>Link a device</strong>. It will ask you to set a password and then show a code.</p>
+
+        <div class="field">
+          <input id="setupCode" placeholder="paste the code" autocomplete="off" />
+          <button class="ghost" id="setupScan" hidden>Scan</button>
+        </div>
+        <div class="field">
+          <input id="setupPass" type="password" placeholder="pairing password" autocomplete="off" />
+          <button class="primary" id="setupJoin">Link</button>
+        </div>
+
+        <button class="ghost setupBack">Back</button>
+      </div>
+
       <div id="setupErr"></div>
-      <button class="ghost" id="setupImport">I already have an identity</button>
       <div class="id" id="setupId"></div>
     </div>
 
@@ -18278,7 +18331,72 @@
       // the only screen where somebody who has just reinstalled actually is.
       // Without it the export button leads nowhere: the file exists and there
       // is no moment in the app where it can be handed back.
-      $("setupImport").onclick = importIdentityDialog;
+      // The chooser. Picking a side hides the other and the blurb above them,
+      // so the screen is only ever asking one question at a time.
+      (function setupChooser() {
+        var setup = $("setup");
+
+        function choose(which) {
+          setup.classList.add("chosen");
+          $("setupNew").classList.toggle("show", which === "new");
+          $("setupLink").classList.toggle("show", which === "link");
+          $("setupErr").textContent = "";
+          var focus = which === "new" ? $("setupInput") : $("setupCode");
+          if (focus) focus.focus();
+        }
+
+        $("pickNew").onclick = function () { choose("new"); };
+        $("pickLink").onclick = function () { choose("link"); };
+
+        Array.prototype.forEach.call(
+          document.querySelectorAll(".setupBack"),
+          function (b) {
+            b.onclick = function () {
+              setup.classList.remove("chosen");
+              $("setupNew").classList.remove("show");
+              $("setupLink").classList.remove("show");
+              $("setupErr").textContent = "";
+            };
+          }
+        );
+
+        // Only offered where there is a camera to offer it with. A disabled
+        // Scan button on a desktop is a question the user has to answer for
+        // themselves.
+        var scan = $("setupScan");
+        if (scan && window.native && window.native.scanQr) {
+          scan.hidden = false;
+          scan.onclick = async function () {
+            try {
+              var code = await window.native.scanQr();
+              if (code) $("setupCode").value = code;
+            } catch (e) {
+              $("setupErr").textContent = t("Could not open the camera");
+            }
+          };
+        }
+
+        $("setupJoin").onclick = async function () {
+          var code = $("setupCode").value.trim();
+          var pass = $("setupPass").value;
+
+          if (!code) { $("setupErr").textContent = t("Paste or scan the code first"); return; }
+          if (!pass) { $("setupErr").textContent = t("Enter the pairing password"); return; }
+
+          $("setupJoin").disabled = true;
+          $("setupErr").textContent = t("Linking…");
+
+          try {
+            var res = await window.p2p.pairJoin(code, pass);
+            if (res && res.ok) location.reload();
+            else $("setupErr").textContent = (res && res.error) || t("Could not link");
+          } catch (e) {
+            $("setupErr").textContent = String((e && e.message) || e);
+          } finally {
+            $("setupJoin").disabled = false;
+          }
+        };
+      })();
       $("setupInput").onkeydown = function (e) { if (e.key === "Enter") chooseUsername(); };
       $("btnSettings").onclick = settingsDialog;
       $("btnSync").onclick = syncEverything;
