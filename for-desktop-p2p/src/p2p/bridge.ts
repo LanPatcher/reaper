@@ -889,6 +889,25 @@ async function openPair(): Promise<number> {
   });
 
   pair = service;
+
+  // Both outcomes go to the log.
+  //
+  // A session this device *answers* used to fail silently: the dialling device
+  // saw an error and this one saw nothing at all, so half the evidence for
+  // every failed pairing was thrown away at the moment it was produced. Whether
+  // it worked is worth a line too — "nothing appeared in the log" is otherwise
+  // indistinguishable between "no attempt reached me" and "one did and died".
+  service.on("paired", (result: PairResult) => {
+    log("[pair]", `${result.name || "a device"} linked: ${result.events} events, ${result.pictures} pictures`);
+    announceDevices();
+  });
+
+  service.on("failed", (why: string) => {
+    log("[pair]", `an attempt to link failed: ${why}`);
+
+    try { viewer?.send("p2p:pairFailed", why); } catch { /* window gone */ }
+  });
+
   return service.open();
 }
 
