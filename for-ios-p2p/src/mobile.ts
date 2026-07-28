@@ -288,6 +288,8 @@ function swipeToOpen(): void {
       return false;
     }
 
+    // The member list runs its own gesture — see `closeMembersBySwipe`. What
+    // it must not do is operate the panel on the opposite side.
     if (target.closest("#members")) return false;
 
     return true;
@@ -318,6 +320,60 @@ function swipeToOpen(): void {
   // A cancelled touch closes nothing and opens nothing. Saying so explicitly
   // rather than letting `tracking` stay true into the next gesture.
   document.addEventListener("touchcancel", () => { tracking = false; }, { passive: true });
+
+  closeMembersBySwipe(DISTANCE, FLICK);
+}
+
+/**
+ * A swipe to the right closes the member list.
+ *
+ * The dimmer is the main way out and this is the one people try first, because
+ * it is how the panel arrived. Kept separate from the gesture above rather
+ * than folded into it: that one is about the *left* panel and treats a
+ * rightward swipe as "open", which on top of the member list is the opposite
+ * of what was meant.
+ */
+function closeMembersBySwipe(distance: number, flick: number): void {
+  let startX = 0;
+  let startY = 0;
+  let startAt = 0;
+  let tracking = false;
+
+  const panel = document.getElementById("members");
+  if (!panel) return;
+
+  panel.addEventListener("touchstart", (event) => {
+    if (event.touches.length !== 1) { tracking = false; return; }
+
+    const touch = event.touches[0];
+    startX = touch.clientX;
+    startY = touch.clientY;
+    startAt = event.timeStamp;
+    tracking = true;
+  }, { passive: true });
+
+  panel.addEventListener("touchend", (event) => {
+    if (!tracking) return;
+    tracking = false;
+
+    const touch = event.changedTouches[0];
+    if (!touch) return;
+
+    const dx = touch.clientX - startX;
+    const dy = touch.clientY - startY;
+
+    if (dx <= 0 || Math.abs(dy) > Math.abs(dx)) return;
+
+    const speed = dx / Math.max(1, event.timeStamp - startAt);
+    if (dx < distance && speed < flick) return;
+
+    setMembers(false);
+
+    // The interface owns the button's own state, so it is told rather than
+    // left believing the panel is still open — otherwise the next tap on it
+    // closes something already closed and appears to do nothing.
+    document.getElementById("btnMembers")?.click();
+  }, { passive: true });
 }
 
 /**

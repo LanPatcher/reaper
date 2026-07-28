@@ -115,8 +115,17 @@ const ANNOUNCE_EVERY_MS = 2000;
 /** How long an announcement is believed after it stops arriving. */
 const FORGET_AFTER_MS = 8000;
 
-/** A device that has gone quiet mid-handshake is not coming back. */
-const HANDSHAKE_TIMEOUT_MS = 15_000;
+/**
+ * How long to wait for the other side to say anything.
+ *
+ * Sized for Tor rather than for a local network. Building a circuit to an
+ * onion service takes tens of seconds on its own, and this timer covers every
+ * exchange in the protocol — including the one where a device with a long
+ * index log is working through it. Fifteen seconds was comfortable over wifi
+ * and cut a Tor sync off mid-handshake, which surfaced as the other device
+ * simply not answering.
+ */
+const HANDSHAKE_TIMEOUT_MS = 90_000;
 
 /** Bytes per blob chunk on the wire. Larger than Tor's — this is a LAN. */
 const CHUNK = 256 * 1024;

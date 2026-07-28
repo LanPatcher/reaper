@@ -9108,7 +9108,14 @@
         ? t("Accept their request to reply")
         : t("Send a friend request first");
         renderRail(); renderSide(); renderMessages(); renderStats(); renderMembers(); updateCallButton();
-        $("input").focus();
+
+        // Focused only where a keyboard is already there.
+        //
+        // On a desktop this saves a click. On a phone it throws the on-screen
+        // keyboard up over half the conversation the moment it is opened,
+        // before anyone has said they want to type — so opening a message to
+        // read it means dismissing a keyboard first, every time.
+        if (!matchMedia("(hover: none)").matches) $("input").focus();
       }
 
       async function openGroup(g) {
@@ -10397,7 +10404,7 @@
                       await refreshDevices();
                     } catch (e) {
                       syb.disabled = false;
-                      syb.textContent = t("Could not reach the other device — try again later");
+                      syb.textContent = String((e && e.message) || e);
                     }
                   };
                   c2.appendChild(syb);
@@ -13169,12 +13176,12 @@
                   : t("Already up to date");
                 await refreshDevices();
               } catch (e) {
-                syn.textContent = t("Could not reach the other device — try again later");
+                syn.textContent = String((e && e.message) || e);
               }
               setTimeout(function () {
                 syn.disabled = false;
                 syn.textContent = t("Sync now");
-              }, 2500);
+              }, 5000);
             };
             card.appendChild(syn);
           }

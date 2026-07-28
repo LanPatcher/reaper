@@ -605,8 +605,11 @@ function syncAddressNow(): string | undefined {
  * for the network. Conversations, friends, servers, group chats and the outbox
  * cannot be fetched from anywhere else, so those always travel.
  */
-async function syncOverTor(entry: SyncAddress): Promise<LinkProgress | undefined> {
-  if (syncing.has(entry.device)) return undefined;
+async function syncOverTor(entry: SyncAddress): Promise<LinkProgress> {
+  if (syncing.has(entry.device)) {
+    throw new Error("already syncing with that device");
+  }
+
   syncing.add(entry.device);
 
   try {
@@ -622,8 +625,17 @@ async function syncOverTor(entry: SyncAddress): Promise<LinkProgress | undefined
 
     return progress;
   } catch (error) {
-    log("[link]", `could not reach ${entry.name}: ${(error as Error).message}`);
-    return undefined;
+    // Thrown on, with what actually happened.
+    //
+    // This used to swallow the error and return undefined, and the caller
+    // turned that into "that device did not answer" — which is one of about
+    // six things it could have been, and the only one that is not actionable.
+    // Tor refusing the address, the other device having no link server, a
+    // handshake that timed out and a store that would not open all produced
+    // that same sentence, so there was nothing to go on but a guess.
+    const why = (error as Error).message;
+    log("[link]", `could not sync with ${entry.name}: ${why}`);
+    throw new Error(why);
   } finally {
     syncing.delete(entry.device);
   }
@@ -634,8 +646,12 @@ async function syncAllDevices(): Promise<LinkProgress[]> {
   const done: LinkProgress[] = [];
 
   for (const entry of others(syncAddresses(), thisDevice().id)) {
-    const progress = await syncOverTor(entry);
-    if (progress) done.push(progress);
+    try {
+      done.push(await syncOverTor(entry));
+    } catch {
+      // Already logged with its reason. A device being switched off is the
+      // ordinary case and must not stop the others being tried.
+    }
   }
 
   return done;
@@ -2117,8 +2133,31 @@ export function registerP2PHandlers(): void {
   ipcMain.handle(CHANNEL.syncDevices, async (event) => {
     viewer = event.sender;
 
+    // Nothing to sync *with* is not the same as nothing to sync.
+    //
+    // The roster only gains a device once a sync has succeeded — that is when
+    // the two exchange claims and addresses. So on a device that has never
+    // completed one, this found nobody to dial, reported zero events, and the
+    // interface said "already up to date" about an account it had never
+    // compared against anything.
+    const known = others(syncAddresses(), thisDevice().id);
+
+    if (!known.length) {
+      throw new Error(
+        "this device has not been linked to any of your others yet — " +
+        "scan or paste the sync address from the other device first",
+      );
+    }
+
     const done = await syncAllDevices();
     announceDevices();
+
+    if (!done.length) {
+      throw new Error(
+        `none of your ${known.length} other device(s) answered — ` +
+        "they have to be running for a sync to happen",
+      );
+    }
 
     return {
       devices: done.length,
@@ -2143,12 +2182,13 @@ export function registerP2PHandlers(): void {
       throw new Error("that is not a sync address");
     }
 
-    const progress = await syncOverTor({
+    // Whatever went wrong travels to the interface unchanged. There is no
+    // useful generic message for this: the person is standing in front of both
+    // devices and can act on "connection refused" or "wrong account", and can
+    // do nothing at all with "did not answer".
+    return syncOverTor({
       device: "unknown", name: address.slice(0, 8), onion: address, at: Date.now(),
     });
-
-    if (!progress) throw new Error("that device did not answer");
-    return progress;
   });
 
   ipcMain.handle(CHANNEL.linkTo, async (event, host: string, port: number) => {

@@ -150,7 +150,14 @@ html.members-open #members {
   transition: opacity .22s;
 }
 
-html.nav-open #nav-scrim {
+/* For the member list as well as the conversation list.
+
+   Without this there was no way out of the user list at all: it covers the
+   right-hand side of the screen, and the button that opened it is in the top
+   bar underneath. Tapping the dimmed area is the way every app that does this
+   closes it, and it needs no control of its own. */
+html.nav-open #nav-scrim,
+html.members-open #nav-scrim {
   opacity: 1;
   pointer-events: auto;
 }
