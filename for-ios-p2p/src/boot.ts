@@ -269,6 +269,22 @@ async function startNetwork(): Promise<void> {
 
   try {
     await Tor.start({ localPort: listening, syncPort });
+
+    // Tor may already have been running.
+    //
+    // `start` returns early when it is, and no events are emitted a second
+    // time — so a page that reloads (which importing an identity does) would
+    // otherwise never learn the SOCKS port, and every outbound connection
+    // would fail for the rest of the session against a Tor client that was
+    // working the whole time.
+    const already = await Tor.status();
+
+    if (already.socksPort) {
+      setProxyPort(already.socksPort);
+      status.network = already.onion ? "reachable" : "outbound";
+      status.onion = already.onion ?? undefined;
+      announce();
+    }
   } catch (error) {
     status.network = "failed";
     status.error = `tor: ${(error as Error).message}`;

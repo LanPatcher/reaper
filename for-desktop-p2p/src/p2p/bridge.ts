@@ -1315,6 +1315,22 @@ export function registerP2PHandlers(): void {
       role: "account",
     });
 
+    // A device that publishes has a claim on record, always.
+    //
+    // `holds` treats an empty ledger as "nobody has ever taken this address",
+    // which is right for an account that has only ever run in one place — and
+    // it means a device that has never claimed anything competes silently.
+    // Two such devices both publish, both believe they are entitled to, and
+    // neither has anything to compare against when they eventually meet.
+    //
+    // Writing one on first publish gives every device a position in the order,
+    // so the first sync between them can actually decide something.
+    if (!claimsHeld().length) {
+      const me = thisDevice();
+      addClaim(claimFor([], me.id, me.name));
+      log("[p2p]", "recorded this device as the one holding the address");
+    }
+
     // The sync address arrives a few seconds after the first one.
     tor.on("sync", (address: string) => {
       log("[link]", `this device can be reached for sync at ${address}`);

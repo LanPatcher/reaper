@@ -1,7 +1,7 @@
 import { Tor } from "@reaper/tor";
 
 import { EventEmitter } from "./events";
-import { Socket, proxyReady } from "./net";
+import { Socket, proxyReady, setProxyPort } from "./net";
 
 /**
  * `tor.ts`, for iOS.
@@ -32,10 +32,30 @@ const CONNECT_TIMEOUT_MS = 45_000;
  * cellular, is genuinely slow, and failing early here means a contact that
  * would have answered is marked unreachable.
  */
-export function socksConnect(host: string, port: number): Promise<Socket> {
+export async function socksConnect(host: string, port: number): Promise<Socket> {
+  // Ask, rather than wait to be told.
+  //
+  // The SOCKS port used to arrive only in a `ready` event, delivered once when
+  // the first circuit is established — and anything that misses that event
+  // never learns the port at all. Every outbound connection then fails
+  // permanently with "Tor is not ready yet" while Tor sits there perfectly
+  // healthy with a published address.
+  //
+  // Missing it is not exotic. Reloading the page — which importing an identity
+  // now does — restarts the JavaScript context but not Tor, so `Tor.start`
+  // returns early because it is already running and no event is ever emitted
+  // again. That is exactly what happened: a phone that had imported an
+  // identity could not sync, could not reach a peer, and reported Tor as
+  // connected, because it was.
+  //
+  // The port is in `status()` for the asking, so it is asked for.
+  if (!proxyReady()) await adoptProxyPort();
+
   return new Promise((resolve, reject) => {
     if (!proxyReady()) {
-      reject(new Error("Tor is not ready yet"));
+      reject(new Error(
+        "Tor has not opened its SOCKS port yet — it is still starting up",
+      ));
       return;
     }
 
@@ -69,6 +89,26 @@ export function socksConnect(host: string, port: number): Promise<Socket> {
   });
 }
 
+
+/**
+ * Learn the SOCKS port from the client, whenever anything needs it.
+ *
+ * Idempotent and cheap. Called before a connection and on every poll, so there
+ * is no single moment this has to be got right.
+ */
+export async function adoptProxyPort(): Promise<boolean> {
+  try {
+    const status = await Tor.status();
+    if (status.socksPort) {
+      setProxyPort(status.socksPort);
+      return true;
+    }
+  } catch {
+    // Not up yet. The caller reports that in its own words.
+  }
+
+  return false;
+}
 
 /**
  * The desktop's Tor supervisor, which does not apply here.
@@ -124,6 +164,10 @@ export class TorService extends EventEmitter {
       void Tor.status().then((status) => {
         this.running = status.running;
 
+        // The proxy port, on every tick. It costs nothing and it is the one
+        // value whose absence stops the whole app reaching anybody.
+        if (status.socksPort) setProxyPort(status.socksPort);
+
         if (status.onion && status.onion !== this.address) {
           this.address = status.onion;
           this.emit("ready", status.onion);
@@ -135,8 +179,8 @@ export class TorService extends EventEmitter {
         }
 
         // Nothing left to wait for. Neither address changes again without the
-        // app restarting.
-        if (this.address && this.syncAddress && this.#watching) {
+        // app restarting, and the proxy port is now known.
+        if (this.address && this.syncAddress && proxyReady() && this.#watching) {
           clearInterval(this.#watching);
           this.#watching = undefined;
         }
