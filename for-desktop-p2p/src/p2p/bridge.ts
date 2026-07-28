@@ -22,6 +22,7 @@ import {
   SYNC,
   type SyncAddress,
   claimFor,
+  holder,
   holds,
   isClaim,
   isSyncAddress,
@@ -387,6 +388,17 @@ let device: DeviceRecord | undefined;
 let pair: PairService | undefined;
 
 /**
+ * Whether the user has asked to move the account address to this device.
+ *
+ * Not a claim. A claim is written only once the device currently holding the
+ * address has agreed to give it up; this is the request that gets sent during
+ * a pairing session. The two are separate because a device that is switched
+ * off cannot be argued with, and writing a claim without agreement is how two
+ * devices came to answer at one address with neither of them wrong.
+ */
+let wantsAddress = false;
+
+/**
  * Where the renderer can be reached from outside a handler.
  *
  * Linking and losing the address are both things that happen *to* the app
@@ -481,8 +493,11 @@ function deviceInfo() {
     name: me.name,
     standing: standing(claims, me.id),
     claims: claims.sort((a, b) => b.n - a.n),
-    linking: !!link,
-    linkPort: link?.port ?? 0,
+    // Named for what the interface has always called it. The service behind
+    // it is `PairService` now; the question being asked — "can another of my
+    // devices reach this one" — did not change.
+    linking: !!pair?.port,
+    linkPort: pair?.port ?? 0,
     onion: tor?.address,
 
     // Where your other devices reach this one. Shown so it can be typed or
@@ -839,9 +854,9 @@ async function openPair(): Promise<number> {
     readPicture: (id) => blobsFor(PAIR_PICTURES).read(id),
     writePicture: (id, bytes) => { blobsFor(PAIR_PICTURES).accept(id, bytes); },
 
-    holding: () => holds(claimsFromLog(), thisDevice().id),
+    holding: () => holds(claimsHeld(), thisDevice().id),
     wants: () => wantsAddress,
-    claimN: () => holder(claimsFromLog())?.n ?? 0,
+    claimN: () => holder(claimsHeld())?.n ?? 0,
 
     /**
      * Remember a sibling.
@@ -864,7 +879,7 @@ async function openPair(): Promise<number> {
     yield: (peer) => {
       // The peer asked for the account address and this device has it. Step
       // aside by appending a claim in their name, which both sides can read.
-      storeFor(INDEX).append(CLAIM, claimFor(claimsFromLog(), peer.device, peer.name));
+      addClaim(claimFor(claimsHeld(), peer.device, peer.name));
       wantsAddress = false;
     },
 
