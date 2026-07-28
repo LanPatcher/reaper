@@ -51,10 +51,43 @@ import type { Summary } from "./vector";
  * mid-stream format change that broke the reader.
  *
  * What actually needs establishing is *authorisation* — that the device on the
- * other end is one of yours. That is a password, shared out of band by being
- * shown as a QR code on a screen you are already holding, and proved with an
- * HMAC over a nonce each side chooses. No handshake ordering, no derived
- * stream state: a greeting either carries a valid proof or it does not.
+ * other end is one of yours. That is proved with an HMAC over a nonce each side
+ * chooses. No handshake ordering, no derived stream state: a greeting either
+ * carries a valid proof or it does not.
+ *
+ * ## Two credentials, and why there are two
+ *
+ * There used to be one: a pairing password, typed by the user, kept in a file
+ * next to the private key, and good forever on every device that had it. Three
+ * things were wrong with that, and all three were things people actually hit.
+ *
+ * It could not be revoked. A QR code sealed with it stayed valid until the
+ * password was changed — the "ten minutes" in the interface was a `setTimeout`
+ * that hid the picture, and a photograph of that picture worked a week later.
+ *
+ * It was a file, and on iOS files are written through a debounced flush. Set a
+ * password, force-quit before the flush, and the next launch reports no
+ * password set — which is the "the password becomes invalid after a restart"
+ * that this replaces.
+ *
+ * And it was the same secret for the first link and for every routine sync
+ * afterwards, so the thing that had to be typed on a phone in a hurry was also
+ * the thing standing between anybody who learned it and the whole account.
+ *
+ * So there are two now, with nothing in common but the shape of the proof:
+ *
+ *   - **A one-time invite.** Minted when the user asks for a code, held only in
+ *     memory, carrying its own session id and a hard expiry sealed inside the
+ *     QR. It is consumed by the first device that links with it and it does not
+ *     survive a restart. This is the only credential a device that has never
+ *     been linked can offer, and it is the only one it ever needs.
+ *
+ *   - **The account secret.** Derived from the account's own private key, which
+ *     both devices hold *because* they linked. Nothing is typed, nothing is
+ *     stored, and it is available to exactly the set of devices that already
+ *     have everything it protects. Routine syncs use this.
+ *
+ * A greeting names which one it is using. Everything else is identical.
  */
 
 /** Length prefix plus one flag byte, exactly as the chat transport frames. */
@@ -94,7 +127,7 @@ export const PICTURES = "@avatars";
  *
  * Bumped whenever the shape of anything below changes.
  */
-const PROTOCOL = 1;
+const PROTOCOL = 2;
 
 /** How long a socket may sit idle before it is assumed dead. */
 const IDLE_MS = 120_000;
@@ -107,9 +140,9 @@ const IDLE_MS = 120_000;
  * Deliberately tiny. A QR code holds a few hundred bytes before it becomes
  * dense enough that a phone camera struggles, and the invite has to survive
  * being photographed off a screen at an angle in bad light. So it carries the
- * address to dial and a display name, and nothing else — no keys, no history,
- * no identity material. Everything of substance arrives over the connection
- * the address opens.
+ * address to dial, the id of the invite it belongs to, and when it stops being
+ * good — and nothing else. No keys, no history, no identity material.
+ * Everything of substance arrives over the connection the address opens.
  */
 export interface Invite {
   /** Where to reach the device that produced this. */
@@ -120,6 +153,26 @@ export interface Invite {
 
   /** Salt for the password, so the same password gives a different key twice. */
   salt: string;
+
+  /**
+   * Which invite this is, as lower-case hex.
+   *
+   * The scanning device names it in its greeting and the device that minted it
+   * looks it up. That lookup is the whole of revocation: an invite that has
+   * been consumed, replaced, expired or lost to a restart is simply not there,
+   * and the answer is a refusal that says so rather than a password mismatch.
+   */
+  session: string;
+
+  /**
+   * When this stops being accepted, in milliseconds since the epoch.
+   *
+   * Sealed inside the code rather than only remembered by the minting device,
+   * so the scanning device can say "this code has expired, ask for a new one"
+   * without spending a Tor circuit to find out. The minting device checks it
+   * again anyway — a client-side check is a courtesy, not a control.
+   */
+  expiresAt: number;
 }
 
 /**
@@ -204,8 +257,8 @@ function fromBase32(text: string): Buffer | undefined {
  *   - **No separators and a two-character prefix**, rather than four
  *     dot-delimited fields.
  *
- * What is left is 48 bytes — a salt, the address, and a tag — which is 77
- * characters of base32 and fits comfortably inside version 4.
+ * What is left is 58 bytes — a salt, the address, an expiry, a session id and a
+ * tag — which is 93 characters of base32 and fits inside version 5.
  *
  * It is encrypted rather than merely signed, because an onion address is a
  * routable location and a QR code is displayed on a screen in whatever room
@@ -219,17 +272,60 @@ const ADDRESS_BYTES = 35;
 const SALT_BYTES = 5;
 const TAG_BYTES = 8;
 
-export function sealInvite(invite: Omit<Invite, "salt">, password: string): string {
+/** Unix seconds, big-endian. Four bytes is good until 2106. */
+const EXPIRY_BYTES = 4;
+
+/** Enough that guessing one is not a strategy; short enough to fit. */
+const SESSION_BYTES = 6;
+
+const BODY_BYTES = ADDRESS_BYTES + EXPIRY_BYTES + SESSION_BYTES;
+
+/**
+ * How much clock difference between two devices to tolerate.
+ *
+ * Phones and desktops disagree by seconds routinely and by minutes when one has
+ * been asleep. Refusing a code because the scanning device thinks it is four
+ * minutes later than the device that minted it would be a failure with no cause
+ * a user could find, so the check is deliberately loose at both ends — the
+ * minting device checks it too, against its own clock, which is the one that
+ * actually decides.
+ */
+const CLOCK_SKEW_MS = 120_000;
+
+/** A fresh session id, as lower-case hex. */
+export function newSession(): string {
+  return randomBytes(SESSION_BYTES).toString("hex");
+}
+
+export function sealInvite(
+  invite: Omit<Invite, "salt" | "name"> & { name?: string },
+  password: string,
+): string {
   const address = fromBase32(invite.onion.replace(/\.onion$/i, ""));
 
   if (!address || address.length !== ADDRESS_BYTES) {
     throw new Error("that is not a v3 onion address");
   }
 
+  const session = Buffer.from(invite.session, "hex");
+
+  if (session.length !== SESSION_BYTES) {
+    throw new Error(`a session id is ${SESSION_BYTES} bytes of hex`);
+  }
+
+  const seconds = Math.floor(invite.expiresAt / 1000);
+
+  if (!Number.isFinite(seconds) || seconds <= 0 || seconds > 0xffffffff) {
+    throw new Error("that expiry cannot be represented");
+  }
+
+  const expiry = Buffer.alloc(EXPIRY_BYTES);
+  expiry.writeUInt32BE(seconds);
+
   const salt = randomBytes(SALT_BYTES);
   const key = inviteKey(password, toBase32(salt));
 
-  const body = Buffer.from(address);
+  const body = Buffer.concat([address, expiry, session]);
   const pad = keystream(key, body.length);
   for (let at = 0; at < body.length; at++) body[at] ^= pad[at];
 
@@ -239,38 +335,44 @@ export function sealInvite(invite: Omit<Invite, "salt">, password: string): stri
     .update(salt).update(body)
     .digest().subarray(0, TAG_BYTES);
 
-  return "R1" + toBase32(Buffer.concat([salt, body, tag]));
+  return "R2" + toBase32(Buffer.concat([salt, body, tag]));
 }
 
 /**
  * Read a QR code back, or explain why it cannot be read.
  *
- * The two failures are told apart on purpose. A code that is not a Reaper
- * invite at all means the camera caught something else, and the answer is to
- * scan again. A code that is an invite but will not open means the password is
- * wrong, and the answer is to type it again — a different sentence, and
- * telling someone to rescan a perfectly good code is how they conclude the
- * feature is broken.
+ * The failures are told apart on purpose, because each has a different answer
+ * and giving the wrong one is how somebody concludes the feature is broken:
+ *
+ *   - **not-an-invite** — the camera caught something else, or the code is from
+ *     a build that speaks the old format. Scan again, or update.
+ *   - **wrong-password** — the code is fine. Type the password again.
+ *   - **expired** — both are fine and neither will help. Ask the other device
+ *     for a new code.
+ *
+ * Telling someone to rescan a perfectly good code, or to re-type a perfectly
+ * good password, was the previous behaviour for two of these three.
  */
 export function openInvite(
   code: string,
   password: string,
-): { ok: true; invite: Invite } | { ok: false; reason: "not-an-invite" | "wrong-password" } {
+  now = Date.now(),
+): { ok: true; invite: Invite } | { ok: false; reason: "not-an-invite" | "wrong-password" | "expired" } {
   // Case-insensitive and space-tolerant: a scanner returns what was encoded,
-  // but somebody reading it off a screen will not hold shift for eighty
+  // but somebody reading it off a screen will not hold shift for ninety
   // characters and may well break it into groups.
   const text = code.trim().replace(/\s+/g, "").toUpperCase();
 
-  if (!text.startsWith("R1")) return { ok: false, reason: "not-an-invite" };
+  if (!text.startsWith("R2")) return { ok: false, reason: "not-an-invite" };
 
   const raw = fromBase32(text.slice(2));
-  if (!raw || raw.length < SALT_BYTES + ADDRESS_BYTES + TAG_BYTES) {
+  if (!raw || raw.length < SALT_BYTES + BODY_BYTES + TAG_BYTES) {
     return { ok: false, reason: "not-an-invite" };
   }
 
   const salt = raw.subarray(0, SALT_BYTES);
-  const body = raw.subarray(SALT_BYTES, SALT_BYTES + ADDRESS_BYTES);
-  const given = raw.subarray(SALT_BYTES + ADDRESS_BYTES, SALT_BYTES + ADDRESS_BYTES + TAG_BYTES);
+  const body = raw.subarray(SALT_BYTES, SALT_BYTES + BODY_BYTES);
+  const given = raw.subarray(SALT_BYTES + BODY_BYTES, SALT_BYTES + BODY_BYTES + TAG_BYTES);
 
   const key = inviteKey(password, toBase32(salt));
 
@@ -289,15 +391,24 @@ export function openInvite(
   // means the format changed, not that the password was wrong.
   if (plain[ADDRESS_BYTES - 1] !== 3) return { ok: false, reason: "not-an-invite" };
 
+  const expiresAt = plain.readUInt32BE(ADDRESS_BYTES) * 1000;
+
+  // Reported before dialling. The device that minted this checks it again
+  // against its own clock and that check is the one that decides; this one only
+  // saves a Tor circuit and two minutes of waiting to be told the same thing.
+  if (now > expiresAt + CLOCK_SKEW_MS) return { ok: false, reason: "expired" };
+
   return {
     ok: true,
     invite: {
-      onion: toBase32(plain).toLowerCase() + ".onion",
+      onion: toBase32(plain.subarray(0, ADDRESS_BYTES)).toLowerCase() + ".onion",
       // Deliberately empty. The greeting carries the real one, and inventing a
       // placeholder here would mean the interface showed a name that was never
       // the device's.
       name: "",
       salt: toBase32(salt),
+      session: plain.subarray(ADDRESS_BYTES + EXPIRY_BYTES).toString("hex"),
+      expiresAt,
     },
   };
 }

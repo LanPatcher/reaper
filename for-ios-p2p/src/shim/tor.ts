@@ -22,6 +22,115 @@ import { Socket, proxyReady, setProxyPort } from "./net";
 const CONNECT_TIMEOUT_MS = 45_000;
 
 /**
+ * How long to wait for Tor to open its SOCKS port.
+ *
+ * Generous, because the thing being waited for is a cold Tor bootstrap on a
+ * phone. On wifi that is twenty seconds; on a bad cellular connection it is
+ * well over a minute, and the consensus download in front of it is not
+ * something this app can hurry along.
+ *
+ * The alternative to waiting is what this code used to do — ask once, and
+ * report "Tor has not opened its SOCKS port yet" — which is an accurate
+ * description of a situation that resolves itself in under a minute, delivered
+ * as though it were a permanent fault. It is the single most reported failure
+ * in the device link, and every instance of it was a user pressing Link five
+ * seconds after opening an app that needed sixty.
+ */
+const PROXY_WAIT_MS = 150_000;
+
+/** How often to re-ask while waiting. Cheap: it is a status call, not a probe. */
+const PROXY_POLL_MS = 500;
+
+/**
+ * The ports Tor was last asked to forward to.
+ *
+ * Recorded by `boot.ts` so that anything which finds Tor stopped can start it
+ * again with the same configuration. Without this the only code that knew the
+ * ports was the one boot path, and a device that reached `socksConnect` with
+ * Tor not running had no way to do anything about it.
+ */
+let ports: { localPort: number; syncPort: number } | undefined;
+
+export function rememberPorts(next: { localPort: number; syncPort: number }): void {
+  ports = next;
+}
+
+/**
+ * Start Tor if it is not already running.
+ *
+ * Idempotent — the native side returns early when it is up — and safe to call
+ * from anywhere that needs the network, which is the point. `bridge.ts` calls
+ * `TorService.start()` before dialling a sibling precisely so that linking
+ * works on a device that has not finished starting up, and on this platform
+ * that call used to do nothing at all.
+ */
+async function ensureRunning(): Promise<void> {
+  try {
+    const status = await Tor.status();
+    if (status.running) return;
+  } catch {
+    // No plugin, or not up. Starting is still worth attempting.
+  }
+
+  if (!ports) return;
+
+  try {
+    await Tor.start(ports);
+  } catch {
+    // Reported by the caller, in terms of what it was trying to do.
+  }
+}
+
+/**
+ * Wait for Tor to open its SOCKS port, up to a deadline.
+ *
+ * Returns whether it did. Polling rather than subscribing because the plugin's
+ * `tor` event is already consumed by `boot.ts`, and a second native listener
+ * for a value that is sitting in `status()` is a coordination problem bought
+ * for nothing.
+ */
+export async function waitForProxy(timeoutMs = PROXY_WAIT_MS): Promise<boolean> {
+  if (proxyReady()) return true;
+
+  await ensureRunning();
+
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    if (await adoptProxyPort()) return true;
+    if (Date.now() >= deadline) return false;
+
+    await new Promise((resolve) => setTimeout(resolve, PROXY_POLL_MS));
+  }
+}
+
+/**
+ * How far Tor has got, in a sentence worth showing someone.
+ *
+ * Only ever read when something has already failed, so the cost of a status
+ * call does not matter and the detail does: "still starting up" and "Tor is
+ * not running at all" have completely different answers, and reporting both as
+ * the former is how a device that would never have worked looked like one that
+ * needed another moment.
+ */
+async function whyNotReady(): Promise<string> {
+  try {
+    const status = await Tor.status();
+
+    if (status.error) return `Tor reported an error: ${status.error}`;
+    if (!status.running) return "Tor is not running on this device";
+    if (!status.bootstrapped) {
+      return "Tor is still building its first circuit — this can take a " +
+        "couple of minutes on a phone, especially on cellular";
+    }
+
+    return "Tor is running but has not opened a SOCKS port";
+  } catch (error) {
+    return `Tor could not be reached: ${(error as Error).message}`;
+  }
+}
+
+/**
  * Open a connection to an onion address.
  *
  * Resolves when the circuit is up and the proxy has confirmed the destination,
@@ -33,32 +142,26 @@ const CONNECT_TIMEOUT_MS = 45_000;
  * would have answered is marked unreachable.
  */
 export async function socksConnect(host: string, port: number): Promise<Socket> {
-  // Ask, rather than wait to be told.
+  // Wait, rather than ask once.
   //
   // The SOCKS port used to arrive only in a `ready` event, delivered once when
   // the first circuit is established — and anything that misses that event
-  // never learns the port at all. Every outbound connection then fails
-  // permanently with "Tor is not ready yet" while Tor sits there perfectly
-  // healthy with a published address.
+  // never learns the port at all. Asking `status()` fixed that half; this
+  // fixes the other half, which is that the answer to "is it ready" on a
+  // freshly launched app is *no, not yet*, and the only correct response to
+  // that is to wait for it.
   //
-  // Missing it is not exotic. Reloading the page — which importing an identity
-  // now does — restarts the JavaScript context but not Tor, so `Tor.start`
-  // returns early because it is already running and no event is ever emitted
-  // again. That is exactly what happened: a phone that had imported an
-  // identity could not sync, could not reach a peer, and reported Tor as
-  // connected, because it was.
-  //
-  // The port is in `status()` for the asking, so it is asked for.
-  if (!proxyReady()) await adoptProxyPort();
+  // Missing the event is not exotic either. Reloading the page — which
+  // importing an identity does — restarts the JavaScript context but not Tor,
+  // so `Tor.start` returns early because it is already running and no event is
+  // ever emitted again.
+  const ready = await waitForProxy();
+
+  if (!ready) {
+    throw new Error(await whyNotReady());
+  }
 
   return new Promise((resolve, reject) => {
-    if (!proxyReady()) {
-      reject(new Error(
-        "Tor has not opened its SOCKS port yet — it is still starting up",
-      ));
-      return;
-    }
-
     const socket = new Socket();
     let settled = false;
 
@@ -210,11 +313,33 @@ export class TorService extends EventEmitter {
     super();
   }
 
+  /**
+   * Bring Tor up, and do not return until it can carry an outbound connection.
+   *
+   * This used to be a no-op that reported whatever `status()` happened to say,
+   * on the reasoning that `boot.ts` starts Tor and there is nothing left to
+   * supervise. Both halves of that were wrong in the one case that matters
+   * most.
+   *
+   * `bridge.ts` calls this from `ensureTorClient`, immediately before dialling
+   * a sibling, and it exists for exactly one situation: a device with no
+   * account, sitting on the setup screen, whose entire purpose in that moment
+   * is to reach another device and be given one. On the desktop that call
+   * spawns `tor` and waits for its hostname file, so by the time it returns the
+   * dial will work. Here it returned instantly with `running: false`, the dial
+   * went ahead anyway, and the honest answer came back — "Tor has not opened
+   * its SOCKS port yet" — about a Tor that nothing had started and nothing was
+   * going to.
+   *
+   * So it starts Tor if it is not running, and waits for the SOCKS port before
+   * returning. It does *not* wait for an address: publishing a descriptor takes
+   * another minute or two, this device does not need one to dial out, and
+   * blocking on it would turn a working link into a timeout.
+   */
   async start(): Promise<string | undefined> {
-    // Already running. See `boot.ts` — Tor is started before the store opens,
-    // because the transport needs its SOCKS port the moment it comes up. What
-    // this does is start watching for the address it will eventually publish.
     this.#watch();
+
+    await waitForProxy();
 
     const status = await Tor.status().catch(() => undefined);
 

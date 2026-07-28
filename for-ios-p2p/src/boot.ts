@@ -6,6 +6,7 @@ import { registerP2PHandlers } from "../../for-desktop-p2p/src/p2p/bridge";
 import { invoke } from "./shim/electron";
 import { flush, ready as filesystemReady, heldBytes } from "./shim/fs";
 import { setProxyPort } from "./shim/net";
+import { rememberPorts, waitForProxy } from "./shim/tor";
 import { ready as brotliReady } from "./shim/zlib";
 
 /**
@@ -171,6 +172,29 @@ async function startNetwork(): Promise<void> {
   status.network = "starting";
   announce();
 
+  // The device link listener, first.
+  //
+  // Ordered ahead of the transport deliberately, and it is the fix for the
+  // worst failure this file has had. Everything below used to be arranged so
+  // that a transport that failed to start returned early — and Tor was started
+  // *after* the transport, so a device whose transport failed never started Tor
+  // at all. No Tor means no SOCKS port, and no SOCKS port means every attempt
+  // to link reports "Tor has not opened its SOCKS port yet", permanently, on a
+  // device where nothing was ever going to open it.
+  //
+  // The device link is the one thing that has to work when the rest does not:
+  // a phone with no account has nothing for the transport to carry and its
+  // whole purpose is to reach a sibling and be given one. So it goes up first,
+  // and Tor is started whether or not the transport managed to.
+  let syncPort = 0;
+
+  try {
+    const link = await invoke("p2p:linkOpen") as { port: number };
+    syncPort = link.port;
+  } catch (error) {
+    console.warn("[boot] no device link on this device:", error);
+  }
+
   // One listener, opened by the transport.
   //
   // This used to bind a port here and then let the transport bind another —
@@ -181,27 +205,38 @@ async function startNetwork(): Promise<void> {
   //
   // Asking the transport for its port instead means there is only ever one
   // bind, and nothing to race against.
-  let listening: number;
+  let listening = 0;
+  let transportError: string | undefined;
 
   try {
     const started = await invoke("p2p:netStart", 0) as { port: number };
     listening = started.port;
+
+    if (!listening) {
+      transportError = "the transport reported no port, so peers have nowhere to arrive";
+    }
   } catch (error) {
-    status.network = "failed";
-    status.error = `could not start the transport: ${(error as Error).message}`;
-    announce();
-    return;
+    transportError = `could not start the transport: ${(error as Error).message}`;
   }
 
-  if (!listening) {
-    status.network = "failed";
-    status.error = "the transport reported no port, so Tor has nowhere to forward to";
-    announce();
-    return;
+  if (transportError) {
+    // Recorded, not fatal. Chat will not work until this is resolved, and
+    // saying so is right — but Tor still goes up below, so the device can
+    // still be linked, which is very often the thing that fixes it.
+    status.error = transportError;
+    console.warn("[boot]", transportError);
   }
 
-  status.listening = listening;
+  status.listening = listening || undefined;
   announce();
+
+  if (!listening && !syncPort) {
+    status.network = "failed";
+    status.error = transportError ??
+      "nothing is listening, so Tor has nowhere to forward to";
+    announce();
+    return;
+  }
 
   await Tor.addListener("tor", (event: TorEvent) => {
     switch (event.state) {
@@ -245,30 +280,24 @@ async function startNetwork(): Promise<void> {
     announce();
   });
 
-  // The device link, before Tor rather than after it.
-  //
   // Tor reads its configuration once, at startup, and this device publishes
   // *two* onion services: the account address, and a second one that only the
-  // user's own devices dial. The second has to be told which local port to
-  // forward to, so that port has to exist before Tor is started — and the link
-  // server is what is listening on it.
+  // user's own devices dial. Both have to be told which local port to forward
+  // to, which is why the two listeners above are opened first.
   //
-  // Opened here rather than left to `netStart`'s own background pass, which
-  // runs too late to be included in the configuration. Failing is survivable:
-  // without it this device can still dial its siblings, it just cannot be
-  // dialled by them, and one reachable device in the set is enough for
-  // everything to converge.
-  let syncPort = 0;
+  // When the transport did not come up, the link port stands in for it. That
+  // publishes an account address pointing at the link listener, which will
+  // refuse chat traffic — wrong, and much better than the alternative, which
+  // is not starting Tor and leaving the device unable to be linked or
+  // repaired.
+  const forwardTo = listening || syncPort;
+
+  // So that anything which later finds Tor stopped can start it again with the
+  // same configuration, rather than reporting a port it has no way to open.
+  rememberPorts({ localPort: forwardTo, syncPort: syncPort || forwardTo });
 
   try {
-    const link = await invoke("p2p:linkOpen") as { port: number };
-    syncPort = link.port;
-  } catch (error) {
-    console.warn("[boot] no device link on this device:", error);
-  }
-
-  try {
-    await Tor.start({ localPort: listening, syncPort });
+    await Tor.start({ localPort: forwardTo, syncPort: syncPort || forwardTo });
 
     // Tor may already have been running.
     //
@@ -285,6 +314,25 @@ async function startNetwork(): Promise<void> {
       status.onion = already.onion ?? undefined;
       announce();
     }
+
+    // Keep asking until it answers.
+    //
+    // Neither the event above nor the single status call after it is
+    // guaranteed to land: `start` emits nothing when Tor was already up, and
+    // the status call runs milliseconds after launch, long before a circuit
+    // exists. Between them they covered every case except the ordinary one —
+    // a cold start, where the port appears half a minute later and nothing
+    // was still looking.
+    //
+    // Deliberately not awaited. Startup has no reason to block on this; the
+    // dial path waits for the port itself when it needs it.
+    void waitForProxy().then((ready) => {
+      if (!ready || status.network === "failed") return;
+      if (status.network === "starting" || status.network === "connecting") {
+        status.network = "outbound";
+        announce();
+      }
+    });
   } catch (error) {
     status.network = "failed";
     status.error = `tor: ${(error as Error).message}`;
