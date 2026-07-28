@@ -48,6 +48,27 @@ const SHIM_ALIASES = {
 };
 
 /**
+ * `?worker&inline`, which is a bundler instruction rather than a path.
+ *
+ * Vite compiles the worker and embeds it as a blob. esbuild has never heard of
+ * the suffix and would look for a file with a question mark in its name, so
+ * every test build points it at a stub that throws — which is what `crypto.ts`
+ * expects when there is no worker to be had.
+ *
+ * A resolver rather than an alias, because an alias matches whole specifiers
+ * and the query makes this one awkward to write down twice without them
+ * drifting apart.
+ */
+const workerStub = {
+  name: "worker-stub",
+  setup(build) {
+    build.onResolve({ filter: /scrypt-worker(\.ts)?\?worker&inline$/ }, () => ({
+      path: join(HERE, "src/shim/worker-stub.ts"),
+    }));
+  },
+};
+
+/**
  * The suites, and how each one has to be built.
  *
  * Most of them compare a shim against Node's own implementation, so they are
@@ -166,7 +187,7 @@ try {
 
   const shimCore = await bundle("src/shim/core-entry.ts", "core-shim.mjs", {
     alias: SHIM_ALIASES,
-    plugins: [iosTor],
+    plugins: [iosTor, workerStub],
     packages: "external",
   });
 
@@ -220,7 +241,7 @@ try {
               }
             : {}),
         },
-        plugins: shimmed ? [iosTor] : [],
+        plugins: shimmed ? [iosTor, workerStub] : [workerStub],
 
         // A shimmed build must not leave `node:net` external, or the alias
         // above is ignored and the core quietly uses the real one.

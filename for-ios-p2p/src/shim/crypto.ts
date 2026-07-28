@@ -1,5 +1,7 @@
 import { gcm } from "@noble/ciphers/aes.js";
 import { scrypt as nobleScrypt } from "@noble/hashes/scrypt.js";
+
+import ScryptWorker from "./scrypt-worker.ts?worker&inline";
 import { ed25519, x25519 } from "@noble/curves/ed25519.js";
 import { hkdf as nobleHkdf } from "@noble/hashes/hkdf.js";
 import { sha256 as nobleSha256, sha512 as nobleSha512 } from "@noble/hashes/sha2.js";
@@ -410,21 +412,14 @@ export function scrypt(
     N, r, p,
   };
 
-  let worker: Worker | undefined;
-
-  try {
-    // `new URL(..., import.meta.url)` is the form the bundler recognises: it
-    // emits the worker as its own chunk and rewrites this to point at it.
-    // A string path would resolve against the page at runtime and 404 inside
-    // the app's own scheme.
-    worker = new Worker(new URL("./scrypt-worker.ts", import.meta.url), {
-      type: "module",
-    });
-  } catch {
-    // No workers here — which in practice means Node, running the tests.
-    // Falling back to the synchronous implementation is right in that setting
-    // and would be wrong on a phone; the difference is that nothing in Node is
-    // waiting to draw a frame.
+  // Derived here if there is no worker to be had.
+  //
+  // Node has no `Worker`, which is where the tests run and where blocking a
+  // thread costs nothing. On a device this is also the last resort if the
+  // worker cannot start — slow and alive beats fast and "the key could not be
+  // derived", which is what an error path produced the first time this was
+  // tried.
+  const here = () => {
     queueMicrotask(() => {
       try {
         done(null, scryptSync(passphrase, salt, keylen, settings));
@@ -432,23 +427,51 @@ export function scrypt(
         done(error as Error, Buffer.alloc(0));
       }
     });
+  };
+
+  let worker: Worker | undefined;
+
+  try {
+    // Inlined by the bundler as a blob rather than emitted as a second file.
+    //
+    // The first attempt at this loaded the worker from its own URL, and it
+    // failed on device with "the key could not be derived" — for exactly the
+    // reason written above `inlineDynamicImports` in `vite.config.ts`: this
+    // app is served from a custom scheme, and a second file fetched across it
+    // does not arrive. A blob has no URL to get wrong.
+    worker = new ScryptWorker();
+  } catch {
+    here();
     return;
   }
 
-  worker.onmessage = (event: MessageEvent<{ key?: Uint8Array; error?: string }>) => {
-    worker?.terminate();
+  let settled = false;
 
+  const finish = (error: Error | null, key: Buffer) => {
+    if (settled) return;
+    settled = true;
+    worker?.terminate();
+    done(error, key);
+  };
+
+  worker.onmessage = (event: MessageEvent<{ key?: Uint8Array; error?: string }>) => {
     if (event.data.error) {
-      done(new Error(event.data.error), Buffer.alloc(0));
+      // The worker started and the arithmetic failed, which is not a
+      // scheme problem and will not be fixed by trying again here.
+      finish(new Error(event.data.error), Buffer.alloc(0));
       return;
     }
 
-    done(null, Buffer.from(event.data.key!));
+    finish(null, Buffer.from(event.data.key!));
   };
 
-  worker.onerror = (event: ErrorEvent) => {
+  worker.onerror = () => {
+    // The worker could not run at all. Falling back rather than failing: a
+    // second or two of a frozen interface is worth an account that opens.
+    if (settled) return;
+    settled = true;
     worker?.terminate();
-    done(new Error(event.message || "the key could not be derived"), Buffer.alloc(0));
+    here();
   };
 
   worker.postMessage(work);

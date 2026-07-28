@@ -2,7 +2,19 @@ import { boot, onStatus, type BootStatus } from "./boot";
 import { installBridge, installNative } from "./bridge";
 import { installMobileLayout } from "./mobile";
 
-import "./mobile.css";
+// The phone layout, as text rather than as a side effect.
+//
+// A plain `import "./mobile.css"` asks the bundler to inject a `<style>` into
+// the head at load — and this file then replaces the entire head when it swaps
+// in the interface, which threw that style away. Every phone-layout complaint
+// traced back to that one line: no slide-over, so the menu button toggled a
+// class nothing responded to; no rule hiding the window controls, so they
+// stayed; desktop-sized targets everywhere.
+//
+// Imported as a string and applied *after* the swap instead. There is then
+// nothing to preserve and nothing that can be lost, which is a better
+// guarantee than remembering to carry it across.
+import mobileCss from "./mobile.css?inline";
 
 /**
  * Starting the app.
@@ -137,6 +149,14 @@ async function showInterface(): Promise<void> {
 
   document.head.innerHTML = parsed.head.innerHTML;
   document.body.innerHTML = parsed.body.innerHTML;
+
+  // Last, so it wins on equal specificity — this is a layer of overrides on
+  // top of the interface's own stylesheet, and a rule that arrives first loses
+  // every tie.
+  const layout = document.createElement("style");
+  layout.id = "reaper-mobile";
+  layout.textContent = mobileCss;
+  document.head.appendChild(layout);
 
   // The phone layout goes on before the interface runs, so the first paint is
   // already the right shape rather than a desktop three-column flash.
