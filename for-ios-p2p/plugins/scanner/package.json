@@ -1,0 +1,27 @@
+{
+  "name": "@reaper/scanner",
+  "version": "0.1.0",
+  "description": "Reads a QR code with the camera, using the system's own detector.",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "ios/Sources/",
+    "ReaperScanner.podspec"
+  ],
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

@@ -194,6 +194,14 @@ workflows:
           /usr/libexec/PlistBuddy -c "Delete :NSMicrophoneUsageDescription" "$PLIST" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'Reaper uses the microphone for voice calls. Audio is end-to-end encrypted and never leaves your device unencrypted.'" "$PLIST"
 
+          # Camera access, for reading the QR code that pairs two of your own
+          # devices. Same failure mode as the microphone: an app that opens a
+          # capture session without a usage description is terminated by the
+          # system, and the reason appears in a crash log rather than anywhere
+          # the person holding the phone can see it.
+          /usr/libexec/PlistBuddy -c "Delete :NSCameraUsageDescription" "$PLIST" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'Reaper uses the camera to scan the pairing code shown on your other device. Nothing is photographed or stored.'" "$PLIST"
+
           # Local networking, for the loopback listener the Tor client forwards
           # onion traffic to.
           /usr/libexec/PlistBuddy -c "Delete :NSLocalNetworkUsageDescription" "$PLIST" 2>/dev/null || true

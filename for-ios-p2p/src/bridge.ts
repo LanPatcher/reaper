@@ -1,3 +1,5 @@
+import { Scanner } from "@reaper/scanner";
+
 import { invoke, subscribe } from "./shim/electron";
 
 /**
@@ -108,6 +110,22 @@ export function installNative(): void {
 
     onceScreenPicker: () => {},
     screenPickerCallback: () => {},
+
+    /**
+     * Read a QR code with the camera.
+     *
+     * Only present on this platform, and the interface checks for it before
+     * offering the button — a desktop gets no scan control at all rather than
+     * a disabled one, which is a question the user would have to answer for
+     * themselves.
+     *
+     * Resolves with null when the camera is closed without finding anything,
+     * which is an ordinary outcome. Only a refused permission rejects.
+     */
+    scanQr: async (): Promise<string | null> => {
+      const found = await Scanner.scan();
+      return found.text ?? null;
+    },
   };
 
   (globalThis as Record<string, unknown>).desktopConfig = {

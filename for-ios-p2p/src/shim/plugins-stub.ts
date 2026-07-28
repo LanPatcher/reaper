@@ -40,6 +40,10 @@ export const Tor = {
   addListener: async () => ({ remove: async () => {} }),
 };
 
+export const Scanner = {
+  scan: unavailable("Scanner.scan"),
+};
+
 export const Keepalive = {
   start: async () => ({ running: false }),
   stop: async () => ({ running: false }),

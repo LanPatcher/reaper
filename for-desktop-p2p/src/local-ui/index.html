@@ -283,13 +283,32 @@
        * left the top of the window as soon as you moved down a long pane, and
        * the buttons at the bottom went with it — so switching tab or saving
        * meant scrolling back to find the control. */
-      .tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin-bottom: -4px; flex-shrink: 0; overflow-x: auto; }
-      .tabs button {
-        padding: 8px 12px; font-size: 13px; color: var(--dim); white-space: nowrap;
-        border-bottom: 2px solid transparent; margin-bottom: -1px;
+      /* Tabs down the side rather than across the top.
+       *
+       * A strip of eight tabs across a 520px dialog overflows, and an
+       * overflowing flex row scrolls in *both* directions — a horizontal bar
+       * for the tabs that do not fit and a vertical one for a couple of pixels
+       * of negative margin. Two scrollbars on one row of buttons, one of which
+       * does nothing.
+       *
+       * A column has room for the names, needs no scrolling at all at this
+       * count, and puts every section in view at once. */
+      .tabbedBody { display: flex; gap: 14px; flex: 1; min-height: 0; }
+      .tabs {
+        display: flex; flex-direction: column; gap: 2px; flex-shrink: 0;
+        width: 136px; border-right: 1px solid var(--line); padding-right: 6px;
+        overflow-y: auto; overflow-x: hidden;
       }
-      .tabs button:hover { color: var(--text); }
-      .tabs button.on { color: var(--text); border-bottom-color: var(--accent); }
+      .tabs button {
+        padding: 8px 10px; font-size: 13px; color: var(--dim);
+        text-align: left; white-space: nowrap; border-radius: 6px;
+        border-left: 2px solid transparent;
+      }
+      .tabs button:hover { color: var(--text); background: rgba(255,255,255,.03); }
+      .tabs button.on {
+        color: var(--text); border-left-color: var(--accent);
+        background: rgba(255,255,255,.05);
+      }
       .panes { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 2px; }
       .panes > .pane { display: none; flex-direction: column; gap: 14px; }
       .panes > .pane.on { display: flex; }
@@ -1342,6 +1361,12 @@
             "Discarded": "Descartado",
             "Do not disturb": "No molestar",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "No uses la misma identidad en dos máquinas a la vez — ambas firmarían como la misma persona, y eso ya no se puede deshacer.",
+            "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Este dispositivo aún no tiene dirección de sincronización — Tor todavía la está publicando. Suele tardar un par de minutos tras arrancar. Mientras tanto puedes copiar desde el otro dispositivo.",
+            "Scan this on your other device, or copy the address.": "Escanea esto en tu otro dispositivo, o copia la dirección.",
+            "Scan a QR code": "Escanear un código QR",
+            "Restored {n} entries — {friends} friend(s) and {servers} server(s).": "Restauradas {n} entradas — {friends} amistad(es) y {servers} servidor(es).",
+            "That file carried your key but no friends, servers or settings. It was written by an older version, or exported before you had any.": "Ese archivo traía tu clave pero ninguna amistad, servidor ni ajuste. Lo escribió una versión anterior, o se exportó antes de que tuvieras alguno.",
+            "Reload": "Recargar",
             "Your other devices do not know about this yet.": "Tus otros dispositivos todavía no saben esto.",
             "This backup knows where the device it came from can be reached. Catching up now brings over anything added since it was written — friends, servers, group chats and anything still waiting to send.": "Esta copia sabe dónde localizar el dispositivo del que salió. Ponerse al día ahora trae todo lo añadido desde que se escribió — amistades, servidores, chats de grupo y lo que siga pendiente de enviar.",
             "Catch up now": "Ponerse al día",
@@ -2012,6 +2037,12 @@
             "Discarded": "Abandonné",
             "Do not disturb": "Ne pas déranger",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "N'utilisez pas la même identité sur deux machines à la fois — les deux signeraient comme la même personne, et rien ne peut le démêler ensuite.",
+            "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Cet appareil n'a pas encore d'adresse de synchronisation — Tor est en train de la publier. Cela prend généralement une minute ou deux après le démarrage. Vous pouvez copier depuis l'autre appareil entre-temps.",
+            "Scan this on your other device, or copy the address.": "Scannez ceci sur votre autre appareil, ou copiez l'adresse.",
+            "Scan a QR code": "Scanner un code QR",
+            "Restored {n} entries — {friends} friend(s) and {servers} server(s).": "{n} entrées restaurées — {friends} ami(s) et {servers} serveur(s).",
+            "That file carried your key but no friends, servers or settings. It was written by an older version, or exported before you had any.": "Ce fichier contenait votre clé mais aucun ami, serveur ni réglage. Il a été écrit par une version antérieure, ou exporté avant que vous n'en ayez.",
+            "Reload": "Recharger",
             "Your other devices do not know about this yet.": "Vos autres appareils ne le savent pas encore.",
             "This backup knows where the device it came from can be reached. Catching up now brings over anything added since it was written — friends, servers, group chats and anything still waiting to send.": "Cette sauvegarde sait où joindre l'appareil dont elle provient. Se mettre à jour maintenant récupère tout ce qui a été ajouté depuis — amis, serveurs, discussions de groupe et ce qui attend encore d'être envoyé.",
             "Catch up now": "Se mettre à jour",
@@ -2682,6 +2713,12 @@
             "Discarded": "Verworfen",
             "Do not disturb": "Bitte nicht stören",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "Verwende dieselbe Identität nicht auf zwei Rechnern gleichzeitig — beide würden als dieselbe Person signieren, und das lässt sich danach nicht mehr entwirren.",
+            "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Dieses Gerät hat noch keine Sync-Adresse — Tor veröffentlicht sie gerade. Das dauert nach dem Start meist ein bis zwei Minuten. In der Zwischenzeit kannst du vom anderen Gerät aus kopieren.",
+            "Scan this on your other device, or copy the address.": "Scanne das auf deinem anderen Gerät, oder kopiere die Adresse.",
+            "Scan a QR code": "QR-Code scannen",
+            "Restored {n} entries — {friends} friend(s) and {servers} server(s).": "{n} Einträge wiederhergestellt — {friends} Freund(e) und {servers} Server.",
+            "That file carried your key but no friends, servers or settings. It was written by an older version, or exported before you had any.": "Diese Datei enthielt deinen Schlüssel, aber keine Freunde, Server oder Einstellungen. Sie stammt aus einer älteren Version oder wurde exportiert, bevor es welche gab.",
+            "Reload": "Neu laden",
             "Your other devices do not know about this yet.": "Deine anderen Geräte wissen davon noch nichts.",
             "This backup knows where the device it came from can be reached. Catching up now brings over anything added since it was written — friends, servers, group chats and anything still waiting to send.": "Diese Sicherung weiß, wo das Gerät zu erreichen ist, von dem sie stammt. Jetzt nachzuholen bringt alles mit, was seitdem dazugekommen ist — Freunde, Server, Gruppenchats und alles, was noch auf den Versand wartet.",
             "Catch up now": "Jetzt nachholen",
@@ -3352,6 +3389,12 @@
             "Discarded": "Descartado",
             "Do not disturb": "Não incomodar",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "Não uses a mesma identidade em duas máquinas ao mesmo tempo — ambas assinariam como a mesma pessoa, e isso não se desfaz depois.",
+            "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Este dispositivo ainda não tem endereço de sincronização — o Tor ainda o está a publicar. Costuma demorar um ou dois minutos depois de arrancar. Entretanto podes copiar a partir do outro dispositivo.",
+            "Scan this on your other device, or copy the address.": "Lê isto no teu outro dispositivo, ou copia o endereço.",
+            "Scan a QR code": "Ler um código QR",
+            "Restored {n} entries — {friends} friend(s) and {servers} server(s).": "Restauradas {n} entradas — {friends} amigo(s) e {servers} servidor(es).",
+            "That file carried your key but no friends, servers or settings. It was written by an older version, or exported before you had any.": "Esse ficheiro trazia a tua chave mas nenhum amigo, servidor ou definição. Foi escrito por uma versão anterior, ou exportado antes de teres algum.",
+            "Reload": "Recarregar",
             "Your other devices do not know about this yet.": "Os teus outros dispositivos ainda não sabem disto.",
             "This backup knows where the device it came from can be reached. Catching up now brings over anything added since it was written — friends, servers, group chats and anything still waiting to send.": "Esta cópia sabe onde encontrar o dispositivo de onde veio. Pôr em dia agora traz tudo o que foi acrescentado desde então — amigos, servidores, conversas de grupo e o que ainda espera para ser enviado.",
             "Catch up now": "Pôr em dia",
@@ -4473,12 +4516,19 @@
       function tabbed(card) {
         card.classList.add("tabbed");
 
+        // Wrapped, so the tabs and the panes can sit side by side without
+        // the dialog's own buttons — which are appended to `card` after this —
+        // being dragged into the same row.
+        var body = document.createElement("div");
+        body.className = "tabbedBody";
+        card.appendChild(body);
+
         var strip = document.createElement("div");
         strip.className = "tabs";
         var panes = document.createElement("div");
         panes.className = "panes";
-        card.appendChild(strip);
-        card.appendChild(panes);
+        body.appendChild(strip);
+        body.appendChild(panes);
 
         var made = {};
 
@@ -10290,6 +10340,23 @@
                   : t("Now signed in as {id}. Restart Reaper to finish — the old identity is still loaded in memory.", { id: res.userId });
                 c2.appendChild(m);
 
+                // What actually came back.
+                //
+                // A restore that returns the right user id and an empty
+                // friends list looks exactly like one that worked — that is
+                // how an empty account shipped, and how it went unnoticed
+                // until somebody went looking for a friend who was not there.
+                // Counted at the source and stated here, so the failure is
+                // visible at the moment it happens rather than a day later.
+                var w = document.createElement("div");
+                w.className = res.restored ? "muted" : "warn";
+                w.textContent = res.restored
+                  ? t("Restored {n} entries — {friends} friend(s) and {servers} server(s).", {
+                      n: res.restored, friends: res.friends, servers: res.servers,
+                    })
+                  : t("That file carried your key but no friends, servers or settings. It was written by an older version, or exported before you had any.");
+                c2.appendChild(w);
+
                 // Whether the address came across decides whether old friend
                 // codes still reach this person, so it is reported as a fact
                 // rather than left to be discovered.
@@ -10343,13 +10410,532 @@
                   c2.appendChild(skip);
                 }
 
-                buttons(c2, t("Close"), closeModal);
+                // Reloaded rather than closed.
+                //
+                // The import writes the restored account to disk and stops
+                // there. Everything on screen — the friends list, the servers,
+                // the profile — was read into memory when the app started, and
+                // none of it is re-read, so a successful restore leaves the
+                // interface showing the empty account it started with. On a
+                // desktop the instruction to restart papers over that; on a
+                // phone there is no restart to perform, and the result reads
+                // as a restore that brought nothing.
+                //
+                // Reloading re-runs startup against what was just written,
+                // which is the same thing a restart does and is available on
+                // both platforms.
+                buttons(c2, t("Reload"), function () {
+                  location.reload();
+                });
               });
             } catch (e) {
               err.textContent = String((e && e.message) || e);
             }
           });
         });
+      }
+
+      // ===================================================================
+      // QR codes
+      //
+      // Written out rather than pulled in, for one reason that decides it:
+      // this interface is a single file with no build step and no module
+      // loader, shared by the desktop and the phone. There is nowhere for a
+      // dependency to go that does not mean inventing a bundling step for the
+      // one file that deliberately does not have one.
+      //
+      // Deliberately narrow. Byte mode, error correction level L, versions one
+      // to six — which tops out at 134 bytes, and everything encoded here is a
+      // 62-character onion address or a short link containing one. Stopping at
+      // six also means no version information blocks, which only exist from
+      // seven up: a whole section of the specification that would be written,
+      // never exercised, and wrong.
+      //
+      // Checked against a reference implementation rather than by eye. See
+      // `qr.test.ts`, which holds matrices generated by the `qrcode` package
+      // and compares module for module.
+      // ===================================================================
+
+      // Total data codewords and error-correction codewords per block, for
+      // level L. Index is version - 1.
+      var QR_SPEC = [
+        { data: 19, ec: 7, blocks: [19] },
+        { data: 34, ec: 10, blocks: [34] },
+        { data: 55, ec: 15, blocks: [55] },
+        { data: 80, ec: 20, blocks: [80] },
+        { data: 108, ec: 26, blocks: [108] },
+        { data: 136, ec: 18, blocks: [68, 68] },
+      ];
+
+      // Where the alignment patterns go, per version. Version one has none.
+      var QR_ALIGN = [[], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34]];
+
+      // The fifteen format bits for level L, one per mask. Constant, so they
+      // are written down rather than computed with a BCH encoder that would be
+      // eight times the size of the table it produces.
+      var QR_FORMAT = [
+        0x77c4, 0x72f3, 0x7daa, 0x789d,
+        0x662f, 0x6318, 0x6c41, 0x6976,
+      ];
+
+      // ---- the field the error correction lives in ---------------------
+      //
+      // GF(256) with the QR generator polynomial. Logs and antilogs are built
+      // once so multiplication is two lookups and an addition.
+      var QR_EXP = new Array(512);
+      var QR_LOG = new Array(256);
+
+      (function () {
+        var x = 1;
+        for (var i = 0; i < 255; i++) {
+          QR_EXP[i] = x;
+          QR_LOG[x] = i;
+          x <<= 1;
+          if (x & 0x100) x ^= 0x11d;
+        }
+        for (var j = 255; j < 512; j++) QR_EXP[j] = QR_EXP[j - 255];
+      })();
+
+      function qrMul(a, b) {
+        if (a === 0 || b === 0) return 0;
+        return QR_EXP[QR_LOG[a] + QR_LOG[b]];
+      }
+
+      /** The generator polynomial for `count` error-correction codewords. */
+      function qrGenerator(count) {
+        var poly = [1];
+        for (var i = 0; i < count; i++) {
+          var next = new Array(poly.length + 1).fill(0);
+          for (var j = 0; j < poly.length; j++) {
+            next[j] ^= qrMul(poly[j], 1);
+            next[j + 1] ^= qrMul(poly[j], QR_EXP[i]);
+          }
+          poly = next;
+        }
+        return poly;
+      }
+
+      /** Remainder of `data` divided by the generator — the check codewords. */
+      function qrRemainder(data, count) {
+        var gen = qrGenerator(count);
+        var out = data.slice().concat(new Array(count).fill(0));
+
+        for (var i = 0; i < data.length; i++) {
+          var lead = out[i];
+          if (!lead) continue;
+          for (var j = 0; j < gen.length; j++) {
+            out[i + j] ^= qrMul(gen[j], lead);
+          }
+        }
+
+        return out.slice(data.length);
+      }
+
+      // ---- the bit stream ------------------------------------------------
+
+      function qrEncode(text) {
+        var bytes = [];
+        for (var i = 0; i < text.length; i++) {
+          var code = text.charCodeAt(i);
+          if (code < 0x80) bytes.push(code);
+          else if (code < 0x800) {
+            bytes.push(0xc0 | (code >> 6), 0x80 | (code & 63));
+          } else {
+            bytes.push(
+              0xe0 | (code >> 12),
+              0x80 | ((code >> 6) & 63),
+              0x80 | (code & 63),
+            );
+          }
+        }
+
+        // The smallest version that holds it. Byte mode spends four bits on
+        // the mode and eight on the length below version ten, so the payload
+        // is the data capacity less two codewords.
+        var version = 0;
+        for (var v = 0; v < QR_SPEC.length; v++) {
+          if (bytes.length + 2 <= QR_SPEC[v].data) { version = v + 1; break; }
+        }
+        if (!version) throw new Error("too much for a QR code this size");
+
+        var spec = QR_SPEC[version - 1];
+        var bits = [];
+
+        var push = function (value, width) {
+          for (var b = width - 1; b >= 0; b--) bits.push((value >> b) & 1);
+        };
+
+        push(4, 4);                    // byte mode
+        push(bytes.length, 8);         // length, eight bits below version ten
+        for (var k = 0; k < bytes.length; k++) push(bytes[k], 8);
+
+        // Terminator, then pad to a whole codeword, then the two alternating
+        // pad bytes the specification names.
+        var capacity = spec.data * 8;
+        // Not `t`: that name belongs to the translation helper, and `var` is
+        // function-scoped, so a loop counter called `t` here would shadow it
+        // for the whole function. See `membership-ui.test.ts`, which caught
+        // this — the same mistake once left three dialogs without buttons.
+        for (var stop = 0; stop < 4 && bits.length < capacity; stop++) bits.push(0);
+        while (bits.length % 8) bits.push(0);
+
+        var pad = [0xec, 0x11];
+        var at = 0;
+        while (bits.length < capacity) { push(pad[at++ % 2], 8); }
+
+        var codewords = [];
+        for (var c = 0; c < bits.length; c += 8) {
+          var byte = 0;
+          for (var d = 0; d < 8; d++) byte = (byte << 1) | bits[c + d];
+          codewords.push(byte);
+        }
+
+        // ---- blocks, and the interleave -----------------------------------
+        var dataBlocks = [];
+        var ecBlocks = [];
+        var taken = 0;
+
+        for (var b2 = 0; b2 < spec.blocks.length; b2++) {
+          var size = spec.blocks[b2];
+          var block = codewords.slice(taken, taken + size);
+          taken += size;
+
+          dataBlocks.push(block);
+          ecBlocks.push(qrRemainder(block, spec.ec));
+        }
+
+        var stream = [];
+        var longest = Math.max.apply(null, spec.blocks);
+
+        for (var col = 0; col < longest; col++) {
+          for (var bl = 0; bl < dataBlocks.length; bl++) {
+            if (col < dataBlocks[bl].length) stream.push(dataBlocks[bl][col]);
+          }
+        }
+        for (var ecc = 0; ecc < spec.ec; ecc++) {
+          for (var bl2 = 0; bl2 < ecBlocks.length; bl2++) {
+            stream.push(ecBlocks[bl2][ecc]);
+          }
+        }
+
+        return qrDraw(version, stream);
+      }
+
+      // ---- the grid --------------------------------------------------------
+
+      function qrDraw(version, stream) {
+        var size = version * 4 + 17;
+
+        var modules = [];
+        var reserved = [];
+        for (var r = 0; r < size; r++) {
+          modules.push(new Array(size).fill(0));
+          reserved.push(new Array(size).fill(false));
+        }
+
+        var setFixed = function (row, col, value) {
+          modules[row][col] = value;
+          reserved[row][col] = true;
+        };
+
+        // Finders, and the separator around each.
+        var finder = function (top, left) {
+          for (var y = -1; y <= 7; y++) {
+            for (var x = -1; x <= 7; x++) {
+              var row = top + y;
+              var col = left + x;
+              if (row < 0 || col < 0 || row >= size || col >= size) continue;
+
+              var edge = (x >= 0 && x <= 6 && (y === 0 || y === 6)) ||
+                (y >= 0 && y <= 6 && (x === 0 || x === 6));
+              var core = x >= 2 && x <= 4 && y >= 2 && y <= 4;
+
+              setFixed(row, col, edge || core ? 1 : 0);
+            }
+          }
+        };
+
+        finder(0, 0);
+        finder(0, size - 7);
+        finder(size - 7, 0);
+
+        // Timing.
+        for (var i = 8; i < size - 8; i++) {
+          setFixed(6, i, i % 2 === 0 ? 1 : 0);
+          setFixed(i, 6, i % 2 === 0 ? 1 : 0);
+        }
+
+        // Alignment, everywhere the centres do not collide with a finder.
+        var centres = QR_ALIGN[version - 1];
+        for (var a = 0; a < centres.length; a++) {
+          for (var b = 0; b < centres.length; b++) {
+            var cy = centres[a];
+            var cx = centres[b];
+            if (reserved[cy][cx]) continue;
+
+            for (var dy = -2; dy <= 2; dy++) {
+              for (var dx = -2; dx <= 2; dx++) {
+                var on = Math.max(Math.abs(dy), Math.abs(dx)) !== 1;
+                setFixed(cy + dy, cx + dx, on ? 1 : 0);
+              }
+            }
+          }
+        }
+
+        // The dark module, and the space the format bits will occupy.
+        setFixed(size - 8, 8, 1);
+
+        for (var f = 0; f < 9; f++) {
+          if (!reserved[8][f]) { modules[8][f] = 0; reserved[8][f] = true; }
+          if (!reserved[f][8]) { modules[f][8] = 0; reserved[f][8] = true; }
+        }
+        for (var g = 0; g < 8; g++) {
+          if (!reserved[8][size - 1 - g]) {
+            modules[8][size - 1 - g] = 0; reserved[8][size - 1 - g] = true;
+          }
+          if (!reserved[size - 1 - g][8]) {
+            modules[size - 1 - g][8] = 0; reserved[size - 1 - g][8] = true;
+          }
+        }
+
+        // ---- the payload, up the right-hand side in a boustrophedon --------
+        var bit = 0;
+        var total = stream.length * 8;
+        var upward = true;
+
+        for (var col2 = size - 1; col2 > 0; col2 -= 2) {
+          if (col2 === 6) col2--;   // the vertical timing line is skipped
+
+          for (var step = 0; step < size; step++) {
+            var row2 = upward ? size - 1 - step : step;
+
+            for (var side = 0; side < 2; side++) {
+              var x2 = col2 - side;
+              if (reserved[row2][x2]) continue;
+
+              var value = 0;
+              if (bit < total) {
+                value = (stream[bit >> 3] >> (7 - (bit & 7))) & 1;
+                bit++;
+              }
+              modules[row2][x2] = value;
+            }
+          }
+
+          upward = !upward;
+        }
+
+        // ---- masking -------------------------------------------------------
+        var best = null;
+        var bestScore = Infinity;
+
+        for (var mask = 0; mask < 8; mask++) {
+          var candidate = qrApplyMask(modules, reserved, mask, size);
+          qrWriteFormat(candidate, mask, size);
+
+          var score = qrPenalty(candidate, size);
+          if (score < bestScore) { bestScore = score; best = candidate; }
+        }
+
+        return best;
+      }
+
+      function qrMaskAt(mask, row, col) {
+        switch (mask) {
+          case 0: return (row + col) % 2 === 0;
+          case 1: return row % 2 === 0;
+          case 2: return col % 3 === 0;
+          case 3: return (row + col) % 3 === 0;
+          case 4: return (Math.floor(row / 2) + Math.floor(col / 3)) % 2 === 0;
+          case 5: return ((row * col) % 2) + ((row * col) % 3) === 0;
+          case 6: return (((row * col) % 2) + ((row * col) % 3)) % 2 === 0;
+          default: return (((row + col) % 2) + ((row * col) % 3)) % 2 === 0;
+        }
+      }
+
+      function qrApplyMask(modules, reserved, mask, size) {
+        var out = [];
+        for (var r = 0; r < size; r++) {
+          out.push(modules[r].slice());
+          for (var c = 0; c < size; c++) {
+            if (reserved[r][c]) continue;
+            if (qrMaskAt(mask, r, c)) out[r][c] ^= 1;
+          }
+        }
+        return out;
+      }
+
+      /**
+       * The fifteen format bits, twice.
+       *
+       * Two details here were wrong for a while and neither shows as anything
+       * a person would notice — the picture looks like a QR code and no
+       * scanner will read it, because the format is the first thing read and a
+       * reader gives up before it reaches the data.
+       *
+       * The bits go **most significant first**: position `i` carries bit
+       * `14 - i`. Written the other way round the code is a valid-looking
+       * grid that decodes to a different error-correction level and mask, and
+       * therefore to nothing.
+       *
+       * And the second copy splits after *seven*, not eight: bits 0 to 6 climb
+       * the column beside the bottom-left finder, and 7 to 14 run along the
+       * row under the top-right one. Splitting at eight puts one bit in the
+       * wrong place, which is a single module out of several hundred.
+       *
+       * Derived from a reference implementation's output rather than from
+       * memory, and pinned by `qr.test.ts` so it stays that way.
+       */
+      function qrWriteFormat(modules, mask, size) {
+        var bits = QR_FORMAT[mask];
+
+        for (var i = 0; i < 15; i++) {
+          var on = (bits >> (14 - i)) & 1;
+
+          // Around the top-left finder.
+          if (i < 6) modules[8][i] = on;
+          else if (i === 6) modules[8][7] = on;
+          else if (i === 7) modules[8][8] = on;
+          else if (i === 8) modules[7][8] = on;
+          else modules[14 - i][8] = on;
+
+          // And split between the other two.
+          if (i < 7) modules[size - 1 - i][8] = on;
+          else modules[8][size - 15 + i] = on;
+        }
+
+        // Always dark, always here. Not part of the format bits despite
+        // sitting in the middle of them.
+        modules[size - 8][8] = 1;
+      }
+
+      function qrPenalty(modules, size) {
+        var score = 0;
+        var r, c, run, dark = 0;
+
+        // Runs of five or more, in both directions.
+        for (r = 0; r < size; r++) {
+          run = 1;
+          for (c = 1; c < size; c++) {
+            if (modules[r][c] === modules[r][c - 1]) run++;
+            else { if (run >= 5) score += run - 2; run = 1; }
+          }
+          if (run >= 5) score += run - 2;
+        }
+        for (c = 0; c < size; c++) {
+          run = 1;
+          for (r = 1; r < size; r++) {
+            if (modules[r][c] === modules[r - 1][c]) run++;
+            else { if (run >= 5) score += run - 2; run = 1; }
+          }
+          if (run >= 5) score += run - 2;
+        }
+
+        // Two-by-two blocks of one colour.
+        for (r = 0; r < size - 1; r++) {
+          for (c = 0; c < size - 1; c++) {
+            var v = modules[r][c];
+            if (v === modules[r][c + 1] && v === modules[r + 1][c] &&
+                v === modules[r + 1][c + 1]) score += 3;
+          }
+        }
+
+        // The finder-like sequence, which a scanner could mistake for one.
+        //
+        // The specification is exact about this and it is easy to approximate
+        // wrongly: it is the eleven-module run `10111010000` or its mirror,
+        // not the seven-module core with "some light nearby". Approximating it
+        // scores different masks differently, a different mask wins, and every
+        // module in the result changes — which is why the first version of
+        // this disagreed with a reference implementation on half its output
+        // while looking entirely reasonable.
+        var FINDERISH = [
+          [1, 0, 1, 1, 1, 0, 1, 0, 0, 0, 0],
+          [0, 0, 0, 0, 1, 0, 1, 1, 1, 0, 1],
+        ];
+
+        var runs = function (get) {
+          var hits = 0;
+          for (var i = 0; i + 11 <= size; i++) {
+            for (var p = 0; p < 2; p++) {
+              var ok = true;
+              for (var j = 0; j < 11; j++) {
+                if (get(i + j) !== FINDERISH[p][j]) { ok = false; break; }
+              }
+              if (ok) hits++;
+            }
+          }
+          return hits;
+        };
+
+        for (r = 0; r < size; r++) {
+          score += 40 * runs((function (row) {
+            return function (i) { return modules[row][i]; };
+          })(r));
+        }
+        for (c = 0; c < size; c++) {
+          score += 40 * runs((function (col) {
+            return function (i) { return modules[i][col]; };
+          })(c));
+        }
+
+        // How far from an even split of light and dark.
+        for (r = 0; r < size; r++) {
+          for (c = 0; c < size; c++) dark += modules[r][c];
+        }
+        // Written as integers rather than as a percentage, because the
+        // rounding is what decides ties between masks and floating point puts
+        // a different mask on top for a handful of inputs.
+        var total = size * size;
+        var k = Math.ceil(Math.abs(dark * 20 - total * 10) / total) - 1;
+        score += Math.max(0, k) * 10;
+
+        return score;
+      }
+
+      /**
+       * A QR code as an `<svg>`, sized to fit its container.
+       *
+       * SVG rather than a canvas so it stays sharp at any size and survives
+       * being screenshotted, which is how half of these will actually be
+       * moved between devices.
+       */
+      function qrElement(text, pixels) {
+        var modules = qrEncode(text);
+        var size = modules.length;
+        var quiet = 4;
+        var span = size + quiet * 2;
+
+        var parts = [];
+        for (var r = 0; r < size; r++) {
+          for (var c = 0; c < size; c++) {
+            if (modules[r][c]) {
+              parts.push("M" + (c + quiet) + " " + (r + quiet) + "h1v1h-1z");
+            }
+          }
+        }
+
+        var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("viewBox", "0 0 " + span + " " + span);
+        svg.setAttribute("width", String(pixels || 200));
+        svg.setAttribute("height", String(pixels || 200));
+        svg.setAttribute("shape-rendering", "crispEdges");
+
+        // A light quiet zone, always. A QR code on a dark background with no
+        // margin is one most scanners will not see at all, and this interface
+        // is dark everywhere.
+        var bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        bg.setAttribute("width", String(span));
+        bg.setAttribute("height", String(span));
+        bg.setAttribute("fill", "#ffffff");
+        svg.appendChild(bg);
+
+        var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", parts.join(""));
+        path.setAttribute("fill", "#000000");
+        svg.appendChild(path);
+
+        return svg;
       }
 
       // ===================================================================
@@ -10638,28 +11224,81 @@
             t("Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.");
           card.appendChild(far);
 
-          if (devices && devices.syncOnion) {
-            var mineAddr = document.createElement("div");
-            mineAddr.className = "code";
-            mineAddr.style.cssText = "word-break:break-all;font-size:11px";
-            mineAddr.textContent = devices.syncOnion;
-            card.appendChild(mineAddr);
+          // This device's address, shown whether or not it is ready.
+          //
+          // It used to appear only once Tor had published it, which meant the
+          // usual first experience was a screen with no address on it and
+          // nothing saying why — indistinguishable from a feature that does
+          // not work. Publishing a second onion service takes a minute or two
+          // from a cold start, and saying so is the whole difference.
+          var mineWrap = document.createElement("div");
+          mineWrap.style.cssText =
+            "display:flex;gap:12px;align-items:center;margin:8px 0;flex-wrap:wrap";
+          card.appendChild(mineWrap);
+
+          var qrBox = document.createElement("div");
+          qrBox.style.cssText =
+            "background:#fff;border-radius:8px;padding:6px;line-height:0;flex:0 0 auto";
+          mineWrap.appendChild(qrBox);
+
+          var mineText = document.createElement("div");
+          mineText.style.cssText = "flex:1 1 200px;min-width:0";
+          mineWrap.appendChild(mineText);
+
+          function drawMine() {
+            qrBox.textContent = "";
+            mineText.textContent = "";
+
+            var address = devices && devices.syncOnion;
+
+            if (!address) {
+              qrBox.style.display = "none";
+
+              var waiting = document.createElement("div");
+              waiting.className = "muted";
+              waiting.style.fontSize = "12px";
+              waiting.textContent =
+                t("This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.");
+              mineText.appendChild(waiting);
+              return;
+            }
+
+            qrBox.style.display = "block";
+            qrBox.appendChild(qrElement(address.toUpperCase(), 148));
+
+            var label = document.createElement("div");
+            label.className = "muted";
+            label.style.fontSize = "11px";
+            label.textContent = t("Scan this on your other device, or copy the address.");
+            mineText.appendChild(label);
+
+            var code = document.createElement("div");
+            code.className = "code";
+            code.style.cssText = "word-break:break-all;font-size:11px;margin:6px 0";
+            code.textContent = address;
+            mineText.appendChild(code);
 
             var copyAddr = document.createElement("button");
             copyAddr.className = "ghost";
             copyAddr.textContent = t("Copy this device's sync address");
             copyAddr.onclick = function () {
-              navigator.clipboard.writeText(devices.syncOnion);
+              navigator.clipboard.writeText(address);
               copyAddr.textContent = t("Copied");
               setTimeout(function () {
                 copyAddr.textContent = t("Copy this device's sync address");
               }, 1200);
             };
-            card.appendChild(copyAddr);
+            mineText.appendChild(copyAddr);
           }
+
+          drawMine();
 
           var other = textRow(card, t("Or enter the other device's sync address"),
             "", "…….onion");
+
+          var dialRow = document.createElement("div");
+          dialRow.className = "mrow";
+          card.appendChild(dialRow);
 
           var dial = document.createElement("button");
           dial.className = "ghost";
@@ -10675,12 +11314,36 @@
                 events: done.events, name: done.name,
               });
               await refreshDevices();
+              drawMine();
             } catch (e) {
               status.textContent = String((e && e.message) || e);
             }
             dial.disabled = false;
           };
-          card.appendChild(dial);
+          dialRow.appendChild(dial);
+
+          // Scanning, where there is a camera to scan with. Absent rather than
+          // disabled on a desktop, where a button that cannot ever work is
+          // just a question the user has to answer for themselves.
+          if (window.native && window.native.scanQr) {
+            var scan = document.createElement("button");
+            scan.className = "ghost";
+            scan.textContent = t("Scan a QR code");
+            scan.onclick = async function () {
+              status.textContent = "";
+              try {
+                var found = await window.native.scanQr();
+                if (!found) return;
+
+                other.value = String(found).trim().toLowerCase()
+                  .replace(/^\w+:\/\//, "").split("/")[0];
+                dial.onclick();
+              } catch (e) {
+                status.textContent = String((e && e.message) || e);
+              }
+            };
+            dialRow.appendChild(scan);
+          }
 
           window.p2p.linkOpen().then(function (open) {
             mine.textContent =

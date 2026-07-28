@@ -45,6 +45,7 @@ const SHIM_ALIASES = {
   "@reaper/socket": join(HERE, "src/shim/plugins-stub.ts"),
   "@reaper/tor": join(HERE, "src/shim/plugins-stub.ts"),
   "@reaper/keepalive": join(HERE, "src/shim/plugins-stub.ts"),
+  "@reaper/scanner": join(HERE, "src/shim/plugins-stub.ts"),
 };
 
 /**

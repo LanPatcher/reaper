@@ -42,7 +42,15 @@ const ck = (n: string, c: boolean, e = "") => {
 // Read out of the source rather than duplicated here. A copy would keep
 // passing while the app kept failing, which is the specific way this bug hid.
 {
-  const source = readFileSync(join(process.cwd(), "src/p2p/bridge.ts"), "utf8");
+  // Read from where the parameters live, which is no longer `bridge.ts`.
+  //
+  // They moved to `backup-bundle.ts` when packing and unpacking a backup were
+  // pulled out of the IPC handlers so they could be run by a test. This
+  // assertion following them there is the point of reading the source rather
+  // than copying the numbers: a copy would have gone on passing.
+  const source = readFileSync(
+    join(process.cwd(), "src/p2p/backup-bundle.ts"), "utf8",
+  );
   const block = source.slice(source.indexOf("const IDENTITY_KDF"));
   const declaration = block.slice(0, block.indexOf("}"));
 

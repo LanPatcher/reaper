@@ -27,37 +27,11 @@ export function installMobileLayout(): void {
   root.classList.add("mobile");
 
   addScrim();
-  addMenuButton();
-  keepMenuButton();
   closeOnNavigation();
   closeOnEscape();
   longPressAsContextMenu();
   swipeToOpen();
   keepComposerAboveKeyboard();
-}
-
-/**
- * Put the menu button back if the interface removes it.
- *
- * This layer runs *before* the shared page's own script, and that script owns
- * the top bar — it rewrites the channel name, the call button and the search
- * button as the view changes. Anything grafted in beforehand is at the mercy
- * of whichever redraw comes next, and a button that vanishes on navigating to
- * a server is indistinguishable from a button that never worked.
- *
- * Watching rather than re-adding on a timer, because the gap between the
- * removal and the next tick is a window where the only way to open the
- * conversation list is a gesture the user may not know about.
- */
-function keepMenuButton(): void {
-  const bar = document.getElementById("topbar");
-  if (!bar) return;
-
-  const observer = new MutationObserver(() => {
-    if (!document.getElementById("navBtn")) addMenuButton();
-  });
-
-  observer.observe(bar, { childList: true });
 }
 
 /**
@@ -108,35 +82,19 @@ function addScrim(): void {
   (document.getElementById("shell") ?? document.body).appendChild(scrim);
 }
 
-/**
- * The button that opens the conversation list.
+/*
+ * There is no menu button, on purpose.
  *
- * Put in the top bar, ahead of the channel name. The desktop has no such
- * control because both columns are always visible.
+ * There was one — a hamburger grafted into the top bar — and it is gone at the
+ * user's request: the edge swipe is enough, and the button was never really
+ * this app's to place. The top bar belongs to the shared interface, which
+ * rebuilds it whenever the view changes, so anything inserted there had to be
+ * watched and re-inserted, and had to be argued above a dimmer it did not know
+ * about. That is a lot of machinery for a control the gesture already covers.
+ *
+ * What replaces it has to be discoverable, which is why the edge is generous
+ * and a flick counts as well as a drag — see `swipeToOpen`.
  */
-function addMenuButton(): void {
-  const bar = document.getElementById("topbar");
-  if (!bar) return;
-
-  const button = document.createElement("button");
-  button.id = "navBtn";
-  button.className = "vbtn";
-  button.setAttribute("aria-label", "Conversations");
-  button.innerHTML =
-    '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" ' +
-    'stroke="currentColor" stroke-width="2" stroke-linecap="round">' +
-    '<path d="M3 6h18M3 12h18M3 18h18"/></svg>';
-
-  button.addEventListener("click", (e) => {
-    e.stopPropagation();
-    setNav(!navOpen());
-  });
-
-  bar.insertBefore(button, bar.firstChild);
-
-  // And one for the member list, which the desktop toggles from a button that
-  // is already there — so this only adds the left one.
-}
 
 /**
  * Close the slide-over once something in it has been chosen.
@@ -230,135 +188,77 @@ function longPressAsContextMenu(): void {
 }
 
 /**
- * Swipe to open and close the conversation list.
+ * Swipe from the edge to open, swipe anywhere to close.
  *
- * The first version of this decided everything at `touchend`: if the finger
- * had travelled far enough in the right direction, the panel snapped. It read
- * as unreliable, and the reasons are worth stating because they are the usual
- * ones for gesture code that looks correct.
+ * Deliberately stateless, and that is a correction rather than a preference.
  *
- *   - **Nothing moved during the drag.** With no feedback there is no way to
- *     tell a gesture that is being recognised from one that is being ignored,
- *     so a swipe that fell short felt like the app had missed it rather than
- *     like the user had not gone far enough.
+ * The version before this followed the finger: it added a `nav-dragging` class,
+ * set a `--nav-drag` custom property every `touchmove`, and cleared both on
+ * release. It looks nicer and it has a failure mode that a threshold gesture
+ * simply does not have — if the release is ever missed, the panel is left
+ * frozen part-way across the screen, half covering the conversation, with no
+ * way to put it back. That is not hypothetical; it is what shipped, and the
+ * touch sequence gets interrupted more often on this platform than anywhere
+ * else: the system's own drag can claim it, a re-render can move the element
+ * out from under it, a call or a notification can cancel it outright.
  *
- *   - **Closing required a long drag from anywhere.** Sixty pixels leftward
- *     with the panel open — but the panel is what is under the finger, and it
- *     scrolls vertically, so the gesture was competing with the list.
- *
- *   - **A flick did not count.** Distance alone ignores speed, and a quick
- *     short flick is how most people actually dismiss a drawer.
- *
- * So this follows the finger, and decides on release by position *or* by
- * velocity. The panel is dragged with `--nav-drag`, which `mobile.css` applies
- * on top of the open and closed positions; the transition is suppressed while
- * a finger is down so the movement is one-to-one instead of chasing.
+ * Nothing is written down here that has to be cleaned up. The panel is open or
+ * it is closed, the CSS transition does the movement, and there is no third
+ * state to be stranded in.
  */
 function swipeToOpen(): void {
   /** How far in from the left edge a drag may start when closed. */
-  const EDGE = 30;
+  const EDGE = 40;
 
-  /** Past this fraction of the panel, release completes the gesture. */
-  const COMMIT = 0.4;
+  /** How far the finger has to travel for a swipe to count. */
+  const DISTANCE = 45;
 
   /** Pixels per millisecond that count as a flick regardless of distance. */
-  const FLICK = 0.5;
-
-  const root = document.documentElement;
+  const FLICK = 0.4;
 
   let startX = 0;
   let startY = 0;
   let startAt = 0;
-  let dragging = false;
-  let decided = false;
-  let width = 320;
-
-  const panelWidth = () => {
-    const side = document.getElementById("side");
-    const rail = document.getElementById("rail");
-    return (side?.getBoundingClientRect().width ?? 280) +
-      (rail?.getBoundingClientRect().width ?? 62);
-  };
-
-  const drag = (offset: number) => {
-    root.style.setProperty("--nav-drag", `${offset}px`);
-  };
-
-  const release = () => {
-    root.classList.remove("nav-dragging");
-    root.style.removeProperty("--nav-drag");
-  };
+  let tracking = false;
 
   document.addEventListener("touchstart", (event) => {
-    if (event.touches.length !== 1) return;
+    if (event.touches.length !== 1) { tracking = false; return; }
 
     const touch = event.touches[0];
     startX = touch.clientX;
     startY = touch.clientY;
     startAt = event.timeStamp;
-    decided = false;
 
     // Opening starts at the edge. Closing starts anywhere, because when the
     // panel is open the whole screen belongs to it.
-    dragging = navOpen() || startX <= EDGE;
-    width = panelWidth();
+    tracking = navOpen() || startX <= EDGE;
   }, { passive: true });
 
-  document.addEventListener("touchmove", (event) => {
-    if (!dragging) return;
+  const finish = (event: TouchEvent) => {
+    if (!tracking) return;
+    tracking = false;
 
-    const touch = event.touches[0];
+    const touch = event.changedTouches[0];
     if (!touch) return;
 
     const dx = touch.clientX - startX;
     const dy = touch.clientY - startY;
 
-    // Committed to horizontal, or abandoned, on the first movement that says
-    // which it is. Deciding once stops a drag turning into a scroll halfway
-    // through and leaving the panel stranded.
-    if (!decided) {
-      if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+    // Horizontal, or it was a scroll that drifted sideways.
+    if (Math.abs(dy) > Math.abs(dx)) return;
 
-      decided = true;
-      if (Math.abs(dy) > Math.abs(dx)) { dragging = false; return; }
-
-      root.classList.add("nav-dragging");
-    }
-
-    // Clamped, so pulling further than the panel travels does not push it past
-    // its own edge and leave a gap behind it.
-    //
-    // The two cases are different distances from the same rest position: open
-    // means "already at zero, drag negative"; closed means "already at minus
-    // one width, drag towards zero". `mobile.css` adds this to whichever
-    // position the class says it is in, so both are simply an offset.
-    drag(navOpen()
-      ? Math.max(-width, Math.min(0, dx))
-      : Math.min(width, Math.max(0, dx)));
-  }, { passive: true });
-
-  const finish = (event: TouchEvent) => {
-    if (!dragging) return;
-    dragging = false;
-
-    if (!decided) { release(); return; }
-
-    const touch = event.changedTouches[0];
-    release();
-    if (!touch) return;
-
-    const dx = touch.clientX - startX;
     const speed = Math.abs(dx) / Math.max(1, event.timeStamp - startAt);
-    const far = Math.abs(dx) > width * COMMIT;
-
-    if (!far && speed < FLICK) return;
+    if (Math.abs(dx) < DISTANCE && speed < FLICK) return;
 
     if (dx > 0) setNav(true);
     else setNav(false);
   };
 
   document.addEventListener("touchend", finish, { passive: true });
-  document.addEventListener("touchcancel", finish, { passive: true });
+
+  // A cancelled touch closes nothing and opens nothing. Saying so explicitly
+  // rather than letting `tracking` stay true into the next gesture.
+  document.addEventListener("touchcancel", () => { tracking = false; }, { passive: true });
 }
 
 /**
