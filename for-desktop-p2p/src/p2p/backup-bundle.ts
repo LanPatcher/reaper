@@ -66,6 +66,20 @@ export interface Bundle {
   /** Where the device that wrote this can be reached, for a first sync. */
   syncOnion?: string;
 
+  /**
+   * Your own picture and banner, by hash.
+   *
+   * The index records *which* image a profile uses; the bytes live in the
+   * attachment store, which a backup deliberately leaves out because
+   * attachments re-fetch from whoever sent them.
+   *
+   * Your own do not. Nobody else has them to send back — a restored account
+   * came up with a name, a friends list, and a blank grey circle where its
+   * face had been, permanently. Two small images is a price worth paying to
+   * get the account back looking like itself.
+   */
+  avatars?: Record<string, string>;
+
   v?: number;
   at?: number;
 }

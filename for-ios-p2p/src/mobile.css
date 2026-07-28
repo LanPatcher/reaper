@@ -48,11 +48,36 @@ body {
    suggests that is what it does. */
 #winbtns { display: none; }
 
+/* The bar the wordmark sits in.
+
+   The desktop gives it a fixed 30px height, which is exactly right under a
+   window's own title bar and wrong under a notch: adding the safe-area inset
+   as padding pushes the text out of a box that is not allowed to grow, so
+   "REAPER" was clipped in the corner.
+
+   Height is left to the content and the inset is added to it, and the bar is
+   painted the same colour as the page so the status bar area reads as part of
+   the app rather than as a strip of something else. */
 #titlebar {
-  /* Kept, because it carries the name and sits under the notch. Without the
-     inset it slides beneath the status bar and the wordmark is unreadable. */
+  height: auto;
+  min-height: calc(30px + env(safe-area-inset-top));
   padding-top: env(safe-area-inset-top);
+  box-sizing: border-box;
+  background: var(--main);
   -webkit-app-region: none;
+}
+
+#titlebar .brand {
+  /* Centred in the part below the inset rather than in the whole bar. */
+  display: flex;
+  align-items: center;
+  height: 30px;
+}
+
+/* And the same colour behind the status bar itself, so a scroll underneath it
+   does not show through as a different shade. */
+html.mobile body {
+  background: var(--main);
 }
 
 /* ---- the left slide-over: servers and conversations ---------------------- */
@@ -132,7 +157,12 @@ html.nav-open #nav-scrim {
 
 /* ---- the right slide-over: members -------------------------------------- */
 
+/* No swipe gesture over the member list — see `allowedHere` in mobile.ts. It
+   is its own slide-over from the right, and a left swipe on it operating the
+   opposite panel is not something anybody means. Vertical scrolling is all it
+   needs. */
 #members {
+  touch-action: pan-y;
   position: fixed;
   top: 0;
   bottom: 0;
@@ -159,9 +189,10 @@ html.members-open #members {
 /* ---- the messages ------------------------------------------------------- */
 
 #main {
-  /* The full width. The two columns beside it are no longer in the flow. */
+  /* The full width. The two columns beside it are no longer in the flow.
+     No safe-area padding here — the title bar above already carries it, and
+     adding it twice leaves a band of empty space under the wordmark. */
   width: 100%;
-  padding-top: env(safe-area-inset-top);
 }
 
 #topbar {

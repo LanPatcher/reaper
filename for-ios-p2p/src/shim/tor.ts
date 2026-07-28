@@ -84,23 +84,19 @@ export function socksConnect(host: string, port: number): Promise<Socket> {
  */
 export class TorService extends EventEmitter {
   address: string | undefined;
+
+  /**
+   * Where this device's own devices reach it.
+   *
+   * One Tor client publishes both services here, so both addresses come from
+   * the same status call. The desktop is now the same shape — it used to try a
+   * second tor process, which could never bind and never published anything.
+   */
+  syncAddress: string | undefined;
+
   running = false;
 
   #watching: ReturnType<typeof setInterval> | undefined;
-
-  /**
-   * Which of this device's two addresses this object reports.
-   *
-   * The desktop runs two Tor processes with separate data directories and
-   * tells them apart by path. Here there is one linked-in client publishing
-   * both services, so the object has to be told which of the two it stands
-   * for — otherwise `bridge.ts` builds a sync service, asks it for its
-   * address, and is handed the account's. That would record the account
-   * address in the device roster, and every device of yours would then try to
-   * sync with whichever one is currently holding it: the exact device that
-   * does not need reaching.
-   */
-  #role: "account" | "sync";
 
   /**
    * Keep `address` and `running` in step with the plugin.
@@ -128,16 +124,19 @@ export class TorService extends EventEmitter {
       void Tor.status().then((status) => {
         this.running = status.running;
 
-        const found = this.#role === "sync" ? status.syncOnion : status.onion;
-
-        if (found && found !== this.address) {
-          this.address = found;
-          this.emit("ready", found);
+        if (status.onion && status.onion !== this.address) {
+          this.address = status.onion;
+          this.emit("ready", status.onion);
         }
 
-        // Nothing left to wait for. The address does not change again without
-        // the app restarting.
-        if (this.address && this.#watching) {
+        if (status.syncOnion && status.syncOnion !== this.syncAddress) {
+          this.syncAddress = status.syncOnion;
+          this.emit("sync", status.syncOnion);
+        }
+
+        // Nothing left to wait for. Neither address changes again without the
+        // app restarting.
+        if (this.address && this.syncAddress && this.#watching) {
           clearInterval(this.#watching);
           this.#watching = undefined;
         }
@@ -150,7 +149,7 @@ export class TorService extends EventEmitter {
     this.#watching = setInterval(look, 3000);
   }
 
-  constructor(options?: { role?: "account" | "sync" }) {
+  constructor(_options?: unknown) {
     // An EventEmitter, because the desktop's is one and `bridge.ts` — the same
     // file, running here unchanged — subscribes to it the moment it is built:
     //
@@ -165,10 +164,6 @@ export class TorService extends EventEmitter {
     // anything is added to it, and a listener silently thrown away is the same
     // class of bug as the one that froze this app on its startup screen.
     super();
-
-    // Defaulting to the account address, which is what every caller written
-    // before there were two of them means.
-    this.#role = options?.role ?? "account";
   }
 
   async start(): Promise<string | undefined> {
@@ -179,8 +174,8 @@ export class TorService extends EventEmitter {
 
     const status = await Tor.status().catch(() => undefined);
 
-    const found = this.#role === "sync" ? status?.syncOnion : status?.onion;
-    if (found) this.address = found;
+    if (status?.onion) this.address = status.onion;
+    if (status?.syncOnion) this.syncAddress = status.syncOnion;
     this.running = status?.running ?? false;
 
     return this.address;
