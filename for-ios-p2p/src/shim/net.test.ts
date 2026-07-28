@@ -235,5 +235,51 @@ function within<T>(what: string, ms: number, work: Promise<T>): Promise<T | unde
      /\.listen\(\s*port\s*,\s*\(\)\s*=>/.test(source));
 }
 
+// ---- bytes that arrive before anyone is listening ---------------------------
+//
+// The failure this covers reported the *second* message: "expected a device
+// link greeting and got proof". The greeting was never lost on the wire — it
+// was emitted as a `data` event at a moment when nothing was subscribed, and
+// an event with no listener goes nowhere.
+//
+// The window is not exotic. `socksConnect` resolves on `connect`, and the
+// caller attaches its `data` handler on the line after — so anything the far
+// end sent the instant it accepted lands in between.
+
+{
+  reset();
+  setProxyPort(9050);
+
+  const socket = new Socket();
+  await new Promise<void>((resolve) => { socket.connect(80, () => resolve()); });
+
+  // Arriving with nobody listening, exactly as a greeting does.
+  (socket as unknown as { receive: (b: Buffer) => void }).receive(
+    Buffer.from("hello", "utf8"),
+  );
+  (socket as unknown as { receive: (b: Buffer) => void }).receive(
+    Buffer.from(" there", "utf8"),
+  );
+
+  const seen = await within(
+    "bytes that arrived before a listener",
+    1000,
+    new Promise<string>((resolve) => {
+      let all = "";
+      socket.on("data", (chunk: Buffer) => {
+        all += chunk.toString("utf8");
+        if (all === "hello there") resolve(all);
+      });
+    }),
+  );
+
+  ck("nothing is lost while nobody is listening", seen === "hello there",
+     String(seen));
+
+  // And in order, because a protocol that reads a length prefix cannot
+  // tolerate its frames being reassembled out of sequence.
+  ck("and it arrives in the order it was sent", seen === "hello there");
+}
+
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");
 process.exit(f ? 1 : 0);

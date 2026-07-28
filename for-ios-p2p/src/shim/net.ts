@@ -148,6 +148,25 @@ export class Socket extends EventEmitter {
   #pending: Buffer[] = [];
   #ready = false;
 
+  /**
+   * Bytes received before anything was listening for them.
+   *
+   * `receive` emits a `data` event, and an event emitted with no listener goes
+   * nowhere. That window is real and routinely hit: `socksConnect` resolves on
+   * the `connect` event, and only *then* does the caller attach its `data`
+   * handler — so anything the far end sent immediately on accepting, which for
+   * the device link is its greeting, is emitted into an empty room.
+   *
+   * The exchange then runs one message out of step and fails with "expected a
+   * device link greeting and got proof": an error naming the second message,
+   * caused by the loss of the first.
+   *
+   * Node does not have this problem because a socket is paused until it is
+   * read from. This is the same idea, done the smallest way that fits: hold
+   * what arrives, hand it over the moment somebody subscribes.
+   */
+  #held: Buffer[] = [];
+
   constructor(id?: string) {
     super();
     this.id = id ?? freshId();
@@ -293,8 +312,35 @@ export class Socket extends EventEmitter {
     this.emit("connect");
   }
 
+  /**
+   * Subscribing to `data` collects whatever already arrived.
+   *
+   * On a later turn rather than inline: a caller that attaches a handler and
+   * then sets up state on the next line would otherwise be re-entered before
+   * it was ready.
+   */
+  on(event: string, listener: (...args: unknown[]) => void): this {
+    super.on(event, listener);
+
+    if (event === "data" && this.#held.length) {
+      const waiting = this.#held;
+      this.#held = [];
+
+      queueMicrotask(() => {
+        for (const chunk of waiting) this.emit("data", chunk);
+      });
+    }
+
+    return this;
+  }
+
   /** @internal */
   receive(bytes: Buffer): void {
+    if (this.listenerCount("data") === 0) {
+      this.#held.push(bytes);
+      return;
+    }
+
     this.emit("data", bytes);
   }
 
