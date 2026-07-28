@@ -20,9 +20,12 @@ import Foundation
  *
  * ## Being a good citizen about it
  *
- * The category is `.playback` with `.mixWithOthers`, and both halves matter:
+ * The category is `.playAndRecord` with `.mixWithOthers`, and each part
+ * matters:
  *
- *   - `.playback` is the category that earns background execution. `.ambient`
+ *   - `.playAndRecord` earns background execution *and* permits input.
+ *     `.playback` earns the first and forbids the second, which is how voice
+ *     calls came to report the microphone as unavailable. `.ambient`
  *     does not.
  *   - `.mixWithOthers` means this does not become the "now playing" app and
  *     does not stop anything else. Without it, launching Reaper would pause
@@ -86,10 +89,26 @@ final class Keepalive {
     do {
       // Announced before activating, so the system knows what kind of app this
       // is claiming to be before it is asked to grant anything.
+      // `.playAndRecord`, not `.playback`.
+      //
+      // `.playback` earns background execution and forbids input, and that
+      // second half is what broke voice: this session is installed at startup
+      // and stays installed, so by the time anything asks for a microphone the
+      // category already says this app does not record. `getUserMedia` then
+      // fails, and it fails as "microphone unavailable" rather than as
+      // anything naming an audio session.
+      //
+      // `.playAndRecord` keeps the background execution and permits input. The
+      // recording indicator only appears while something is actually
+      // capturing, so an idle app looks no different than it did.
+      //
+      // `.defaultToSpeaker` because the alternative is the earpiece: without
+      // it a call comes out of the receiver at the top of the phone, which
+      // sounds like the volume is broken.
       try session.setCategory(
-        .playback,
+        .playAndRecord,
         mode: .default,
-        options: [.mixWithOthers]
+        options: [.mixWithOthers, .allowBluetooth, .defaultToSpeaker]
       )
       try session.setActive(true, options: [])
     } catch {
