@@ -15173,7 +15173,36 @@
         nudge(communityId, { t: "ring.cancel", community: communityId, channelId: channelId }, 0);
       }
 
+      /**
+       * Tell the platform whether a call is up, so it can pick an audio mode.
+       *
+       * Only on a phone, and only on change. On iOS the audio session that
+       * keeps the connection alive in the background has to claim the
+       * microphone to carry a call — and claiming it also drags Bluetooth onto
+       * the hands-free profile, which is 8 kHz mono and makes everything else
+       * on the device sound like a speakerphone.
+       *
+       * That claim used to be permanent, so an audiobook played through
+       * headphones sounded wrong for as long as Reaper was running. Now it
+       * lasts exactly as long as the call.
+       */
+      var audioSaysInCall = false;
+
+      function reportCallAudio(active) {
+        if (active === audioSaysInCall) return;
+        audioSaysInCall = active;
+
+        try {
+          if (window.native && window.native.setInCall) window.native.setInCall(active);
+        } catch (e) {
+          // Not worth interrupting a call over. The session keeps whatever
+          // category it had, which is the previous behaviour rather than a
+          // broken one.
+        }
+      }
+
       function hideCallOverlay() {
+        reportCallAudio(false);
         stopRinging();
         incoming = null;
         $("callOverlay").className = "";
@@ -15190,6 +15219,11 @@
         var box = $("callOverlay");
         var ringingIn = !!incoming;
         var active = !!inVoice && inVoice.channelId && inVoice.channelId.indexOf("call:") === 0;
+
+        // Being rung is not being in a call: the microphone is not needed
+        // until it is answered, and claiming it early would degrade other
+        // audio for every incoming call whether or not it was picked up.
+        reportCallAudio(active);
 
         if (!ringingIn && !active) { hideCallOverlay(); return; }
 

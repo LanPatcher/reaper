@@ -27,6 +27,16 @@ export interface KeepalivePlugin {
   /** Give the audio session back. The app will suspend normally afterwards. */
   stop(): Promise<KeepaliveStatus>;
 
+  /**
+   * Enter or leave call mode.
+   *
+   * At rest the app claims `.playback`, which leaves other audio on the device
+   * alone. A call needs the microphone, so it claims `.playAndRecord` and the
+   * hands-free Bluetooth profile — which costs quality for everything playing,
+   * and is why it is only claimed while a call is actually up.
+   */
+  setInCall(options: { active: boolean }): Promise<{ ok: boolean }>;
+
   status(): Promise<KeepaliveStatus>;
 
   addListener(
