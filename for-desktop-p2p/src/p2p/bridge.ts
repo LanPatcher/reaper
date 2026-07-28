@@ -821,6 +821,11 @@ async function openPair(): Promise<number> {
     name: me.name,
 
     onion: () => tor?.syncAddress ?? "",
+
+    // Straight to the same log the rest of the core writes to, so a failed
+    // attempt leaves a record on *both* devices rather than only on whichever
+    // one happened to raise the error.
+    trace: (line) => log("[pair]", line),
     password: () => pairPassword(),
 
     communities: () => {
