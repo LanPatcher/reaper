@@ -77,7 +77,26 @@ function closeOnEscape(): void {
   }, true);
 }
 
-/** The dimmer behind the slide-over. Tapping it closes. */
+/**
+ * The dimmer behind the slide-over. Tapping it closes.
+ *
+ * Put inside `#shell`, and that is the whole of why the menu button did not
+ * work. `#shell` gets `position: relative; z-index: 1` as soon as a wallpaper
+ * is set — that is how the interface lifts itself above the background image —
+ * and a `z-index` on a positioned element creates a stacking context. Every
+ * z-index inside it is then resolved *against its siblings*, not against the
+ * page.
+ *
+ * So a scrim appended to `document.body` sat at 35 in the root stacking
+ * context, while the panels at 40 and the button at 45 were sealed inside a
+ * context whose own index was 1. The scrim covered all of them. Tapping the
+ * hamburger hit the dimmer instead, which closes the panel — so opening looked
+ * fine and the button looked dead, and the two behaviours are indistinguishable
+ * from "the button is broken".
+ *
+ * Inside `#shell` the three are siblings again and the order means what it
+ * says, wallpaper or not.
+ */
 function addScrim(): void {
   const scrim = document.createElement("div");
   scrim.id = "nav-scrim";
@@ -85,7 +104,8 @@ function addScrim(): void {
     setNav(false);
     setMembers(false);
   });
-  document.body.appendChild(scrim);
+
+  (document.getElementById("shell") ?? document.body).appendChild(scrim);
 }
 
 /**

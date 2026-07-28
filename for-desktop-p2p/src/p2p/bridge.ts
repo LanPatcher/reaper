@@ -13,7 +13,7 @@ import {
   createCipheriv,
   createDecipheriv,
   randomBytes,
-  scryptSync,
+  scrypt as scryptCallback,
 } from "node:crypto";
 
 import { agree, deriveKey, isSealed, open as openSealed, seal } from "./crypto";
@@ -171,6 +171,31 @@ const IDENTITY_KDF = {
   p: 1,
   maxmem: 96 * 1024 * 1024,
 } as const;
+
+/**
+ * Derive the key, without stopping everything else.
+ *
+ * The synchronous version was doing thirty-two megabytes of allocation and
+ * tens of thousands of rounds on whatever thread called it. On the desktop
+ * that blocked the Electron main process for about a second, which is bad and
+ * survivable. On a phone the same work runs in JavaScript in a WebView, takes
+ * long enough that iOS decides the app has stopped responding, and the app is
+ * killed — so importing an identity accepted the passphrase and then
+ * disappeared, with nothing logged anywhere, because as far as the system was
+ * concerned nothing had failed.
+ *
+ * Node runs this on its threadpool; the iOS shim yields to the event loop
+ * between rounds. Both keep the caller responsive, which is the only thing
+ * that was wrong with it.
+ */
+function deriveIdentityKey(passphrase: string, salt: Buffer): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    scryptCallback(passphrase, salt, 32, IDENTITY_KDF, (error, key) => {
+      if (error) reject(error);
+      else resolve(key as Buffer);
+    });
+  });
+}
 
 let identity: Identity | undefined;
 let transport: Transport | undefined;
@@ -1908,7 +1933,7 @@ export function registerP2PHandlers(): void {
     );
 
     const salt = randomBytes(16);
-    const key = scryptSync(passphrase, salt, 32, IDENTITY_KDF);
+    const key = await deriveIdentityKey(passphrase, salt);
     const nonce = randomBytes(12);
 
     const cipher = createCipheriv("aes-256-gcm", key, nonce);
@@ -1944,7 +1969,7 @@ export function registerP2PHandlers(): void {
       }
 
       const salt = Buffer.from(outer.salt, "base64");
-      const key = scryptSync(passphrase, salt, 32, IDENTITY_KDF);
+      const key = await deriveIdentityKey(passphrase, salt);
 
       let plain: Buffer;
       try {

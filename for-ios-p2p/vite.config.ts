@@ -215,6 +215,22 @@ export default defineConfig({
     global: "globalThis",
   },
 
+  /**
+   * The scrypt worker.
+   *
+   * `es` rather than the default `iife`, to match the `{ type: "module" }` the
+   * constructor asks for. A mismatch here is the kind that works in the dev
+   * server and fails on the device, because the two disagree about how a
+   * classic worker script is allowed to be shaped.
+   *
+   * The worker exists because deriving an identity key takes seconds of solid
+   * arithmetic, and on this platform that runs on the same thread as the
+   * interface — see `src/shim/crypto.ts`.
+   */
+  worker: {
+    format: "es",
+  },
+
   build: {
     // Safari on iOS 15 is the floor. Anything newer and the app fails to parse
     // on devices that are still perfectly capable of running it.
