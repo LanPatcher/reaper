@@ -162,7 +162,16 @@ async function dial(service: PairService, port: number) {
   const onion = "a".repeat(56) + ".onion";
   const code = sealInvite({ onion, name: "Ray's desktop" }, "hunter2");
 
-  ck("an invite fits in a QR code", code.length < 200, `${code.length} chars`);
+  ck("an invite fits in a QR code", code.length < 220, `${code.length} chars`);
+  ck(
+    "and stays inside the QR alphanumeric set, so it scans at low density",
+    /^[0-9A-Z $%*+\-.\/:]+$/.test(code),
+    code.slice(0, 24),
+  );
+  ck(
+    "and survives being typed in lower case",
+    openInvite(code.toLowerCase(), "hunter2").ok,
+  );
   ck("and does not contain the address in the clear", !code.includes(onion));
 
   const opened = openInvite(code, "hunter2");

@@ -96,8 +96,6 @@ const CHANNEL = {
   netLog: "p2p:netLog",
   netStats: "p2p:netStats",
   netStatsReset: "p2p:netStatsReset",
-  exportIdentity: "p2p:exportIdentity",
-  importIdentity: "p2p:importIdentity",
   deviceInfo: "p2p:deviceInfo",
   deviceName: "p2p:deviceName",
   deviceTakeOver: "p2p:deviceTakeOver",
@@ -2039,218 +2037,7 @@ export function registerP2PHandlers(): void {
   // whichever published last. So this is a restore, not a duplicate, and the
   // interface says so.
 
-  /** Everything needed to be this person again, encrypted under a passphrase. */
-  ipcMain.handle(CHANNEL.exportIdentity, async (_, passphrase: string) => {
-    if (!identity) throw new Error("no identity to export");
-    if (!passphrase || passphrase.length < 8) {
-      throw new Error("passphrase must be at least 8 characters");
-    }
 
-    let index: SignedEvent[] = [];
-    try {
-      index = storeFor(INDEX).events();
-    } catch {
-      // A missing index is survivable — the key is the irreplaceable part.
-    }
-
-    let onion: OnionKey | undefined;
-    try {
-      // Awaited although the desktop's is synchronous. The iOS build swaps
-      // this module for one that reaches into Swift, so the same call has to
-      // read correctly whether it returns a value or a promise.
-      onion = await readOnionKey(join(root(), "tor"));
-    } catch (error) {
-      // Not fatal. An export without an address is worth far more than no
-      // export, and the alternative — refusing — is how people end up with no
-      // backup at all.
-      log("[p2p]", `the onion key could not be read for export: ${String(error)}`);
-    }
-
-    // Where the device that made this backup can be reached.
-    //
-    // This is what turns restoring an account from a copy into a restore that
-    // catches up. Without it a fresh device knows who it is and nothing about
-    // what has happened since the file was written, and the only way to fix
-    // that is to get both machines onto one network. With it, the new device
-    // dials the old one over Tor on first run and converges from anywhere.
-    //
-    // It is an address, not a key: it lets this device be *dialled*, and the
-    // handshake still demands a signature from the account's private key. A
-    // backup that leaks leaks the private key too, and next to that the
-    // address is not the part to worry about.
-    const syncOnion = syncAddressNow() ??
-      roster(syncAddresses()).find((entry) => entry.device === thisDevice().id)?.onion;
-
-    // Your own profile picture and banner, by hash.
-    //
-    // Read from the index rather than kept anywhere: `profile.update` names
-    // the images this account uses, and the bytes are in the avatar store.
-    // Only the ones this identity authored, so a backup does not quietly
-    // include every face this device has ever seen.
-    const avatars: Record<string, string> = {};
-
-    try {
-      const store = blobsFor(AVATARS);
-
-      for (const event of index) {
-        if (event.type !== "profile.update") continue;
-        if (event.author !== identity.userId) continue;
-
-        const payload = decryptPayload(INDEX, event.payload) as {
-          avatarId?: string; bannerId?: string;
-        };
-
-        for (const id of [payload?.avatarId, payload?.bannerId]) {
-          if (!id || avatars[id]) continue;
-          const bytes = store.read(id);
-          if (bytes) avatars[id] = bytes.toString("base64");
-        }
-      }
-    } catch (error) {
-      // A backup without a picture is worth far more than no backup.
-      log("[p2p]", `profile images left out of the export: ${String(error)}`);
-    }
-
-    return packBundle(
-      { identity, index, onion, syncOnion, avatars },
-      passphrase,
-    );
-  });
-
-  /**
-   * Replace this device's identity with one from a bundle.
-   *
-   * Destructive, and deliberately so: two devices sharing one identity would
-   * both sign events as the same person, and an append-only log has no way to
-   * reconcile that. The renderer confirms before calling this.
-   */
-  ipcMain.handle(
-    CHANNEL.importIdentity,
-    async (_, bundle: string, passphrase: string) => {
-      const parsed = await unpackBundle(bundle, passphrase);
-
-      // Checked before anything is destroyed.
-      //
-      // What follows closes every store and overwrites the keystore, and there
-      // is no way back from it. A service key that turns out to be malformed
-      // after that point would leave the device with a new identity, no
-      // address, and no way to return to the old one — so the one part of this
-      // that can be judged in advance is judged in advance.
-      if (parsed.onion) checkOnionKey(parsed.onion);
-
-      // Everything open belongs to the old identity.
-      for (const [, store] of stores) store.close();
-      stores.clear();
-      payloadKeys.clear();
-      blobStores.clear();
-
-      new ElectronKeystore().save(parsed.identity);
-      identity = parsed.identity;
-
-      // The address moves with the account.
-      //
-      // tor reads its service directory once, at startup, so this takes hold
-      // on the next start rather than now — which is the same restart the
-      // identity swap already requires.
-      let onion: string | undefined;
-      if (parsed.onion) {
-        onion = await writeOnionKey(join(root(), "tor"), parsed.onion);
-        log("[p2p]", `onion address restored: ${onion}`);
-      } else {
-        log("[p2p]", "that bundle carries no onion address — this device will publish a new one");
-      }
-
-      // Counted, and reported back.
-      //
-      // A restore that returns the right user id and an empty friends list
-      // looks exactly like a restore that worked, which is how one shipped.
-      // Saying "nothing came with it" at the moment it happens is the
-      // difference between a bug somebody notices and one they live with.
-      let restored = 0;
-      let friends = 0;
-      let servers = 0;
-
-      if (parsed.index && parsed.index.length) {
-        const store = storeFor(INDEX);
-        const result = store.merge(parsed.index);
-
-        restored = result.accepted.length;
-
-        for (const event of parsed.index) {
-          if (event.type === "friend.add") friends++;
-          if (event.type === "community.create") servers++;
-        }
-
-        if (result.rejected.length) {
-          log("[p2p]", `${result.rejected.length} events in that backup were refused`);
-        }
-
-        store.close();
-        stores.delete(INDEX);
-      } else {
-        log("[p2p]", "that backup carries no index — friends and servers will be missing");
-      }
-
-      // The face that goes with the name.
-      for (const [id, base64] of Object.entries(parsed.avatars ?? {})) {
-        try {
-          blobsFor(AVATARS).accept(id, Buffer.from(base64, "base64"));
-        } catch {
-          // Named by its hash, so anything that does not match is dropped by
-          // `accept` rather than written under a name other devices will ask
-          // for and believe.
-        }
-      }
-
-      // Restoring an account onto a device means answering here from now on.
-      //
-      // Appended after the index has been merged, so the counter is computed
-      // against the claims that came with the backup rather than against an
-      // empty ledger — a claim of `n = 1` on top of an existing `n = 4` would
-      // lose, and this device would restore the account and then quietly
-      // refuse to publish.
-      //
-      // The device it came from finds out the next time the two are linked,
-      // and goes read-only then. Until that happens both may publish, which is
-      // the one case this design cannot prevent: they have no way to reach
-      // each other, precisely because they share the address in dispute.
-      const me = thisDevice();
-      addClaim(claimFor(claimsHeld(), me.id, me.name));
-
-      // Where the device this came from can be reached, so the first sync
-      // needs nothing typed and no shared network. Recorded even when the
-      // index already names it: a backup written after the last sync has the
-      // fresher address.
-      if (parsed.syncOnion && isSyncAddress({
-        device: "restored-from", name: "the device this was exported from",
-        onion: parsed.syncOnion, at: Date.now(),
-      })) {
-        storeFor(INDEX).append(SYNC, {
-          device: "restored-from",
-          name: "the device this was exported from",
-          onion: parsed.syncOnion,
-          at: Date.now(),
-        });
-      }
-
-      storeFor(INDEX).close();
-      stores.delete(INDEX);
-
-      log("[p2p]", `identity replaced with ${parsed.identity.userId}`);
-
-      return {
-        userId: parsed.identity.userId,
-        onion,
-        restored,
-        friends,
-        servers,
-
-        // The interface uses this to offer the catch-up straight away rather
-        // than leaving somebody to discover their friends list is a week old.
-        canSync: !!parsed.syncOnion,
-      };
-    },
-  );
 
   // ---- your own devices -------------------------------------------------
   //
@@ -2381,6 +2168,110 @@ export function registerP2PHandlers(): void {
    * on the other device, typed or scanned. Everything after this is automatic,
    * because both ends record each other on the way through.
    */
+  /**
+   * Read or set the pairing password.
+   *
+   * Returned as a boolean, never as the password itself. Settings has no
+   * reason to display it — it is typed on the other device, not read off this
+   * one — and a surface that can hand it back is a surface that a compromised
+   * renderer can ask.
+   */
+  ipcMain.handle(CHANNEL.pairPassword, async (_, password?: string) => {
+    if (password === undefined) return { set: Boolean(pairPassword()) };
+
+    const chosen = String(password);
+
+    // Eight is not a strong password, and this is not pretending otherwise.
+    // What stands behind it is that the address is only reachable by someone
+    // who already has the invite, and an invite is shown deliberately, for a
+    // few minutes, to a device in the same room. The length is there to stop
+    // "1234", not to survive an offline attack that nobody can mount.
+    if (chosen.length < 8) {
+      throw new Error("use at least 8 characters");
+    }
+
+    setPairPassword(chosen);
+    return { set: true };
+  });
+
+  /**
+   * Produce a code for the other device to scan.
+   *
+   * Needs the sync onion to exist, which needs Tor to have published it. Said
+   * plainly rather than returning an invite that cannot be dialled — a QR code
+   * that scans cleanly and then times out is a much worse failure than being
+   * told to wait.
+   */
+  ipcMain.handle(CHANNEL.pairInvite, async (event) => {
+    viewer = event.sender;
+
+    const password = pairPassword();
+    if (!password) throw new Error("set a pairing password first");
+
+    await openPair();
+
+    const onion = tor?.syncAddress;
+    if (!onion) throw new Error("Tor has not published this device's sync address yet");
+
+    const me = thisDevice();
+
+    return {
+      code: sealInvite({ onion, name: me.name }, password),
+      onion,
+      name: me.name,
+    };
+  });
+
+  /**
+   * Join an account from a code scanned or pasted on this device.
+   *
+   * The password is stored before dialling, not after: it is the same password
+   * on both sides, and this device needs it to answer the *next* sync as well
+   * as to open this one.
+   */
+  ipcMain.handle(CHANNEL.pairJoin, async (event, code: string, password: string) => {
+    viewer = event.sender;
+
+    const opened = openInvite(String(code ?? ""), String(password ?? ""));
+
+    if (!opened.ok) {
+      return {
+        ok: false,
+        error: opened.reason === "wrong-password"
+          ? "That password does not match the one on the other device."
+          : "That is not a Reaper pairing code.",
+      };
+    }
+
+    setPairPassword(String(password));
+
+    try {
+      const result = await pairOverTor(opened.invite.onion);
+      return { ok: true, result };
+    } catch (error) {
+      return { ok: false, error: (error as Error).message };
+    }
+  });
+
+  /** Sync every sibling this device knows about. */
+  ipcMain.handle(CHANNEL.pairSync, async (event) => {
+    viewer = event.sender;
+
+    const me = thisDevice();
+    const done: PairResult[] = [];
+    const failed: { name: string; error: string }[] = [];
+
+    for (const entry of others(syncAddresses(), me.id)) {
+      try {
+        done.push(await pairOverTor(entry.onion));
+      } catch (error) {
+        failed.push({ name: entry.name, error: (error as Error).message });
+      }
+    }
+
+    return { done, failed };
+  });
+
   ipcMain.handle(CHANNEL.syncWith, async (event, onion: string) => {
     viewer = event.sender;
 

@@ -109,6 +109,61 @@ export interface Invite {
 }
 
 /**
+ * Base32, upper case, no padding.
+ *
+ * Not base64, and the reason is the QR code rather than anything about the
+ * bytes. A QR has a compact alphanumeric mode covering digits, capitals and a
+ * handful of punctuation, and anything outside that set forces byte mode —
+ * which stores roughly half as much per module, so the same invite becomes a
+ * visibly denser grid that a phone camera has to work harder to read across a
+ * room. Base64 is case-sensitive and cannot use it. Base32 can, and the ~20%
+ * it loses in length is bought back several times over by the mode.
+ */
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+function toBase32(bytes: Buffer): string {
+  let bits = 0;
+  let value = 0;
+  let out = "";
+
+  for (const byte of bytes) {
+    value = (value << 8) | byte;
+    bits += 8;
+
+    while (bits >= 5) {
+      out += B32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+
+  // Whatever is left, padded out to a final character rather than dropped.
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+
+  return out;
+}
+
+function fromBase32(text: string): Buffer | undefined {
+  let bits = 0;
+  let value = 0;
+  const out: number[] = [];
+
+  for (const character of text.toUpperCase()) {
+    const at = B32.indexOf(character);
+    if (at < 0) return undefined;
+
+    value = (value << 5) | at;
+    bits += 5;
+
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 255);
+      bits -= 8;
+    }
+  }
+
+  return Buffer.from(out);
+}
+
+/**
  * Turn an invite into the string a QR code carries.
  *
  * Encrypted with the password rather than merely signed by it. An onion
@@ -118,7 +173,7 @@ export interface Invite {
  * still need the password to get anything out of it.
  */
 export function sealInvite(invite: Omit<Invite, "salt">, password: string): string {
-  const salt = randomBytes(9).toString("base64url");
+  const salt = toBase32(randomBytes(5));
   const key = inviteKey(password, salt);
 
   const body = Buffer.from(JSON.stringify({ o: invite.onion, n: invite.name }), "utf8");
@@ -139,12 +194,9 @@ export function sealInvite(invite: Omit<Invite, "salt">, password: string): stri
 
   const mac = createHmac("sha256", key).update(body).digest().subarray(0, 8);
 
-  return [
-    "reaper1",
-    salt,
-    body.toString("base64url"),
-    mac.toString("base64url"),
-  ].join(".");
+  // Upper case throughout, including the prefix, so the whole string lives in
+  // the QR's alphanumeric set and nothing forces it into byte mode.
+  return ["REAPER1", salt, toBase32(body), toBase32(mac)].join(".");
 }
 
 /**
@@ -162,21 +214,20 @@ export function openInvite(
   password: string,
 ): { ok: true; invite: Invite } | { ok: false; reason: "not-an-invite" | "wrong-password" } {
   const parts = code.trim().split(".");
-  if (parts.length !== 4 || parts[0] !== "reaper1") return { ok: false, reason: "not-an-invite" };
-
-  const [, salt, payload, mac] = parts;
-
-  let body: Buffer;
-  let given: Buffer;
-
-  try {
-    body = Buffer.from(payload, "base64url");
-    given = Buffer.from(mac, "base64url");
-  } catch {
+  // Case-insensitive, because a QR scanner returns what was encoded but a
+  // person typing the code by hand will not hold shift for forty characters.
+  if (parts.length !== 4 || parts[0].toUpperCase() !== "REAPER1") {
     return { ok: false, reason: "not-an-invite" };
   }
 
-  if (!body.length || given.length !== 8) return { ok: false, reason: "not-an-invite" };
+  const [, salt, payload, mac] = parts;
+
+  const body = fromBase32(payload);
+  const given = fromBase32(mac);
+
+  if (!body || !given || !body.length || given.length !== 8) {
+    return { ok: false, reason: "not-an-invite" };
+  }
 
   const key = inviteKey(password, salt);
   const want = createHmac("sha256", key).update(body).digest().subarray(0, 8);
@@ -212,7 +263,11 @@ export function openInvite(
  * devices in the same room, not left standing as a permanent credential.
  */
 function inviteKey(password: string, salt: string): Buffer {
-  return scryptSync(password.normalize("NFKC"), `reaper-pair.${salt}`, 32, {
+  // The salt is upper-case base32 as produced, but it arrives back as whatever
+  // the user typed. Folding it here rather than at the call sites means a code
+  // entered in lower case derives the same key — which it must, because a
+  // forty-character string typed by hand is not going to be typed in capitals.
+  return scryptSync(password.normalize("NFKC"), `reaper-pair.${salt.toUpperCase()}`, 32, {
     N: 1 << 14, r: 8, p: 1, maxmem: 64 * 1024 * 1024,
   });
 }

@@ -45,9 +45,10 @@ const METHODS = [
   "netAnnounce", "netFocus", "netDrop", "netTune", "netLog", "netStats",
   "netStatsReset", "setKey", "dmKey", "wrapKey", "unwrapKey",
   "exportCommunity", "importCommunity", "communities", "sharedWith", "compact",
-  "torStatus", "exportIdentity", "importIdentity",
+  "torStatus",
   "putBlob", "getBlob", "hasBlob", "wantBlob", "sweepBlobs", "forgetBlob",
   "deviceInfo", "deviceName", "deviceTakeOver",
+  "pairPassword", "pairInvite", "pairJoin", "pairSync",
   "linkOpen",
   "syncDevices", "syncWith",
 ] as const;

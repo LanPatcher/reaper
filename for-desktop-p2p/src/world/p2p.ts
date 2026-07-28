@@ -220,12 +220,8 @@ contextBridge.exposeInMainWorld("p2p", {
    * There is no server, so there is no account to recover — the private key
    * *is* the account.
    */
-  exportIdentity: (passphrase: string): Promise<string> =>
-    ipcRenderer.invoke("p2p:exportIdentity", passphrase),
 
   /** Replace this device's identity. Destructive; confirm first. */
-  importIdentity: (bundle: string, passphrase: string): Promise<{ userId: string }> =>
-    ipcRenderer.invoke("p2p:importIdentity", bundle, passphrase),
 
   /** Store attachment bytes locally; the message quotes the id it returns. */
   putBlob: (community: string, base64: string): Promise<{ id: string; size: number }> =>
@@ -387,6 +383,22 @@ contextBridge.exposeInMainWorld("p2p", {
     ipcRenderer.invoke("p2p:syncDevices"),
 
   /** Sync with a device whose sync address was typed or scanned. */
+  /** Whether a pairing password is set, or set one. Never returns it. */
+  pairPassword: (password?: string): Promise<{ set: boolean }> =>
+    ipcRenderer.invoke("p2p:pairPassword", password),
+
+  /** A code for another device to scan. */
+  pairInvite: (): Promise<{ code: string; onion: string; name: string }> =>
+    ipcRenderer.invoke("p2p:pairInvite"),
+
+  /** Join the account behind a scanned or pasted code. */
+  pairJoin: (code: string, password: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("p2p:pairJoin", code, password),
+
+  /** Sync every device this one knows about. */
+  pairSync: (): Promise<{ done: unknown[]; failed: { name: string; error: string }[] }> =>
+    ipcRenderer.invoke("p2p:pairSync"),
+
   syncWith: (onion: string): Promise<LinkProgress> =>
     ipcRenderer.invoke("p2p:syncWith", onion),
 
