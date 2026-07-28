@@ -463,6 +463,17 @@ export interface PairHooks {
   /** The highest claim number this device knows about. */
   claimN(): number;
 
+  /**
+   * A line for the log.
+   *
+   * Optional, and the reason it exists is that a pairing which simply goes
+   * quiet is otherwise unreadable from either end. A connection can be open,
+   * carry nothing, and time out two minutes later, and neither device can say
+   * whether it sent a greeting, received one, or was never reached at all —
+   * which is three different faults presented as one silence.
+   */
+  trace?(line: string): void;
+
   /** A peer has proved itself; remember where it is and what it is called. */
   learn(peer: { device: string; name: string; onion: string }): void;
 
@@ -512,6 +523,22 @@ class Session {
    * different problems with four different answers, presented identically.
    */
   #stage: "opening" | "greeted" | "authorised" | "transferring" = "opening";
+
+  /**
+   * Whether this side has answered the peer's nonce with a proof.
+   *
+   * The greeting exchange used to depend on seeing the peer's *first* greeting
+   * — the one with an empty proof — because that is what triggered the reply.
+   * If that particular message was missed for any reason, this side never sent
+   * a proof, the peer never authorised, and both sat waiting until the idle
+   * timer fired two minutes later. A connection that is open, carrying
+   * nothing, going nowhere.
+   *
+   * Keyed on having answered rather than on which greeting arrived: any
+   * greeting carries a nonce, so any greeting is enough to reply to, and the
+   * exchange converges from whichever ones actually turn up.
+   */
+  #answered = false;
 
   #authorised = false;
   #saidDone = false;
@@ -582,8 +609,11 @@ class Session {
       this.#socket.setNoDelay(true);
       this.#touch();
 
+      this.#hooks.trace?.("session opened");
+
       this.#socket.on("data", (chunk: Buffer) => {
         this.#touch();
+        this.#hooks.trace?.(`<< ${chunk.length} bytes`);
 
         try {
           this.#reader.push(chunk, (msg) => this.#handle(msg));
@@ -637,6 +667,8 @@ class Session {
    * one extra message that costs nothing on an already-open circuit.
    */
   #handle(msg: Wire): void {
+    this.#hooks.trace?.(`<- ${msg.t}`);
+
     switch (msg.t) {
       case "hello": {
         // Before the password, because a version mismatch makes every other
@@ -662,9 +694,11 @@ class Session {
           .update(`${msg.device}:${this.#nonce}`)
           .digest("hex");
 
-        // An empty proof is the opening greeting; answer it with one over
-        // their nonce. A filled one is their answer to ours.
-        if (!msg.proof) {
+        // Answer any greeting that has not been answered, whether or not it
+        // carried a proof of its own. Waiting specifically for the empty one
+        // is what turned a single missed message into a deadlock.
+        if (!this.#answered && msg.nonce) {
+          this.#answered = true;
           this.#result.device = msg.device;
           this.#result.name = msg.name || "a device";
           this.#result.onion = msg.onion || "";
@@ -682,7 +716,11 @@ class Session {
               .digest("hex"),
             communities: this.#hooks.communities(),
           });
-          return;
+
+          // Falls through rather than returning when this greeting also
+          // carried a proof: one message can both ask and answer, and treating
+          // it as only an ask is the other half of the same deadlock.
+          if (!msg.proof) return;
         }
 
         if (msg.proof.length !== expect.length ||
@@ -858,7 +896,12 @@ class Session {
   }
 
   #send(message: Wire): void {
-    if (this.#socket.destroyed) return;
+    if (this.#socket.destroyed) {
+      this.#hooks.trace?.(`-> ${message.t} dropped: socket already closed`);
+      return;
+    }
+
+    this.#hooks.trace?.(`-> ${message.t}`);
     this.#socket.write(frame(message));
   }
 
@@ -868,7 +911,17 @@ class Session {
     // Restarted by traffic rather than set once for the whole session. A large
     // account over a slow circuit takes as long as it takes; silence is the
     // thing worth giving up on.
-    this.#timer = setTimeout(() => this.#fail("that device stopped responding"), IDLE_MS);
+    this.#timer = setTimeout(() => {
+      // Named by stage, like the close is. "Timed out" alone cannot tell
+      // "nothing ever arrived" from "it stopped halfway", and those have
+      // different causes.
+      this.#fail(
+        this.#stage === "opening"
+          ? "timed out: the connection opened but that device never sent anything — " +
+            "it may not be running the pairing service on the address published"
+          : `timed out after ${this.#stage}`,
+      );
+    }, IDLE_MS);
   }
 
   #settle(): void {

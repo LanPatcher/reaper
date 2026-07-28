@@ -467,6 +467,75 @@ await lopsided();
   mute.close();
 }
 
+/* ---- a greeting that goes missing ---------------------------------------- */
+
+/**
+ * The exchange has to converge even if the opening greeting is never seen.
+ *
+ * A pairing that opens a connection, carries nothing and times out two minutes
+ * later is the hardest failure to read, because both devices are behaving
+ * correctly by their own lights and neither has anything to report. The way to
+ * get there used to be a single missed message: this side replied with a proof
+ * only when it saw a greeting with an *empty* proof, so if that one greeting
+ * was dropped, no proof was ever sent, the peer never authorised, and both
+ * waited for each other.
+ *
+ * Dropping it deliberately here. The exchange must still finish.
+ */
+{
+  const password = "correct horse";
+
+  const listens = device("Ray's phone", password, "p".repeat(56) + ".onion");
+  const dials = device("Ray's desktop", password, "d".repeat(56) + ".onion");
+
+  dials.logs.set("@index", [event("a friend")]);
+
+  const listener = new PairService(listens.hooks);
+  const direct = await listener.open();
+
+  // Swallows the first message travelling towards the dialling side — its
+  // peer's opening greeting — and passes everything after it through.
+  const lossy = createServer((near) => {
+    const far = new Socket();
+    far.connect(direct, "127.0.0.1");
+
+    let dropped = false;
+
+    near.on("data", (c: Buffer) => far.write(c));
+    far.on("data", (c: Buffer) => {
+      if (!dropped) { dropped = true; return; }
+      near.write(c);
+    });
+
+    near.on("error", () => {});
+    far.on("error", () => {});
+    near.on("close", () => { setTimeout(() => far.end(), 200); });
+    far.on("close", () => { setTimeout(() => near.end(), 200); });
+  });
+
+  await new Promise<void>((done) => lossy.listen(0, "127.0.0.1", () => done()));
+  const port = (lossy.address() as { port: number }).port;
+
+  let failed = "";
+  let result;
+
+  try {
+    result = await dial(new PairService(dials.hooks), port);
+  } catch (error) {
+    failed = (error as Error).message;
+  }
+
+  ck("a lost opening greeting does not deadlock the exchange", !failed, failed);
+  ck("  and the pairing still completes", Boolean(result?.done));
+  ck(
+    "  and the events still crossed",
+    (listens.logs.get("@index") ?? []).length === 1,
+  );
+
+  lossy.close();
+  await listener.close();
+}
+
 /* ---- two devices on different builds -------------------------------------- */
 
 /**
