@@ -86,6 +86,11 @@ function device(identity: ReturnType<typeof createIdentity>, name: string) {
       blobs.set(community, bag);
     },
 
+    holding: () => false,
+    asking: () => false,
+    defer: () => {},
+    handOver: () => {},
+
     claims: () => claims,
     addClaim: (claim) => {
       if (!claims.some((c) => c.device === claim.device && c.n === claim.n)) {
@@ -95,6 +100,26 @@ function device(identity: ReturnType<typeof createIdentity>, name: string) {
   };
 
   return { hooks, logs, blobs, claims, id };
+}
+
+/**
+ * Open a connection and run a session over it.
+ *
+ * `LinkService` no longer dials anything itself: the only transport is Tor, and
+ * opening a circuit belongs to the code that knows what an onion address is.
+ * `adopt` takes a socket that is already connected, so a test has to bring its
+ * own.
+ */
+async function dial(service: LinkService, port: number) {
+  const { Socket } = await import("node:net");
+  const socket = new Socket();
+
+  await new Promise<void>((resolve, reject) => {
+    socket.once("error", reject);
+    socket.connect(port, "127.0.0.1", () => resolve());
+  });
+
+  return service.adopt(socket, { files: true });
 }
 
 let counter = 0;
@@ -130,20 +155,26 @@ function event(author: string, body: string): SignedEvent {
   desktop.logs.set("srv_one", [event(identity.userId, "hello there")]);
   phone.logs.set("dm_two", [event(identity.userId, "sent from the phone")]);
 
-  // A file only the desktop holds, named by its hash the way the store does.
-  const bytes = randomBytes(400_000);
-  const blob = createHash("sha256").update(bytes).digest("hex");
-  desktop.blobs.set("srv_one", new Map([[blob, bytes]]));
+  // A profile picture, and an attachment. Only one of them is meant to travel.
+  const picture = randomBytes(40_000);
+  const pictureId = createHash("sha256").update(picture).digest("hex");
+  desktop.blobs.set("@avatars", new Map([[pictureId, picture]]));
+
+  const attachment = randomBytes(400_000);
+  const attachmentId = createHash("sha256").update(attachment).digest("hex");
+  desktop.blobs.set("srv_one", new Map([[attachmentId, attachment]]));
+
+  desktop.logs.set("@avatars", [event(identity.userId, "a picture")]);
 
   desktop.claims.push({ device: desktop.id, name: "Ray's desktop", n: 1, at: 1000 });
 
   const listener = new LinkService(phone.hooks);
   const dialler = new LinkService(desktop.hooks);
 
-  const port = await listener.open({ announce: false });
+  const port = await listener.open();
   ck("a device opens a port to be linked on", port > 0, String(port));
 
-  const progress = await dialler.connect("127.0.0.1", port);
+  const progress = await dial(dialler, port);
 
   ck("the link completes", progress.done);
   ck("and says which device it spoke to", progress.name === "Ray's phone", progress.name);
@@ -163,12 +194,17 @@ function event(author: string, body: string): SignedEvent {
   ck("and the desktop has the conversation that only existed on the phone",
      (desktop.logs.get("dm_two") ?? []).length === 1);
 
-  ck("the file crossed as well",
-     phone.blobs.get("srv_one")?.get(blob)?.length === bytes.length,
-     String(phone.blobs.get("srv_one")?.get(blob)?.length));
+  // Pictures travel, because nobody else has your own face to send back.
+  ck("the profile picture crossed",
+     !!phone.blobs.get("@avatars")?.get(pictureId)?.equals(picture),
+     String(phone.blobs.get("@avatars")?.get(pictureId)?.length));
 
-  ck("and arrived byte for byte",
-     !!phone.blobs.get("srv_one")?.get(blob)?.equals(bytes));
+  // Attachments do not. They can be fetched from whoever sent them, they are
+  // the bulk of the store, and this link runs entirely over Tor — pushing them
+  // through three relays to save a request that may never be made is a poor
+  // trade for both devices and for the network.
+  ck("and the attachment did not",
+     !phone.blobs.get("srv_one")?.get(attachmentId));
 
   ck("the phone learned which device holds the address",
      phone.claims.some((c) => c.device === desktop.id && c.n === 1));
@@ -191,9 +227,9 @@ function event(author: string, body: string): SignedEvent {
   a.logs.set("@index", [event(identity.userId, "x"), event(identity.userId, "y")]);
 
   const listener = new LinkService(b.hooks);
-  const port = await listener.open({ announce: false });
+  const port = await listener.open();
 
-  await new LinkService(a.hooks).connect("127.0.0.1", port);
+  await dial(new LinkService(a.hooks), port);
 
   // Counted on the receiving side. `progress.events` is what *this* device
   // merged, and the device that dialled had nothing to learn — reading its
@@ -203,7 +239,7 @@ function event(author: string, body: string): SignedEvent {
      String((b.logs.get("@index") ?? []).length));
 
   const before = (b.logs.get("@index") ?? []).length;
-  const again = await new LinkService(a.hooks).connect("127.0.0.1", port);
+  const again = await dial(new LinkService(a.hooks), port);
 
   ck("the second moves nothing",
      again.events === 0 && (b.logs.get("@index") ?? []).length === before,
@@ -222,11 +258,11 @@ function event(author: string, body: string): SignedEvent {
   const stranger = device(theirs, "a neighbour's laptop");
 
   const listener = new LinkService(me.hooks);
-  const port = await listener.open({ announce: false });
+  const port = await listener.open();
 
   let refused = "";
   try {
-    await new LinkService(stranger.hooks).connect("127.0.0.1", port);
+    await dial(new LinkService(stranger.hooks), port);
   } catch (error) {
     refused = (error as Error).message;
   }

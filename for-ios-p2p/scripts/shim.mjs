@@ -92,6 +92,10 @@ const TESTS = [
   // Everything substituted, because this one runs the app's own startup
   // sequence rather than comparing a shim against Node.
   { file: "src/shim/start.test.ts", shimmed: "full" },
+
+  // Both halves of the device link, in one process, with the phone's socket on
+  // one side and Node's on the other, over a real TCP connection.
+  { file: "src/shim/handshake.test.ts", shimmed: "sockets" },
 ];
 
 /**

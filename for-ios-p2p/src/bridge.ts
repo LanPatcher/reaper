@@ -48,7 +48,7 @@ const METHODS = [
   "torStatus", "exportIdentity", "importIdentity",
   "putBlob", "getBlob", "hasBlob", "wantBlob", "sweepBlobs", "forgetBlob",
   "deviceInfo", "deviceName", "deviceTakeOver",
-  "linkOpen", "linkClose", "linkPeers", "linkTo",
+  "linkOpen",
   "syncDevices", "syncWith",
 ] as const;
 

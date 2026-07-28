@@ -1377,6 +1377,7 @@
             "Discarded": "Descartado",
             "Do not disturb": "No molestar",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "No uses la misma identidad en dos máquinas a la vez — ambas firmarían como la misma persona, y eso ya no se puede deshacer.",
+            "Everything travels over Tor, so the two devices do not have to be on the same network — or in the same country. Conversations, friends, servers, settings and anything still waiting to send all come across; attachments do not, because they can be fetched from whoever sent them.": "Todo viaja por Tor, así que los dos dispositivos no tienen que estar en la misma red — ni en el mismo país. Conversaciones, amistades, servidores, ajustes y lo que siga pendiente de enviar pasan todo; los adjuntos no, porque se pueden pedir a quien los envió.",
             "This account has other devices. Only one of them can answer at your address at a time — if two are running, sync them so they can agree which.": "Esta cuenta tiene otros dispositivos. Solo uno puede responder en tu dirección a la vez — si hay dos en marcha, sincronízalos para que puedan ponerse de acuerdo.",
             "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Este dispositivo aún no tiene dirección de sincronización — Tor todavía la está publicando. Suele tardar un par de minutos tras arrancar. Mientras tanto puedes copiar desde el otro dispositivo.",
             "Scan this on your other device, or copy the address.": "Escanea esto en tu otro dispositivo, o copia la dirección.",
@@ -2054,6 +2055,7 @@
             "Discarded": "Abandonné",
             "Do not disturb": "Ne pas déranger",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "N'utilisez pas la même identité sur deux machines à la fois — les deux signeraient comme la même personne, et rien ne peut le démêler ensuite.",
+            "Everything travels over Tor, so the two devices do not have to be on the same network — or in the same country. Conversations, friends, servers, settings and anything still waiting to send all come across; attachments do not, because they can be fetched from whoever sent them.": "Tout passe par Tor, donc les deux appareils n'ont pas besoin d'être sur le même réseau — ni dans le même pays. Discussions, amis, serveurs, réglages et tout ce qui attend d'être envoyé sont transférés ; les pièces jointes non, car elles peuvent être redemandées à leur expéditeur.",
             "This account has other devices. Only one of them can answer at your address at a time — if two are running, sync them so they can agree which.": "Ce compte a d'autres appareils. Un seul peut répondre à votre adresse à la fois — si deux fonctionnent, synchronisez-les pour qu'ils puissent se mettre d'accord.",
             "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Cet appareil n'a pas encore d'adresse de synchronisation — Tor est en train de la publier. Cela prend généralement une minute ou deux après le démarrage. Vous pouvez copier depuis l'autre appareil entre-temps.",
             "Scan this on your other device, or copy the address.": "Scannez ceci sur votre autre appareil, ou copiez l'adresse.",
@@ -2731,6 +2733,7 @@
             "Discarded": "Verworfen",
             "Do not disturb": "Bitte nicht stören",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "Verwende dieselbe Identität nicht auf zwei Rechnern gleichzeitig — beide würden als dieselbe Person signieren, und das lässt sich danach nicht mehr entwirren.",
+            "Everything travels over Tor, so the two devices do not have to be on the same network — or in the same country. Conversations, friends, servers, settings and anything still waiting to send all come across; attachments do not, because they can be fetched from whoever sent them.": "Alles läuft über Tor, die beiden Geräte müssen also weder im selben Netzwerk noch im selben Land sein. Unterhaltungen, Freunde, Server, Einstellungen und alles, was noch auf den Versand wartet, kommen mit; Anhänge nicht, weil sie bei den Absendern wieder abgeholt werden können.",
             "This account has other devices. Only one of them can answer at your address at a time — if two are running, sync them so they can agree which.": "Dieses Konto hat weitere Geräte. Nur eines kann gleichzeitig unter deiner Adresse antworten — wenn zwei laufen, synchronisiere sie, damit sie sich einigen können.",
             "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Dieses Gerät hat noch keine Sync-Adresse — Tor veröffentlicht sie gerade. Das dauert nach dem Start meist ein bis zwei Minuten. In der Zwischenzeit kannst du vom anderen Gerät aus kopieren.",
             "Scan this on your other device, or copy the address.": "Scanne das auf deinem anderen Gerät, oder kopiere die Adresse.",
@@ -3408,6 +3411,7 @@
             "Discarded": "Descartado",
             "Do not disturb": "Não incomodar",
             "Do not run the same identity on two machines at once — both would sign as the same person, and nothing can untangle that afterwards.": "Não uses a mesma identidade em duas máquinas ao mesmo tempo — ambas assinariam como a mesma pessoa, e isso não se desfaz depois.",
+            "Everything travels over Tor, so the two devices do not have to be on the same network — or in the same country. Conversations, friends, servers, settings and anything still waiting to send all come across; attachments do not, because they can be fetched from whoever sent them.": "Tudo viaja por Tor, por isso os dois dispositivos não têm de estar na mesma rede — nem no mesmo país. Conversas, amigos, servidores, definições e tudo o que espera para ser enviado passam; os anexos não, porque podem ser pedidos a quem os enviou.",
             "This account has other devices. Only one of them can answer at your address at a time — if two are running, sync them so they can agree which.": "Esta conta tem outros dispositivos. Só um pode responder no teu endereço de cada vez — se houver dois a correr, sincroniza-os para que possam decidir.",
             "This device does not have a sync address yet — Tor is still publishing it. It usually takes a minute or two after starting. You can still copy from the other device in the meantime.": "Este dispositivo ainda não tem endereço de sincronização — o Tor ainda o está a publicar. Costuma demorar um ou dois minutos depois de arrancar. Entretanto podes copiar a partir do outro dispositivo.",
             "Scan this on your other device, or copy the address.": "Lê isto no teu outro dispositivo, ou copia o endereço.",
@@ -11159,15 +11163,11 @@
        * which is why every path out of here calls linkClose.
        */
       function linkDialog() {
-        var stop = function () {
-          window.p2p.linkClose().catch(function () {});
-        };
-
         modal(t("Link a device"), function (card) {
           var note = document.createElement("div");
           note.className = "muted";
           note.textContent =
-            t("Open this on both devices, on the same network. They will find each other and copy across every conversation, file, setting and queued message — including the things no peer ever sees.");
+            t("Everything travels over Tor, so the two devices do not have to be on the same network — or in the same country. Conversations, friends, servers, settings and anything still waiting to send all come across; attachments do not, because they can be fetched from whoever sent them.");
           card.appendChild(note);
 
           var mine = document.createElement("div");
@@ -11175,67 +11175,9 @@
           mine.style.fontSize = "11px";
           card.appendChild(mine);
 
-          var list = document.createElement("div");
-          card.appendChild(list);
-
           var status = document.createElement("div");
           status.className = "muted";
           card.appendChild(status);
-
-          var timer = null;
-          var busy = false;
-
-          function draw(peers) {
-            list.textContent = "";
-
-            if (!peers.length) {
-              var none = document.createElement("div");
-              none.className = "muted";
-              none.style.fontSize = "12px";
-              none.textContent =
-                t("Looking for your other devices. Nothing yet — they have to be on the same network with this screen open.");
-              list.appendChild(none);
-              return;
-            }
-
-            peers.forEach(function (peer) {
-              var row = document.createElement("div");
-              row.className = "listitem";
-
-              var name = document.createElement("div");
-              name.className = "grow";
-              name.textContent = peer.name;
-              row.appendChild(name);
-
-              var go = document.createElement("button");
-              go.className = "ghost";
-              go.textContent = t("Copy across");
-              go.onclick = async function () {
-                if (busy) return;
-                busy = true;
-                go.disabled = true;
-                status.textContent = t("Copying…");
-
-                try {
-                  var done = await window.p2p.linkTo(peer.host, peer.port);
-                  status.textContent = t("Copied {events} events and {files} files from {name}.", {
-                    events: done.events, files: done.files, name: done.name,
-                  });
-                  // The claims travelled too, so this device may have just
-                  // learned it is no longer the one answering.
-                  await refreshDevices();
-                } catch (e) {
-                  status.textContent = String((e && e.message) || e);
-                }
-
-                busy = false;
-                go.disabled = false;
-              };
-              row.appendChild(go);
-
-              list.appendChild(row);
-            });
-          }
 
           // ---- over Tor, from anywhere ---------------------------------
           //
@@ -11372,28 +11314,7 @@
             dialRow.appendChild(scan);
           }
 
-          window.p2p.linkOpen().then(function (open) {
-            mine.textContent =
-              t("This device is {name}, listening on port {port}.", {
-                name: (devices && devices.name) || t("this device"),
-                port: open.port,
-              });
-
-            var poll = function () {
-              window.p2p.linkPeers().then(draw).catch(function () {});
-            };
-
-            poll();
-            timer = setInterval(poll, 1500);
-          }).catch(function (e) {
-            mine.textContent = String((e && e.message) || e);
-          });
-
-          buttons(card, t("Done"), function () {
-            if (timer) clearInterval(timer);
-            stop();
-            closeModal();
-          });
+          buttons(card, t("Done"), closeModal);
         });
       }
 

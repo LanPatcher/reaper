@@ -1,5 +1,4 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { createSocket, type Socket as Datagram } from "node:dgram";
 import { EventEmitter } from "node:events";
 import { Socket, createServer, type Server } from "node:net";
 
@@ -78,9 +77,6 @@ import type { Summary } from "./vector";
  * together.
  */
 
-/** The port announcements go to. Chosen high and fixed so both sides agree. */
-export const LINK_DISCOVERY_PORT = 45817;
-
 /**
  * Index events that another device would want to know about promptly.
  *
@@ -109,12 +105,6 @@ export const WORTH_SYNCING = new Set([
   "peer.enckey",
 ]);
 
-/** How often to announce while linking is open. */
-const ANNOUNCE_EVERY_MS = 2000;
-
-/** How long an announcement is believed after it stops arriving. */
-const FORGET_AFTER_MS = 8000;
-
 /**
  * How long to wait for the other side to say anything.
  *
@@ -127,23 +117,27 @@ const FORGET_AFTER_MS = 8000;
  */
 const HANDSHAKE_TIMEOUT_MS = 90_000;
 
-/** Bytes per blob chunk on the wire. Larger than Tor's — this is a LAN. */
-const CHUNK = 256 * 1024;
+/**
+ * Bytes per blob chunk on the wire.
+ *
+ * Modest, because everything now goes through Tor. A large chunk on a circuit
+ * is a long stall in one direction rather than a faster transfer.
+ */
+const CHUNK = 64 * 1024;
 
-export interface LinkPeer {
-  /** Where it is, this time. Not stable and not worth storing. */
-  host: string;
-  port: number;
-
-  /** What it calls itself. Shown to the user; not trusted for anything. */
-  name: string;
-
-  /** Its device id, so a claim can be attributed. */
-  device: string;
-
-  /** When it was last heard from. */
-  at: number;
-}
+/**
+ * The only files a device link carries.
+ *
+ * Attachments are not synced between your own devices and that is deliberate:
+ * they can be fetched from whoever sent them, they are the bulk of the store
+ * by far, and pushing them through three relays to save a request that may
+ * never be made is a poor trade for both devices and for the network.
+ *
+ * Pictures are the exception, because there is nobody to fetch *your own* face
+ * from. Profile pictures, banners and server icons all live in this one store,
+ * so naming it is the whole rule.
+ */
+const PICTURES = "@avatars";
 
 /**
  * Everything the link needs from the rest of the app.
@@ -173,6 +167,18 @@ export interface LinkHooks {
 
   claims(): Claim[];
   addClaim(claim: Claim): void;
+
+  /** Whether this device is publishing the account address right now. */
+  holding(): boolean;
+
+  /** Whether the user has asked this device to take the address over. */
+  asking(): boolean;
+
+  /** Another device is already publishing; stop expecting to. */
+  defer(device: string, name: string): void;
+
+  /** Another device asked for the address and this one has it. Give it up. */
+  handOver(device: string, name: string): void;
 }
 
 /** What one side tells the other about a sync as it goes. */
@@ -188,7 +194,7 @@ export interface LinkProgress {
 type Message =
   | { t: "hello"; v: number; device: string; name: string; nonce: string; fingerprint: string }
   | { t: "proof"; sig: string }
-  | { t: "claims"; claims: Claim[] }
+  | { t: "claims"; claims: Claim[]; holding: boolean; asking: boolean }
   | { t: "want"; community: string; summary: Summary; blobs: string[] }
   | { t: "give"; community: string; events: SignedEvent[] }
   | { t: "logs"; communities: string[] }
@@ -204,7 +210,14 @@ function challenge(a: string, b: string): Buffer {
     .digest();
 }
 
-/** The announcement fingerprint: proves knowledge of the key without naming it. */
+/**
+ * Proves knowledge of the account key without naming it.
+ *
+ * Kept from the discovery packet it was written for, because the handshake
+ * uses it too: each side sends `sha256(publicKey ‖ salt)` with a fresh salt,
+ * and the other recomputes it. No public key crosses the wire, so watching the
+ * exchange reveals neither who you are nor that two devices belong together.
+ */
 export function fingerprint(publicKey: string, salt: string): string {
   return createHash("sha256").update(publicKey).update(salt).digest("hex");
 }
@@ -228,10 +241,6 @@ function sessionKey(identity: Identity, a: string, b: string): Buffer {
 export class LinkService extends EventEmitter {
   #hooks: LinkHooks;
   #server: Server | undefined;
-  #radio: Datagram | undefined;
-  #beacon: ReturnType<typeof setInterval> | undefined;
-  #salt = randomBytes(16).toString("hex");
-  #seen = new Map<string, LinkPeer>();
   #port = 0;
 
   constructor(hooks: LinkHooks) {
@@ -243,47 +252,30 @@ export class LinkService extends EventEmitter {
     return this.#port;
   }
 
-  /** Devices heard from recently, freshest first. */
-  peers(): LinkPeer[] {
-    const now = Date.now();
-    for (const [key, peer] of this.#seen) {
-      if (now - peer.at > FORGET_AFTER_MS) this.#seen.delete(key);
-    }
-    return [...this.#seen.values()].sort((a, b) => b.at - a.at);
-  }
-
   /**
-   * Start listening and announcing.
+   * Start listening for the other devices on this account.
    *
-   * Both at once on purpose. Which device dials and which answers should not
-   * be something the user has to decide, and making every device do both means
-   * whichever opens the screen second finds the other immediately.
+   * Tor forwards this device's sync service to whichever port this returns, so
+   * it has to be open before Tor is configured — see `bridge.ts`.
+   *
+   * There is no local-network half any more. It was removed rather than left
+   * as a fast path: it needed UDP broadcast, an announcement protocol, a
+   * discovery UI and a second set of failure modes, all to save time on a
+   * transfer that is now a few hundred kilobytes of events. One way of doing
+   * this is easier to make correct than two, and correct is what it was
+   * missing.
    */
-  async open(options: { announce?: boolean } = {}): Promise<number> {
+  async open(): Promise<number> {
     if (this.#server) return this.#port;
 
     this.#port = await this.#listen();
-
-    // Separable so a test can drive two of these over loopback without
-    // depending on whether the machine it runs on will carry a broadcast at
-    // all — which, in a container, it will not.
-    if (options.announce !== false) this.#announce();
-
     return this.#port;
   }
 
-  /** Stop listening, stop announcing, forget who was seen. */
+  /** Stop listening. */
   close(): void {
-    if (this.#beacon) clearInterval(this.#beacon);
-    this.#beacon = undefined;
-
-    this.#radio?.close();
-    this.#radio = undefined;
-
     this.#server?.close();
     this.#server = undefined;
-
-    this.#seen.clear();
     this.#port = 0;
   }
 
@@ -321,100 +313,8 @@ export class LinkService extends EventEmitter {
     });
   }
 
-  #announce(): void {
-    const radio = createSocket({ type: "udp4", reuseAddr: true });
-    this.#radio = radio;
-
-    radio.on("error", (error) => this.emit("log", `link discovery: ${error.message}`));
-
-    radio.on("message", (raw, from) => {
-      let packet: Record<string, unknown>;
-      try {
-        packet = JSON.parse(raw.toString("utf8")) as Record<string, unknown>;
-      } catch {
-        // Anything at all can arrive on a broadcast port.
-        return;
-      }
-
-      if (packet.t !== "reaper-link" || typeof packet.salt !== "string") return;
-      if (typeof packet.device !== "string" || packet.device === this.#hooks.device) return;
-
-      // The only check that matters: could this have been produced without the
-      // account's public key? The salt is theirs, so the hash is recomputed
-      // rather than compared to anything stored.
-      const expected = fingerprint(this.#hooks.identity.publicKey, packet.salt);
-      if (packet.fingerprint !== expected) return;
-
-      const port = Number(packet.port);
-      if (!Number.isInteger(port) || port <= 0 || port > 65535) return;
-
-      this.#seen.set(packet.device, {
-        host: from.address,
-        port,
-        name: typeof packet.name === "string" ? packet.name : "a device",
-        device: packet.device,
-        at: Date.now(),
-      });
-
-      this.emit("peers", this.peers());
-    });
-
-    radio.bind(LINK_DISCOVERY_PORT, () => {
-      try {
-        radio.setBroadcast(true);
-      } catch (error) {
-        this.emit("log", `link discovery cannot broadcast: ${(error as Error).message}`);
-      }
-
-      const beat = () => {
-        // A fresh salt every time, so two announcements cannot be linked to
-        // each other by an observer who is simply watching the port.
-        this.#salt = randomBytes(16).toString("hex");
-
-        const packet = Buffer.from(JSON.stringify({
-          t: "reaper-link",
-          v: 1,
-          device: this.#hooks.device,
-          name: this.#hooks.name,
-          port: this.#port,
-          salt: this.#salt,
-          fingerprint: fingerprint(this.#hooks.identity.publicKey, this.#salt),
-        }), "utf8");
-
-        radio.send(packet, 0, packet.length, LINK_DISCOVERY_PORT, "255.255.255.255",
-          (error) => {
-            if (error) this.emit("log", `link announce: ${error.message}`);
-          });
-      };
-
-      beat();
-      this.#beacon = setInterval(beat, ANNOUNCE_EVERY_MS);
-    });
-  }
-
   /**
-   * Dial a device and sync with it.
-   *
-   * The address comes from an announcement or from the user typing what the
-   * other device is showing. Either way it is not trusted — the handshake is
-   * what decides, and a wrong address simply fails to authenticate.
-   */
-  async connect(host: string, port: number): Promise<LinkProgress> {
-    const socket = new Socket();
-
-    await new Promise<void>((resolve, reject) => {
-      socket.once("error", reject);
-      socket.connect(port, host, () => {
-        socket.removeListener("error", reject);
-        resolve();
-      });
-    });
-
-    return this.#session(socket, true);
-  }
-
-  /**
-   * Sync with a device that is not on this network.
+   * Sync over a connection somebody else opened.
    *
    * The socket is handed in rather than opened here, because reaching another
    * of your devices through Tor is the transport's business and this module
@@ -428,8 +328,16 @@ export class LinkService extends EventEmitter {
    * people who sent them anyway. Conversations, friends, servers and the
    * outbox cannot be fetched from anywhere, so those always travel.
    */
-  async adopt(socket: Socket, options: { files?: boolean } = {}): Promise<LinkProgress> {
-    return this.#session(socket, true, options.files !== false);
+  async adopt(
+    socket: Socket,
+    options: { files?: boolean; first?: boolean } = {},
+  ): Promise<LinkProgress> {
+    // `first` decides who offers before asking, and the two sides must
+    // disagree about it or both wait for the other. Dialling is the default
+    // because that is every caller in the app; it is settable so a test can
+    // stand in for the listener, which is the only way to run both halves of
+    // this protocol in one process.
+    return this.#session(socket, options.first !== false, options.files !== false);
   }
 
   /**
@@ -619,13 +527,42 @@ export class LinkService extends EventEmitter {
 
       // ---- who holds the address -------------------------------------------
 
-      send({ t: "claims", claims: this.#hooks.claims() });
+      // ---- who is actually answering right now -----------------------------
+      //
+      // The claim ledger says who *should* hold the address. This says who
+      // *does* — and when the two disagree, the one that is already published
+      // wins. An address is a live thing: a device that is answering at it has
+      // people connected to it, and a ledger entry written somewhere else does
+      // not change that. Taking it over by writing a number was how two
+      // devices ended up both publishing.
+      //
+      // So control is asked for rather than declared, and only when the user
+      // has pressed the button that asks for it.
+      send({
+        t: "claims",
+        claims: this.#hooks.claims(),
+        holding: this.#hooks.holding(),
+        asking: this.#hooks.asking(),
+      });
 
       const theirClaims = await receive();
       if (theirClaims.t !== "claims") throw new Error("the link went out of step");
 
       for (const claim of theirClaims.claims) {
         if (isClaim(claim)) this.#hooks.addClaim(claim);
+      }
+
+      // They are publishing and this device is not asking to take over, so
+      // this device defers — whatever the ledger says.
+      if (theirClaims.holding && !this.#hooks.asking()) {
+        this.#hooks.defer(progress.device, progress.name);
+      }
+
+      // They asked, and this device is the one holding. Handing over is the
+      // only way a second device can ever get the address, and it happens here
+      // rather than by anyone writing a bigger number.
+      if (theirClaims.asking && this.#hooks.holding()) {
+        this.#hooks.handOver(progress.device, progress.name);
       }
 
       // ---- logs -------------------------------------------------------------
@@ -746,14 +683,15 @@ export class LinkService extends EventEmitter {
       send({ t: "give", community, events: missing.slice(at, at + 500) });
     }
 
-    // Skipped entirely when the link is running over Tor. Not a limitation
-    // being worked around — attachments can be fetched from the people who
-    // sent them, and pushing the whole store through three relays to save a
-    // request that will probably never be made is a poor trade for both
-    // devices and for the network.
+    // Pictures only — see `PICTURES`.
+    //
+    // Attachments are never carried between your own devices: they can be
+    // fetched from whoever sent them, they are the bulk of the store, and this
+    // link runs entirely over Tor. Your own profile picture, banner and server
+    // icons have nobody else to come from, which is the entire exception.
     let held: string[] = [];
     try {
-      if (files) held = this.#hooks.blobIds(community);
+      if (files && community === PICTURES) held = this.#hooks.blobIds(community);
     } catch { /* none */ }
 
     const theirs = new Set(message.blobs);

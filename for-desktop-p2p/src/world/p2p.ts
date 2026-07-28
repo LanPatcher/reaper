@@ -376,19 +376,6 @@ contextBridge.exposeInMainWorld("p2p", {
   /** Answer here from now on. This is the Reconnect button. */
   deviceTakeOver: (): Promise<DeviceInfo> => ipcRenderer.invoke("p2p:deviceTakeOver"),
 
-  /** Start listening for, and announcing to, your other devices. */
-  linkOpen: (): Promise<{ port: number }> => ipcRenderer.invoke("p2p:linkOpen"),
-
-  /** Stop. Nothing is announced on the network once this returns. */
-  linkClose: (): Promise<boolean> => ipcRenderer.invoke("p2p:linkClose"),
-
-  /** Devices of yours heard from in the last few seconds. */
-  linkPeers: (): Promise<LinkPeer[]> => ipcRenderer.invoke("p2p:linkPeers"),
-
-  /** Copy the whole account to or from the device at this address. */
-  linkTo: (host: string, port: number): Promise<LinkProgress> =>
-    ipcRenderer.invoke("p2p:linkTo", host, port),
-
   /**
    * Catch up with your other devices over Tor.
    *

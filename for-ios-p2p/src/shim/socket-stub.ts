@@ -1,3 +1,5 @@
+import { Buffer } from "buffer";
+
 /**
  * The native socket plugin, faked and scriptable.
  *
@@ -52,6 +54,10 @@ export const Socket = {
   async connect(args: Record<string, unknown>) {
     calls.push({ name: "connect", args });
 
+    // A real connection answers for itself. Only the scripted case needs a
+    // synthetic reply.
+    if (live.has(String(args.id))) return {};
+
     // Answered on a later turn, like a bridge call — a `connect` that reported
     // success synchronously would hide ordering bugs the device would show.
     queueMicrotask(() => fire("connect", { id: args.id }));
@@ -60,6 +66,11 @@ export const Socket = {
 
   async send(args: Record<string, unknown>) {
     calls.push({ name: "send", args });
+
+    // Out over the real socket, when there is one — see `attach`.
+    const real = live.get(String(args.id));
+    if (real) real.write(Buffer.from(String(args.data), "base64"));
+
     return {};
   },
 
@@ -85,3 +96,36 @@ export const Socket = {
     return { remove: async () => { handlers.delete(event); } };
   },
 };
+
+
+// ---- backed by a real socket -----------------------------------------------
+
+/**
+ * Wire an id to an actual TCP connection.
+ *
+ * The rest of this file scripts the native side; this makes it real. Used by
+ * `handshake.test.ts`, where the point is precisely that chunk boundaries and
+ * delivery timing come from the operating system rather than from a test
+ * author's idea of what a socket does — the bug being chased survived three
+ * fixes written against that idea.
+ */
+export async function attach(id: string, host: string, port: number): Promise<void> {
+  // Imported here rather than at the top: this file is bundled into builds
+  // that have no sockets at all, and only this function needs them.
+  const net = await import("net");
+
+  const real = net.createConnection({ host, port }, () => {
+    fire("connect", { id });
+  });
+
+  real.on("data", (chunk: Buffer) => {
+    fire("data", { id, data: chunk.toString("base64") });
+  });
+
+  real.on("close", () => fire("close", { id }));
+  real.on("error", (error: Error) => fire("error", { id, message: error.message }));
+
+  live.set(id, real);
+}
+
+const live = new Map<string, import("net").Socket>();
