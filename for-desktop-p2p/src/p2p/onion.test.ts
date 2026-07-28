@@ -331,12 +331,19 @@ function makeKey(): { key: OnionKey; publicKey: Buffer } {
 
   ck("the bridge starts tor once, not twice", instances === 1, String(instances));
 
-  // And the link server has to be listening before tor is configured, because
-  // tor is told the port it forwards to and reads its configuration once.
-  const opened = bridge.indexOf("forSync = await openLink");
+  // And the pairing server has to be listening before tor is configured,
+  // because tor is told the port it forwards to and reads its configuration
+  // once.
+  //
+  // Naming `openPair` specifically, not just "some port", is the whole value
+  // of this check now. It used to say `openLink`, and when pairing was rebuilt
+  // the address went on being published pointing at the retired service — so
+  // every attempt reached a listener speaking a protocol the caller did not,
+  // and died as "that device closed the connection".
+  const opened = bridge.indexOf("forSync = await openPair");
   const created = bridge.indexOf("new TorService(");
 
-  ck("the device link is listening before tor is configured",
+  ck("the pairing service is listening before tor is configured",
      opened >= 0 && opened < created);
 }
 

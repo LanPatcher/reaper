@@ -306,5 +306,48 @@ await pairs("batch", true);
   await listener.close();
 }
 
+/* ---- what the sync address forwards to ----------------------------------- */
+
+/**
+ * The published address has to point at *this* protocol.
+ *
+ * Checked as source text, which is normally worth little — but the property is
+ * a wiring fact that exists nowhere else and cannot be reached from a test, and
+ * getting it wrong is not a subtle failure mode. It shipped: the sync onion was
+ * configured to forward to a second, older service, so every attempt reached a
+ * listener speaking a different protocol, which read the frame header as its
+ * own length prefix and closed the socket. The user saw "that device closed the
+ * connection" and nothing else, because from this side that is all it was.
+ *
+ * So: one listener, and the address forwards to it.
+ */
+{
+  const { readFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+
+  const source = readFileSync(join(process.cwd(), "src/p2p/bridge.ts"), "utf8");
+
+  const configured = source.slice(
+    source.indexOf("let forSync = 0;"),
+    source.indexOf("role: \"account\""),
+  );
+
+  ck(
+    "the sync address forwards to the pairing service",
+    configured.includes("await openPair()"),
+  );
+
+  ck(
+    "and the superseded link service is gone entirely",
+    !source.includes("new LinkService("),
+  );
+
+  ck(
+    "so there is only one listener an onion can reach",
+    source.split("new PairService(").length - 1 >= 1 &&
+      !/openLink\(\)/.test(source),
+  );
+}
+
 console.log(failures ? `\n${failures} FAILED` : "\nall passed");
 process.exit(failures ? 1 : 0);

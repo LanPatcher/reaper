@@ -30,7 +30,7 @@ import {
   roster,
   standing,
 } from "./devices";
-import { LinkService, WORTH_SYNCING, type LinkProgress } from "./link";
+import { WORTH_SYNCING, type LinkProgress } from "./link";
 import {
   openInvite, PairService, sealInvite, PICTURES as PAIR_PICTURES,
   type PairResult,
@@ -384,7 +384,6 @@ interface DeviceRecord {
 }
 
 let device: DeviceRecord | undefined;
-let link: LinkService | undefined;
 let pair: PairService | undefined;
 
 /**
@@ -630,28 +629,33 @@ async function syncOverTor(entry: SyncAddress): Promise<LinkProgress> {
   syncing.add(entry.onion);
 
   try {
-    await openLink();
+    const result = await pairOverTor(entry.onion);
 
-    const socket = await socksConnect(entry.onion, 80);
-    const progress = await link!.adopt(socket, { files: false });
-
-    log("[link]", `synced with ${entry.name} over Tor: ${progress.events} events`);
+    log("[pair]", `synced with ${result.name || entry.name}: ${result.events} events`);
 
     await publishIfHolding();
-    announceDevices({ synced: progress });
 
+    // The shape the interface has always been handed. Pairing counts pictures
+    // where the link counted files, and they are the same number — pictures
+    // are the only files that cross.
+    const progress: LinkProgress = {
+      device: result.device,
+      name: result.name || entry.name,
+      events: result.events,
+      files: result.pictures,
+      communities: result.communities,
+      done: result.done,
+    };
+
+    announceDevices({ synced: progress });
     return progress;
   } catch (error) {
-    // Thrown on, with what actually happened.
-    //
-    // This used to swallow the error and return undefined, and the caller
-    // turned that into "that device did not answer" — which is one of about
-    // six things it could have been, and the only one that is not actionable.
-    // Tor refusing the address, the other device having no link server, a
-    // handshake that timed out and a store that would not open all produced
-    // that same sentence, so there was nothing to go on but a guess.
+    // Thrown on, with what actually happened. This used to swallow the error
+    // and return undefined, and the caller turned that into "that device did
+    // not answer" — one of about six things it could have been, and the only
+    // one that is not actionable.
     const why = (error as Error).message;
-    log("[link]", `could not sync with ${entry.name}: ${why}`);
+    log("[pair]", `could not sync with ${entry.name}: ${why}`);
     throw new Error(why);
   } finally {
     syncing.delete(entry.onion);
@@ -785,9 +789,12 @@ function setPairPassword(password: string): void {
 /**
  * The pairing service.
  *
- * Separate from `openLink` and on its own port, because they are different
- * protocols and the onion service that fronts this one must point at exactly
- * one of them. Sharing a port is how a link ends up reading chat frames.
+ * The only thing the sync onion forwards to, and that is the point. There was
+ * briefly a second service on a second port speaking an older protocol, and
+ * because the onion was still published pointing at that one, every pairing
+ * attempt died as "that device closed the connection" — the far end read a
+ * frame header it did not recognise as a length prefix and destroyed the
+ * socket. One address, one protocol, one listener.
  */
 async function openPair(): Promise<number> {
   if (pair?.port) return pair.port;
@@ -883,105 +890,6 @@ async function pairOverTor(onion: string): Promise<PairResult> {
 
   const socket = await socksConnect(onion, 80);
   return pair!.adopt(socket);
-}
-
-async function openLink(): Promise<number> {
-  if (link) return link.port;
-
-  if (!identity) throw new Error("p2p: identity not initialised");
-  const me = thisDevice();
-
-  const service = new LinkService({
-    identity,
-    device: me.id,
-    name: me.name,
-
-    // Everything, private logs included. That is the difference between this
-    // and the peer transport, and it is the reason the handshake has to be
-    // exact — see `link.ts`.
-    communities: () => {
-      const dir = join(root(), "communities");
-      const onDisk = existsSync(dir)
-        ? readdirSync(dir, { withFileTypes: true })
-            .filter((entry) => entry.isDirectory())
-            .map((entry) => entry.name)
-        : [];
-
-      return [...new Set([...onDisk, ...stores.keys(), INDEX])];
-    },
-
-    summary: (community) => storeFor(community).summary(),
-    missingForSummary: (community, summary) =>
-      [...storeFor(community).missingForSummary(summary)],
-
-    merge: (community, events) => {
-      const result = storeFor(community).merge(events);
-
-      if (result.accepted.length) {
-        try {
-          viewer?.send(P2P_EVENT, community, result.accepted.map(forRenderer));
-        } catch { /* window gone */ }
-      }
-
-      return result.accepted.length;
-    },
-
-    blobIds: (community) => blobsFor(community).ids(),
-    readBlob: (community, id) => blobsFor(community).read(id),
-
-    // `accept` rather than `write`: it re-hashes and refuses anything that
-    // does not match the name it arrived under. The link already checks that,
-    // and checking twice at the point of writing costs nothing and means the
-    // store's own guarantee does not depend on its caller being careful.
-    writeBlob: (community, id, bytes) => { blobsFor(community).accept(id, bytes); },
-
-    claims: claimsHeld,
-    addClaim,
-
-    // Whether this device is actually publishing, not whether it believes it
-    // should be. `tor.address` is set only once the service is live.
-    holding: () => !!tor?.address,
-
-    // Set by the Reconnect button and cleared once the answer arrives, so a
-    // device only takes the address when somebody asked it to.
-    asking: () => wantsAddress,
-
-    defer: (device, name) => {
-      if (!tor?.address) return;
-
-      log("[link]", `${name} is already answering at this account's address`);
-      tor.stop();
-
-      addClaim({ device, name, n: (holder(claimsHeld())?.n ?? 0) + 1, at: Date.now() });
-      announceDevices();
-    },
-
-    handOver: (device, name) => {
-      log("[link]", `handing the address to ${name}`);
-      tor?.stop();
-
-      addClaim({ device, name, n: (holder(claimsHeld())?.n ?? 0) + 1, at: Date.now() });
-      announceDevices();
-    },
-  });
-
-  service.on("log", (line: string) => log("[link]", line));
-  service.on("peers", () => announceDevices());
-
-  service.on("synced", (progress: LinkProgress) => {
-    log("[link]", `synced with ${progress.name}: ${progress.events} events, ${progress.files} files`);
-
-    // A device that has just been handed the account may have been displaced
-    // while it was away, and this is the moment it finds out.
-    void publishIfHolding().then(() => announceDevices({ synced: progress }));
-  });
-
-  service.on("failed", (reason: string) => announceDevices({ failed: reason }));
-
-  link = service;
-
-  syncPort = await service.open();
-  return syncPort;
 }
 
 function blobsFor(community: string): BlobStore {
@@ -1474,7 +1382,14 @@ export function registerP2PHandlers(): void {
     // this device can still dial its siblings, it simply cannot be dialled.
     let forSync = 0;
     try {
-      forSync = await openLink();
+      // Forwarding this to the *old* link service is what produced "that
+      // device closed the connection" on every attempt: the address was
+      // published pointing at a protocol the other end no longer speaks, so a
+      // phone's frame header was read as the link's length prefix, came out
+      // as garbage, and the socket was destroyed before a word was understood.
+      // Two protocols reachable at one address is a bug waiting to be written,
+      // which is why there is now only one.
+      forSync = await openPair();
     } catch (error) {
       log("[link]", `no device link on this device: ${String(error)}`);
     }
@@ -2123,7 +2038,7 @@ export function registerP2PHandlers(): void {
 
   ipcMain.handle(CHANNEL.linkOpen, async (event) => {
     viewer = event.sender;
-    return { port: await openLink() };
+    return { port: await openPair() };
   });
 
   ipcMain.handle(CHANNEL.syncDevices, async (event) => {
