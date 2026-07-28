@@ -86,6 +86,14 @@ export interface TorOptions {
    * for rather than inferring it from a path it does not own.
    */
   role?: "account" | "sync";
+
+  /**
+   * Whether to publish the account address as well as the sync one.
+   *
+   * False on a device that another of your devices has taken the address from.
+   * The sync service stays up regardless — see `#torrc`.
+   */
+  account?: boolean;
 }
 
 export class TorService extends EventEmitter {
@@ -93,6 +101,24 @@ export class TorService extends EventEmitter {
   #options: TorOptions;
   #onionAddress: string | undefined;
   #syncAddress: string | undefined;
+
+  /**
+   * Publish the account address, or stop publishing it.
+   *
+   * Restarts tor, because its configuration is read once at startup. The sync
+   * service survives that: its key is on disk, so it comes back at the same
+   * address, and the only thing that changes is whether the account descriptor
+   * is offered alongside it.
+   */
+  async setAccount(publish: boolean): Promise<void> {
+    if ((this.#options.account !== false) === publish) return;
+
+    this.#options.account = publish;
+    if (!this.running) return;
+
+    this.stop();
+    await this.start();
+  }
 
   constructor(options: TorOptions) {
     super();
@@ -152,9 +178,26 @@ export class TorService extends EventEmitter {
       `DataDirectory ${join(dataDir, "state")}`,
       `HiddenServiceDir ${serviceDir}`,
       // Port 80 on the onion maps to our local listener, so peers dial a
-      // stable well-known port and never learn the local one.
+      // plain address with no port on the end of it.
       `HiddenServicePort 80 127.0.0.1:${this.#options.targetPort}`,
     ];
+
+    // Whether the *account* service is offered at all.
+    //
+    // A device that is not holding the address must not publish a descriptor
+    // for it, or two devices answer at one address and peers reach whichever
+    // published most recently. But it must go on publishing its **sync**
+    // address, and that distinction is the whole of this method: they are two
+    // services in one tor process, and withdrawing one used to mean stopping
+    // the process, which took the other with it.
+    //
+    // What that cost was not small. A displaced device had no sync address, so
+    // it could not be dialled by its sibling, could not show a pairing code,
+    // and could not be reached to hand the account back — which is precisely
+    // when reaching it matters most. Sync worked in one direction only, and the
+    // "signed in elsewhere" screen had no way to resolve itself.
+    if (!this.#options.account) lines.length = 0;
+
 
     // The second service, for this device's own devices.
     //
