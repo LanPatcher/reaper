@@ -37,6 +37,39 @@ import Tor
  * iCloud backup — a key that syncs to a second device is a key two devices
  * would both try to publish from.
  */
+/**
+ * The loopback port tor's SOCKS proxy listens on.
+ *
+ * Fixed, not `auto`, and that is the whole point.
+ *
+ * With `auto` the port is chosen by tor and can only be learned by asking the
+ * control connection, which answers exactly once — from inside an observer
+ * that fires on the transition to "circuit established". Anything that misses
+ * that moment never learns the port at all, and every outbound connection then
+ * fails for the life of the process against a Tor client that is perfectly
+ * healthy. Reloading the WebView is enough to miss it: Capacitor rebuilds its
+ * plugins, the new `TorService` starts with `socksPort = 0`, and the tor
+ * thread it would have asked is already running and not about to announce
+ * itself again.
+ *
+ * A number that is decided in advance cannot be missed. It is known before tor
+ * is even launched, survives the object being rebuilt, and needs no control
+ * connection, no observer and no event. If something else on the device holds
+ * it, tor says so in its log and refuses to start, which is a loud failure
+ * rather than a silent one.
+ */
+private let SOCKS_PORT: UInt16 = 39050
+
+/**
+ * Whether tor is already running in this process.
+ *
+ * Static, because the thing it describes is: tor keeps process-global state
+ * and cannot be torn down and started again — see the note where `reload()`
+ * used to be. A rebuilt plugin object must not launch a second one, so this
+ * outlives any individual `TorService`.
+ */
+private var torAlreadyRunning = false
+
 final class TorService {
     /// How the client reports what it is doing.
     typealias Progress = (_ state: String, _ detail: [String: Any]) -> Void
@@ -85,6 +118,25 @@ final class TorService {
      */
     func start(localPort: UInt16, syncPort: UInt16 = 0) {
         if running { return }
+
+        // Already up from before this object existed.
+        //
+        // The WebView can reload — importing an identity does exactly that —
+        // and Capacitor rebuilds its plugins when it does. The new instance
+        // knows nothing, while tor carries on running in the same process. It
+        // must not be started twice; what it needs is to be told what is
+        // already true.
+        if torAlreadyRunning {
+            running = true
+            bootstrapped = true
+            socksPort = SOCKS_PORT
+
+            emit("ready", ["socksPort": Int(SOCKS_PORT)])
+
+            // Both addresses come off disk, so they survive the reload too.
+            readOnionAddress()
+            return
+        }
 
         lastError = nil
         forwardTo = localPort
@@ -138,7 +190,10 @@ final class TorService {
 
             configuration.arguments = [
                 // Bound to loopback and to a port tor picks.
-                "--SocksPort", "auto",
+                // Fixed rather than `auto`. See `SOCKS_PORT` above — this is
+                // the value that makes the proxy port knowable without asking
+                // anybody.
+                "--SocksPort", "\(SOCKS_PORT)",
 
                 "--ControlPort", "auto",
                 "--ControlPortWriteToFile", portFile.path,
@@ -207,7 +262,13 @@ final class TorService {
             thread.start()
 
             running = true
-            emit("starting", [:])
+            torAlreadyRunning = true
+
+            // Reported now, before a circuit exists and before the control
+            // connection is even attempted. Nothing has to go right for this
+            // to be true: it is the number tor was told to use.
+            socksPort = SOCKS_PORT
+            emit("starting", ["socksPort": Int(SOCKS_PORT)])
 
             // Retried rather than attempted once after a fixed delay.
             //
@@ -365,25 +426,35 @@ final class TorService {
 
     // ---- what the transport needs to know -----------------------------------
 
+    /**
+     * Confirm the SOCKS port, rather than discover it.
+     *
+     * The port is fixed and already reported by the time this runs — see
+     * `SOCKS_PORT`. This asks tor what it actually bound so a disagreement is
+     * visible in the log instead of showing up later as connections that go
+     * nowhere. It never fails the client: a mismatch here would mean tor
+     * ignored its own configuration, which it does not do quietly.
+     */
     private func readSocksPort() {
+        socksPort = SOCKS_PORT
+        emit("ready", ["socksPort": Int(SOCKS_PORT)])
+
         controller?.getInfoForKeys(["net/listeners/socks"]) { [weak self] values in
             guard let self else { return }
 
             // Reported as `"127.0.0.1:51234"`, quotes included.
             let raw = values.first ?? ""
-            let port = raw
+            let bound = raw
                 .replacingOccurrences(of: "\"", with: "")
                 .split(separator: ":")
                 .last
                 .flatMap { UInt16($0) }
 
-            guard let port else {
-                self.fail("tor did not report a SOCKS port")
-                return
+            if let bound, bound != SOCKS_PORT {
+                self.emit("log", ["line": "tor bound SOCKS on \(bound), not \(SOCKS_PORT)"])
+                self.socksPort = bound
+                self.emit("ready", ["socksPort": Int(bound)])
             }
-
-            self.socksPort = port
-            self.emit("ready", ["socksPort": Int(port)])
         }
     }
 

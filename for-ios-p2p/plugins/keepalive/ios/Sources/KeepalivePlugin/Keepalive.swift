@@ -1,4 +1,6 @@
 import AVFoundation
+import UserNotifications
+import UIKit
 import Foundation
 
 /**
@@ -247,4 +249,81 @@ final class Keepalive {
     stop()
     _ = start()
   }
+}
+
+
+// ---- being closed for good --------------------------------------------------
+
+/**
+ * Tell the user, once, that a closed app receives nothing.
+ *
+ * This app is not a client of a server that will hold messages for it. There
+ * is nothing anywhere keeping a copy: a peer that cannot reach this device
+ * simply keeps its events until it can, and "until it can" means the next time
+ * Reaper is open. Swiping it away is therefore a much bigger act here than in
+ * any other messaging app, and nothing about the gesture says so.
+ *
+ * A local notification is the only honest way to say it. There is no push
+ * service — that would need a server holding a token and a copy of the
+ * message, which is the entire arrangement this app exists without — so the
+ * notice has to be scheduled by the app itself, in the moments the system
+ * gives it while it is being terminated.
+ *
+ * Deliberately not repeated. Somebody who closes the app on purpose every day
+ * does not need telling every day, so it is shown once per install unless the
+ * app is reinstalled.
+ */
+enum ClosedNotice {
+    private static let asked = "reaper.notice.asked"
+    private static let shown = "reaper.notice.shown"
+
+    /// Ask once, quietly, and only for the one notification this app sends.
+    static func prepare() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: asked) else { return }
+        defaults.set(true, forKey: asked)
+
+        UNUserNotificationCenter.current().requestAuthorization(
+            options: [.alert, .sound]
+        ) { _, _ in
+            // Refused is a perfectly reasonable answer and there is nothing to
+            // do about it. The app works exactly the same; the user simply is
+            // not told the one thing this would have told them.
+        }
+    }
+
+    /// Watch for the app being closed.
+    static func watch() {
+        prepare()
+
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { _ in post() }
+    }
+
+    private static func post() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: shown) else { return }
+        defaults.set(true, forKey: shown)
+
+        let content = UNMutableNotificationContent()
+        content.title = "Reaper is closed"
+        content.body =
+            "Messages will not arrive until you open it again. There is no "
+            + "server holding them — they wait on the sender's device."
+        content.sound = .default
+
+        // A second's delay rather than immediately: a notification requested
+        // during termination is often dropped, and the smallest trigger the
+        // system accepts is what gets it delivered.
+        let request = UNNotificationRequest(
+            identifier: "reaper.closed",
+            content: content,
+            trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+        )
+
+        UNUserNotificationCenter.current().add(request)
+    }
 }
