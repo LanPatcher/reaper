@@ -56,28 +56,37 @@ export function rememberPorts(next: { localPort: number; syncPort: number }): vo
 }
 
 /**
- * Start Tor if it is not already running.
+ * Start Tor if it is not already running, and say whether it is now.
  *
  * Idempotent — the native side returns early when it is up — and safe to call
  * from anywhere that needs the network, which is the point. `bridge.ts` calls
  * `TorService.start()` before dialling a sibling precisely so that linking
  * works on a device that has not finished starting up, and on this platform
  * that call used to do nothing at all.
+ *
+ * The return value is what stops that being a trap. There is one state where
+ * Tor is not running and this module *cannot* start it — before `boot.ts` has
+ * called `rememberPorts`, because the ports are the loopback listeners it has
+ * not opened yet — and in that state waiting is not slow, it is permanent.
  */
-async function ensureRunning(): Promise<void> {
+async function ensureRunning(): Promise<boolean> {
   try {
     const status = await Tor.status();
-    if (status.running) return;
+    if (status.running) return true;
   } catch {
     // No plugin, or not up. Starting is still worth attempting.
   }
 
-  if (!ports) return;
+  // Nothing to start it with. Saying so is the whole point of the boolean —
+  // see `waitForProxy`.
+  if (!ports) return false;
 
   try {
     await Tor.start(ports);
+    return true;
   } catch {
     // Reported by the caller, in terms of what it was trying to do.
+    return false;
   }
 }
 
@@ -88,11 +97,34 @@ async function ensureRunning(): Promise<void> {
  * `tor` event is already consumed by `boot.ts`, and a second native listener
  * for a value that is sitting in `status()` is a coordination problem bought
  * for nothing.
+ *
+ * ## Why it gives up immediately rather than waiting
+ *
+ * Only when there is provably nothing to wait for, and that case is real
+ * enough to have frozen the app on its startup screen.
+ *
+ * Startup is circular by nature: `netStart` opens the listeners, then tells
+ * Tor which ports to forward to. So `netStart` runs *before* Tor has been
+ * started, and it calls `publishIfHolding`, which calls `TorService.start`,
+ * which lands here. At that moment Tor is not running, `rememberPorts` has not
+ * been called, and no amount of polling will change either — the code that
+ * would fix it is the code waiting on this. Two and a half minutes of that,
+ * with the interface showing "Starting Tor", and then it carried on as though
+ * nothing had happened.
+ *
+ * It stayed hidden for a while because `bridge.ts` used to crash first:
+ * `publishIfHolding` calls `tor.setAccount`, this class did not have one, and
+ * the resulting TypeError skipped the wait entirely. Adding the method — which
+ * was right — removed the accident that was covering this up.
  */
 export async function waitForProxy(timeoutMs = PROXY_WAIT_MS): Promise<boolean> {
   if (proxyReady()) return true;
 
-  await ensureRunning();
+  // Cheap, and it settles the common case where Tor is already up and this
+  // side simply has not been told the port yet.
+  if (await adoptProxyPort()) return true;
+
+  if (!(await ensureRunning())) return false;
 
   const deadline = Date.now() + timeoutMs;
 
