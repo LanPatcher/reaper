@@ -696,16 +696,29 @@ async function syncOverTor(entry: SyncAddress): Promise<LinkProgress> {
   }
 }
 
-/** Try every other device of yours, in turn. */
-async function syncAllDevices(): Promise<LinkProgress[]> {
+/**
+ * Try every other device of yours, in turn.
+ *
+ * `failures` is filled in when the caller passes one. Every failure is logged
+ * regardless, but a log is not where somebody who pressed Sync is looking —
+ * and "none of your 2 other devices answered" was, for a long time, the only
+ * thing they were told. That sentence covers a device that is switched off, a
+ * device that has not finished linking, an address nothing answers at any
+ * more, and a device holding a different account, and it is actionable for
+ * exactly none of them.
+ */
+async function syncAllDevices(
+  failures?: { name: string; error: string }[],
+): Promise<LinkProgress[]> {
   const done: LinkProgress[] = [];
 
   for (const entry of others(syncAddresses(), thisDevice().id)) {
     try {
       done.push(await syncOverTor(entry));
-    } catch {
-      // Already logged with its reason. A device being switched off is the
-      // ordinary case and must not stop the others being tried.
+    } catch (error) {
+      // A device being switched off is the ordinary case and must not stop the
+      // others being tried.
+      failures?.push({ name: entry.name, error: (error as Error).message });
     }
   }
 
@@ -2411,13 +2424,21 @@ export function registerP2PHandlers(): void {
       );
     }
 
-    const done = await syncAllDevices();
+    const failures: { name: string; error: string }[] = [];
+    const done = await syncAllDevices(failures);
     announceDevices();
 
     if (!done.length) {
+      // What each one actually said, rather than the fact that none of them
+      // worked. The reasons differ from each other far more often than they
+      // agree — one device switched off and one half-way through linking is a
+      // completely different situation from two dead addresses — and only the
+      // reason tells anybody what to do next.
       throw new Error(
-        `none of your ${known.length} other device(s) answered — ` +
-        "they have to be running for a sync to happen",
+        failures.length
+          ? failures.map((one) => `${one.name}: ${one.error}`).join("\n")
+          : `none of your ${known.length} other device(s) answered — ` +
+            "they have to be running for a sync to happen",
       );
     }
 

@@ -20,6 +20,7 @@ public class SocketPlugin: CAPPlugin, CAPBridgedPlugin {
     CAPPluginMethod(name: "close", returnType: CAPPluginReturnPromise),
     CAPPluginMethod(name: "listen", returnType: CAPPluginReturnPromise),
     CAPPluginMethod(name: "stopListening", returnType: CAPPluginReturnPromise),
+    CAPPluginMethod(name: "listeningPorts", returnType: CAPPluginReturnPromise),
   ]
 
   private var sockets: TcpSockets?
@@ -119,6 +120,18 @@ public class SocketPlugin: CAPPlugin, CAPBridgedPlugin {
   @objc func stopListening(_ call: CAPPluginCall) {
     sockets?.stopListening(port: UInt16(call.getInt("port") ?? 0))
     call.resolve()
+  }
+
+  /**
+   * Which ports are already bound, oldest first.
+   *
+   * The WebView reloads when a device is linked, and Capacitor rebuilds its
+   * plugins with it — but this object outlives that, and so do its listeners.
+   * Tor outlives it too and goes on forwarding to the same ports. This is how
+   * the new page finds them again.
+   */
+  @objc func listeningPorts(_ call: CAPPluginCall) {
+    call.resolve(["ports": (sockets?.listeningPorts() ?? []).map { Int($0) }])
   }
 
   deinit {

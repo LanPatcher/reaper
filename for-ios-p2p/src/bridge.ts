@@ -2,6 +2,7 @@ import { Keepalive } from "@reaper/keepalive";
 import { Scanner } from "@reaper/scanner";
 
 import { invoke, subscribe } from "./shim/electron";
+import { flush } from "./shim/fs";
 
 /**
  * `window.p2p`, the surface the interface talks to.
@@ -56,11 +57,64 @@ const METHODS = [
 
 type Surface = Record<string, unknown>;
 
+/**
+ * Calls that must reach the disk before they are allowed to look finished.
+ *
+ * ## Why this list exists
+ *
+ * Writes here are debounced — four hundred milliseconds, which is what makes
+ * appending a message cheap enough to do on every keystroke's worth of
+ * activity. The cost is a window in which the app's state lives in memory and
+ * nowhere else, and almost everything survives it because almost nothing
+ * destroys the JavaScript context on purpose.
+ *
+ * Linking does. `pairJoin` hands this device an account, merges the entire
+ * history behind it, and the interface then calls `location.reload()` — which
+ * is the correct thing to do, because the page has to come back up as somebody
+ * else. It also throws away every pending write.
+ *
+ * So the phone linked, showed the account for a second, reloaded, and came
+ * back as the identity it had before: not linked, no history, and a pairing
+ * code on the other device now spent. The link had genuinely succeeded — the
+ * desktop learned about it and consumed the invite — and none of it reached
+ * the disk.
+ *
+ * These are all rare, deliberate and user-initiated, so an extra flush costs
+ * nothing anybody can perceive. `append` is deliberately *not* here: it happens
+ * constantly, and flushing on each one would undo the batching that makes the
+ * log cheap to write.
+ */
+const DURABLE = new Set<string>([
+  "pairJoin",
+  "pairSync",
+  "syncDevices",
+  "syncWith",
+  "deviceTakeOver",
+  "deviceName",
+  "importCommunity",
+  "compact",
+]);
+
 export function installBridge(): void {
   const p2p: Surface = {};
 
   for (const name of METHODS) {
-    p2p[name] = (...args: unknown[]) => invoke(`p2p:${name}`, ...args);
+    p2p[name] = DURABLE.has(name)
+      ? async (...args: unknown[]) => {
+          try {
+            return await invoke(`p2p:${name}`, ...args);
+          } finally {
+            // In a `finally`, because a sync that failed half way through
+            // still merged whatever arrived before it broke — and that is
+            // exactly the state worth keeping, since the next attempt starts
+            // from it rather than from nothing.
+            await flush().catch(() => {
+              // Nothing useful to say here. A failed write is reported by
+              // `flush` itself and retried on the next one.
+            });
+          }
+        }
+      : (...args: unknown[]) => invoke(`p2p:${name}`, ...args);
   }
 
   // Subscriptions return an unsubscribe function, matching the preload — the
