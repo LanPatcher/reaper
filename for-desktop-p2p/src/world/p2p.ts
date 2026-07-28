@@ -370,7 +370,15 @@ contextBridge.exposeInMainWorld("p2p", {
     ipcRenderer.invoke("p2p:deviceName", name),
 
   /** Answer here from now on. This is the Reconnect button. */
-  deviceTakeOver: (): Promise<DeviceInfo> => ipcRenderer.invoke("p2p:deviceTakeOver"),
+  /**
+   * Ask for the account address, or take it.
+   *
+   * Without `force` this is a request the other device has to answer, which
+   * needs it to be reachable. With it, the address is claimed regardless —
+   * for a device that is switched off, lost or never coming back.
+   */
+  deviceTakeOver: (force?: boolean): Promise<DeviceInfo> =>
+    ipcRenderer.invoke("p2p:deviceTakeOver", force),
 
   /**
    * Catch up with your other devices over Tor.

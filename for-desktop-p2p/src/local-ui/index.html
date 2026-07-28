@@ -10881,12 +10881,51 @@
         btns.textContent = "";
 
         var take = document.createElement("button");
+
+        // Every other button in this dialog carries a class, and without one
+        // this rendered as bare text next to a styled button — so the control
+        // that resolves the screen did not look like a control at all.
+        take.className = "primary";
         take.textContent = t("Use this device");
+
         take.onclick = async function () {
           take.disabled = true;
-          take.textContent = t("Taking over…");
+          take.textContent = t("Asking the other device…");
+
           try {
             devices = await window.p2p.deviceTakeOver();
+
+            if (devices && devices.standing &&
+                devices.standing.state === "displaced") {
+              // The request went out and nothing answered, which is what
+              // happens when the other device is off, lost or gone for good.
+              // Without a way past this the screen is permanent and the
+              // account is stranded on a device that no longer exists.
+              take.disabled = false;
+              take.textContent = t("Use this device");
+
+              if (!$("deviceForce")) {
+                var force = document.createElement("button");
+                force.id = "deviceForce";
+                force.className = "ghost";
+                force.textContent = t("Take it anyway");
+                force.title =
+                  t("Use this if the other device is switched off or you no longer have it.");
+
+                force.onclick = async function () {
+                  force.disabled = true;
+                  devices = await window.p2p.deviceTakeOver(true);
+                  deviceOverlay();
+                  flash(t("This device is answering now"));
+                };
+
+                btns.appendChild(force);
+              }
+
+              flash(t("The other device did not answer."));
+              return;
+            }
+
             deviceOverlay();
             flash(t("This device is answering now"));
           } catch (e) {
@@ -10895,6 +10934,7 @@
             flash(String((e && e.message) || e));
           }
         };
+
         btns.appendChild(take);
 
         var sync = document.createElement("button");

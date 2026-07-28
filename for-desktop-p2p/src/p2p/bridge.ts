@@ -530,12 +530,21 @@ async function publishIfHolding(): Promise<string | undefined> {
   const me = thisDevice();
 
   if (!holds(claimsHeld(), me.id)) {
-    if (tor.running) {
-      log("[tor]", "another of your devices holds the address — not publishing");
-      tor.stop();
-    }
+    // Withdraw the account address, keep the sync address.
+    //
+    // This used to call `tor.stop()`, which stops the whole process — and the
+    // process hosts both hidden services. So a displaced device lost its sync
+    // address too, and with it the ability to be dialled by its sibling, to
+    // show a pairing code, or to be reached in order to hand the account back.
+    // That is the answer to "each device has its own sync address, so why does
+    // syncing only go one way": the displaced one had stopped publishing.
+    log("[tor]", "another of your devices holds the address — publishing sync only");
+    await tor.setAccount(false);
     return undefined;
   }
+
+  // Holding again: make sure the account service is offered.
+  await tor.setAccount(true);
 
   if (tor.running) return tor.address;
 
@@ -2026,8 +2035,32 @@ export function registerP2PHandlers(): void {
    * on", and having two ways to express that would eventually mean two
    * different results.
    */
-  ipcMain.handle(CHANNEL.deviceTakeOver, async (event) => {
+  ipcMain.handle(CHANNEL.deviceTakeOver, async (event, force?: boolean) => {
     viewer = event.sender;
+
+    /**
+     * Take the address without asking.
+     *
+     * The polite path below needs the other device to be reachable, and there
+     * is a case where it never will be: it is switched off, lost, wiped, or
+     * simply not coming back. Without a way through, the "signed in elsewhere"
+     * screen is permanent and the account is stranded on a device that no
+     * longer exists.
+     *
+     * Offered only after the request has been tried and nothing answered, so
+     * it is a deliberate second step rather than the easy first one.
+     */
+    if (force) {
+      const me = thisDevice();
+      addClaim(claimFor(claimsHeld(), me.id, me.name));
+      wantsAddress = false;
+
+      await publishIfHolding();
+      announceDevices();
+
+      log("[pair]", "took the account address without the other device agreeing");
+      return deviceInfo();
+    }
 
     // Asked for, not taken.
     //
