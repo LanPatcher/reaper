@@ -551,7 +551,16 @@ async function publishIfHolding(): Promise<string | undefined> {
 
   try {
     const onion = await tor.start();
-    log("[tor]", `onion service published: ${onion}`);
+
+    // Two outcomes, and they used to be logged as one. On a desktop `start`
+    // does not return until tor has written its hostname file, so an address
+    // is always there. On a phone Tor is a library that publishes on its own
+    // schedule, so this returns before there is one — and the log said "onion
+    // service published: undefined", which reads as a failure and is not one.
+    log("[tor]", onion
+      ? `onion service published: ${onion}`
+      : "tor is up; the account address will be published shortly");
+
     return onion;
   } catch (error) {
     log("[tor]", (error as Error).message);

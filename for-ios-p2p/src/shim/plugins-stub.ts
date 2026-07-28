@@ -28,7 +28,32 @@ export const Socket = {
 export const Tor = {
   start: unavailable("Tor.start"),
   stop: unavailable("Tor.stop"),
-  status: unavailable("Tor.status"),
+
+  /**
+   * Answering, and answering *asynchronously*, because the real one does.
+   *
+   * This threw, and the throw was synchronous — `unavailable` returns a plain
+   * function, not an async one. `shim/tor.ts` calls it as
+   * `void Tor.status().then(...)`, so the exception escaped before `.then`
+   * existed, propagated out of the watcher, out of `TorService.start`, and was
+   * caught by `publishIfHolding` as a failure to publish.
+   *
+   * The startup test therefore never reached the code after that call, and
+   * `startNetwork` passed while the real app sat on "Starting Tor" for two and
+   * a half minutes — the exact freeze this suite exists to catch, hidden by a
+   * stub that failed earlier and differently from the thing it stands in for.
+   *
+   * A stub that is unavailable should report being unavailable the way the
+   * real plugin would: a resolved status saying nothing is running.
+   */
+  status: async () => ({
+    running: false,
+    bootstrapped: false,
+    socksPort: 0,
+    onion: null,
+    syncOnion: null,
+    error: "not iOS",
+  }),
 
   // Answering rather than throwing, because the interop test compiles the
   // desktop `bridge.ts`, and its identity export asks for the service key on

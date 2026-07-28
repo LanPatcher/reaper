@@ -91,6 +91,8 @@ await step("brotli loads", 20_000, brotliReady(() => Promise.resolve(nodeBrotli)
 // the `on` its constructor's very next line uses.
 
 {
+  const began = Date.now();
+
   const started = await step(
     "the network starts",
     15_000,
@@ -99,6 +101,21 @@ await step("brotli loads", 20_000, brotliReady(() => Promise.resolve(nodeBrotli)
 
   ck("and reports a port Tor can be pointed at",
      !!started && started.port === 51999, String(started?.port));
+
+  // And returns *promptly*, which is a separate claim from returning at all.
+  //
+  // Startup is circular: `netStart` opens the listeners, and only then does
+  // `boot.ts` tell Tor which ports to forward to. So when `publishIfHolding`
+  // asked `TorService.start` to wait for the SOCKS port, it was waiting on a
+  // Tor that nothing had started and that nothing *could* start until this
+  // call returned. It polled for two and a half minutes and gave up, and the
+  // interface said "Starting Tor" the whole time.
+  //
+  // Two seconds is far above anything this does honestly — it binds a loopback
+  // port and reads a status — and far below the timeout that was being hit.
+  const took = Date.now() - began;
+  ck("and does not wait on a Tor that nothing has started yet",
+     took < 2_000, `${took}ms`);
 }
 
 // ---- what the interface asks for on its first line --------------------------
