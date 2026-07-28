@@ -103,12 +103,61 @@ export function roster(entries: readonly SyncAddress[]): SyncAddress[] {
   return [...latest.values()].sort((a, b) => b.at - a.at);
 }
 
-/** Everyone but this device — the ones worth dialling. */
+/**
+ * Everyone but this device — the ones worth dialling.
+ *
+ * Deduplicated by *address*, not by device id, and that is the fix for a real
+ * complaint: the list showed devices that do not exist.
+ *
+ * Two ways a phantom gets in. An identity backup records the device it came
+ * from under a placeholder id, because the file cannot know the real one — so
+ * that entry and the genuine one are two rows for one machine. And a device
+ * that regenerates its sync key leaves its old address behind, so the roster
+ * accumulates addresses nothing answers at.
+ *
+ * Keyed by address and keeping the newest, both disappear: a real device is
+ * whatever is currently reachable at an address, and an address is the only
+ * part of this that is worth dialling.
+ */
 export function others(
   entries: readonly SyncAddress[],
   device: string,
 ): SyncAddress[] {
-  return roster(entries).filter((entry) => entry.device !== device);
+  const mine = new Set(
+    roster(entries).filter((entry) => entry.device === device)
+      .map((entry) => entry.onion),
+  );
+
+  const byAddress = new Map<string, SyncAddress>();
+
+  for (const entry of roster(entries)) {
+    if (entry.device === device) continue;
+
+    // This device's own address, recorded under another id — which is exactly
+    // what a restored backup produces when it is restored onto the machine it
+    // was written on.
+    if (mine.has(entry.onion)) continue;
+
+    const held = byAddress.get(entry.onion);
+    if (!held || entry.at > held.at) byAddress.set(entry.onion, entry);
+  }
+
+  return [...byAddress.values()].sort((a, b) => b.at - a.at);
+}
+
+/**
+ * Forget an address that no longer answers.
+ *
+ * A device that has moved republishes, and the old row is then a row that
+ * nothing will ever be at. Nothing removes events from a log, so this returns
+ * the addresses worth dropping and the caller records a replacement.
+ */
+export function stale(
+  entries: readonly SyncAddress[],
+  device: string,
+  failing: ReadonlySet<string>,
+): SyncAddress[] {
+  return others(entries, device).filter((entry) => failing.has(entry.onion));
 }
 
 /**
