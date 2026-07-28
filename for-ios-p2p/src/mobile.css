@@ -29,8 +29,15 @@ body {
 }
 
 #shell {
+  /* Positioned unconditionally, so the panels, the dimmer and the menu button
+     are always in one stacking context and always order the way their z-index
+     says. Without this the interface only creates that context when a
+     wallpaper is set — which meant the slide-over worked or did not depending
+     on whether the user had picked a background image, and nothing in either
+     file said so. */
   position: relative;
   overflow: hidden;
+  z-index: 1;
 }
 
 /* ---- the title bar ------------------------------------------------------ */

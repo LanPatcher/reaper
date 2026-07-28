@@ -354,5 +354,104 @@ const ck = (n: string, c: boolean, e = "") => {
   ck("and not all zero", !a.equals(Buffer.alloc(32)));
 }
 
+// ---- every hash the core asks for -------------------------------------------
+//
+// Each of these is here because something broke without it, and each broke in
+// a place that looked unrelated to hashing:
+//
+//   - **sha512** is the device link's session key. Linking threw at the exact
+//     moment the handshake succeeded.
+//   - **sha3-256** is the checksum inside a v3 onion address, used to check a
+//     restored service key against the address written beside it — so it runs
+//     during an identity import, and an unsupported hash there took out the
+//     one operation a backup exists for.
+//
+// Checked against Node rather than against a stored vector, because agreeing
+// with Node is the actual requirement: a hash that differs by a byte produces
+// ids and addresses that are wrong everywhere and reported nowhere.
+
+{
+  const input = Buffer.from("the quick brown fox jumps over the lazy dog", "utf8");
+
+  for (const algorithm of ["sha256", "sha512", "sha3-256"]) {
+    const mine = shim.createHash(algorithm).update(input).digest("hex");
+    const theirs = node.createHash(algorithm).update(input).digest("hex");
+
+    ck(`${algorithm} matches Node`, mine === theirs, mine.slice(0, 16));
+  }
+
+  // Chained updates, which is how `onionAddress` and the link handshake both
+  // call it — a hash that only handled one update would pass every test above
+  // and fail on the one call site that matters.
+  const chained = shim.createHash("sha3-256")
+    .update(Buffer.from(".onion checksum", "ascii"))
+    .update(Buffer.alloc(32, 7))
+    .update(Buffer.from([3]))
+    .digest("hex");
+
+  const expected = node.createHash("sha3-256")
+    .update(Buffer.from(".onion checksum", "ascii"))
+    .update(Buffer.alloc(32, 7))
+    .update(Buffer.from([3]))
+    .digest("hex");
+
+  ck("an onion checksum matches Node", chained === expected);
+
+  let refused = false;
+  try { shim.createHash("md5"); } catch { refused = true; }
+  ck("an unsupported hash is refused rather than substituted", refused);
+}
+
+// ---- scrypt, without stopping the world -------------------------------------
+//
+// The synchronous version is what the app used to call, and on a phone it
+// blocked the WebView long enough that iOS killed the app mid-import — no
+// error, no log, just gone. The async one does the same arithmetic and yields
+// between rounds.
+//
+// So two things are asserted: that it produces the same key, which is what
+// makes a backup written before this change still open; and that it actually
+// yields, which is the entire reason it exists.
+
+{
+  const passphrase = "a passphrase worth protecting";
+  const salt = Buffer.from("0123456789abcdef", "utf8");
+
+  // The parameters the app ships, read here rather than guessed — a cheaper
+  // set would prove nothing about the case that was failing.
+  const settings = { N: 2 ** 15, r: 8, p: 1, maxmem: 96 * 1024 * 1024 };
+
+  const expected = node.scryptSync(passphrase, salt, 32, settings);
+
+  const derived = await new Promise<Buffer>((resolve, reject) => {
+    shim.scrypt(passphrase, salt, 32, settings, (error, key) => {
+      if (error) reject(error);
+      else resolve(key);
+    });
+  });
+
+  ck("the callback form derives the same key as Node", derived.equals(expected));
+
+  // What cannot be checked here, and why.
+  //
+  // On a phone this runs in a worker, and the assertion worth making is that
+  // the calling thread stays free. There are no workers in Node, so this test
+  // exercises the fallback — which is the synchronous implementation, because
+  // in Node nothing is waiting to draw a frame and holding the thread costs
+  // nothing.
+  //
+  // The measurement that mattered was made once and is recorded rather than
+  // repeated: with `scryptAsync` — the obvious fix — a four-millisecond
+  // interval fired *zero* times across the whole derivation, because its
+  // `await` yields microtasks and never returns to the event loop. That is the
+  // reason this is a worker and not one line of `await`.
+
+  // Sanity on the fallback: an implementation that quietly used weaker
+  // parameters would still agree with itself and disagree with every backup
+  // written by a desktop.
+  const wrong = node.scryptSync(passphrase, salt, 32, { N: 2 ** 14, r: 8, p: 1 });
+  ck("and not with weaker parameters", !derived.equals(wrong));
+}
+
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");
 process.exit(f ? 1 : 0);

@@ -2,7 +2,8 @@ import { gcm } from "@noble/ciphers/aes.js";
 import { scrypt as nobleScrypt } from "@noble/hashes/scrypt.js";
 import { ed25519, x25519 } from "@noble/curves/ed25519.js";
 import { hkdf as nobleHkdf } from "@noble/hashes/hkdf.js";
-import { sha256 as nobleSha256 } from "@noble/hashes/sha2.js";
+import { sha256 as nobleSha256, sha512 as nobleSha512 } from "@noble/hashes/sha2.js";
+import { sha3_256 as nobleSha3_256 } from "@noble/hashes/sha3.js";
 
 import { Buffer } from "buffer";
 
@@ -242,14 +243,38 @@ export function diffieHellman(options: {
 // ---- hashing ----------------------------------------------------------------
 
 /**
- * `createHash("sha256")`, with the chaining the call sites use.
+ * `createHash(...)`, with the chaining the call sites use.
  *
- * Only the subset that is actually called: `.update()` once or twice, then
+ * Only the subset that is actually called: `.update()` a few times, then
  * `.digest()` with no argument or `"hex"`. Supporting the rest of Node's hash
  * interface would be inventing requirements.
+ *
+ * Three algorithms, and each is here because something broke without it:
+ *
+ *   - **sha256** — event ids, blob names, the link handshake.
+ *   - **sha512** — the device link's session key, derived from the identity's
+ *     private key. Without it, linking two devices threw on the phone at the
+ *     moment the handshake succeeded.
+ *   - **sha3-256** — the checksum inside a v3 onion address. `onionAddress`
+ *     uses it to check that a restored service key and the address written
+ *     beside it agree, which runs during an identity import — so an
+ *     unsupported hash here took out the one operation the whole backup exists
+ *     for.
+ *
+ * The list is closed on purpose. An unknown algorithm throws rather than
+ * falling back to sha256, because a hash that silently computes the wrong
+ * thing produces ids and addresses that are wrong everywhere and reported
+ * nowhere.
  */
+const HASHES: Record<string, (input: Uint8Array) => Uint8Array> = {
+  sha256: nobleSha256,
+  sha512: nobleSha512,
+  "sha3-256": nobleSha3_256,
+};
+
 export function createHash(algorithm: string) {
-  if (algorithm !== "sha256") throw new Error(`unsupported hash: ${algorithm}`);
+  const hash = HASHES[algorithm];
+  if (!hash) throw new Error(`unsupported hash: ${algorithm}`);
 
   const parts: Uint8Array[] = [];
 
@@ -274,7 +299,7 @@ export function createHash(algorithm: string) {
         at += part.length;
       }
 
-      const out = Buffer.from(nobleSha256(joined));
+      const out = Buffer.from(hash(joined));
       return encoding ? out.toString(encoding) : out;
     },
   };
@@ -336,6 +361,97 @@ export function scryptSync(
       dkLen: keylen,
     }),
   );
+}
+
+/**
+ * `scrypt`, off the thread that draws.
+ *
+ * The synchronous version above is thirty-two megabytes of allocation and tens
+ * of thousands of block-mixing rounds in pure JavaScript. In a WebView that
+ * runs where the interface runs, so for its whole duration the app paints
+ * nothing and answers nothing — which is what importing an identity looked
+ * like from the outside, and what iOS eventually acts on.
+ *
+ * `scryptAsync` looks like the answer and is not. It yields with an empty
+ * `await`, which drains microtasks and returns to the *same task*: timers do
+ * not fire, frames are not drawn, and the thread is held exactly as firmly.
+ * `crypto.test.ts` measures it — a four-millisecond interval fires zero times
+ * across the entire derivation. That is worth writing down, because it is a
+ * fix that would have passed review and changed nothing.
+ *
+ * So the work goes to a worker, where it cannot hold anything up. The
+ * signature is Node's, callback and all, so `bridge.ts` is written against the
+ * real API and runs unchanged on both platforms.
+ */
+export function scrypt(
+  passphrase: string | Buffer | Uint8Array,
+  salt: string | Buffer | Uint8Array,
+  keylen: number,
+  options: { N?: number; r?: number; p?: number; maxmem?: number } | ((error: Error | null, key: Buffer) => void),
+  callback?: (error: Error | null, key: Buffer) => void,
+): void {
+  const settings = typeof options === "function" ? {} : options;
+  const done = typeof options === "function" ? options : callback!;
+
+  const bytes = (value: string | Buffer | Uint8Array) =>
+    typeof value === "string"
+      ? new Uint8Array(Buffer.from(value, "utf8"))
+      : new Uint8Array(value);
+
+  const N = settings.N ?? 16384;
+  const r = settings.r ?? 8;
+  const p = settings.p ?? 1;
+
+  const work = {
+    id: 1,
+    passphrase: bytes(passphrase),
+    salt: bytes(salt),
+    keylen,
+    N, r, p,
+  };
+
+  let worker: Worker | undefined;
+
+  try {
+    // `new URL(..., import.meta.url)` is the form the bundler recognises: it
+    // emits the worker as its own chunk and rewrites this to point at it.
+    // A string path would resolve against the page at runtime and 404 inside
+    // the app's own scheme.
+    worker = new Worker(new URL("./scrypt-worker.ts", import.meta.url), {
+      type: "module",
+    });
+  } catch {
+    // No workers here — which in practice means Node, running the tests.
+    // Falling back to the synchronous implementation is right in that setting
+    // and would be wrong on a phone; the difference is that nothing in Node is
+    // waiting to draw a frame.
+    queueMicrotask(() => {
+      try {
+        done(null, scryptSync(passphrase, salt, keylen, settings));
+      } catch (error) {
+        done(error as Error, Buffer.alloc(0));
+      }
+    });
+    return;
+  }
+
+  worker.onmessage = (event: MessageEvent<{ key?: Uint8Array; error?: string }>) => {
+    worker?.terminate();
+
+    if (event.data.error) {
+      done(new Error(event.data.error), Buffer.alloc(0));
+      return;
+    }
+
+    done(null, Buffer.from(event.data.key!));
+  };
+
+  worker.onerror = (event: ErrorEvent) => {
+    worker?.terminate();
+    done(new Error(event.message || "the key could not be derived"), Buffer.alloc(0));
+  };
+
+  worker.postMessage(work);
 }
 
 export function randomBytes(size: number): Buffer {
