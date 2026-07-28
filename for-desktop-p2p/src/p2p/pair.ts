@@ -113,8 +113,22 @@ const FLAG_COMPRESSED = 1;
 /** Nothing legitimate approaches this; it bounds a corrupt length field. */
 const MAX_FRAME = 16 * 1024 * 1024;
 
-/** Events per `give`. Large enough to be efficient, small enough to stream. */
-const BATCH = 400;
+/**
+ * Events per `give`.
+ *
+ * Large enough that the per-message overhead disappears, small enough that
+ * handling one does not monopolise the thread.
+ *
+ * That second half is not a nicety on a phone. There the core and the
+ * interface are the same JavaScript context, so verifying a batch's signatures
+ * and decompressing its frames happens on the thread that also has to draw —
+ * and a batch is one task, which nothing can interrupt. Four hundred events
+ * was long enough to miss frames, visibly, for as long as a sync lasted.
+ *
+ * A hundred costs four times as many messages on an already-open circuit,
+ * which is nothing, and quarters the longest a repaint can be blocked.
+ */
+const BATCH = 100;
 
 /**
  * The only community whose files cross a pairing.
@@ -351,12 +365,16 @@ export function newSession(): string {
  *
  * Forty bits, which is far past what is reachable: a guess has to arrive over
  * a Tor circuit, against a session id the guesser does not have, within ten
- * minutes, and every attempt costs a scrypt. It is grouped in fours because
- * eight unbroken characters get transcribed wrong and four do not.
+ * minutes, and every attempt costs a scrypt.
+ *
+ * Eight unbroken characters, with no grouping. It was written `ABCD-EFGH`
+ * on the theory that a break makes it easier to transcribe, and on a phone
+ * that is simply one more thing to type — the keyboard has to be switched to
+ * get at the hyphen, and it carries no information. `foldPassword` still
+ * strips one if somebody types it out of habit.
  */
 export function newPassword(): string {
-  const text = toBase32(randomBytes(PASSWORD_BYTES));
-  return `${text.slice(0, 4)}-${text.slice(4)}`;
+  return toBase32(randomBytes(PASSWORD_BYTES));
 }
 
 /**
@@ -600,6 +618,48 @@ function accountKey(secret: string): Buffer {
  */
 export type Credential = "invite" | "account";
 
+/**
+ * How much of the account a session is for.
+ *
+ * ## Why the first one carries almost nothing
+ *
+ * Linking used to transfer everything in one go: the private index, every
+ * server's whole log, every direct conversation, and every avatar, banner and
+ * server icon — and only then did the device that was being linked find out
+ * who it was. On an account of any age that is minutes of a Tor circuit, with
+ * a setup screen on the other end of it and nothing to say why.
+ *
+ * That is the wrong order. Being signed in needs the account key and the
+ * private index, and nothing else: the index is what names the user, so the
+ * moment it lands the device stops being a stranger and can show itself as
+ * whoever it is. Messages are what the app is *for*, but not one of them is
+ * needed to get in, and making the door wait on them is what turned a link
+ * into an ordeal.
+ *
+ *   - **identity** — the account, and the communities `essential()` names.
+ *     Small, fixed, and the same size on a fresh account as on a five-year-old
+ *     one. This is what a QR code buys, and what a takeover needs to settle a
+ *     claim.
+ *
+ *   - **messages** — every server and conversation, and no pictures at all.
+ *     What the scheduled pass does, in the background, from a device that is
+ *     already signed in and already usable. This is the one that runs often,
+ *     so it is the one that must not carry anything it does not have to.
+ *
+ *   - **everything** — the above plus the pictures: profile picture, banner
+ *     and server icons. Nothing else has ever crossed a pairing — message
+ *     attachments are excluded at a level below this, because they can be
+ *     gigabytes and can be fetched from whoever sent them — so "everything"
+ *     is a much smaller word here than it sounds. Run occasionally, because a
+ *     face that is a few minutes out of date has cost nobody anything.
+ *
+ * Named in the greeting and adopted by the answering side, because both ends
+ * have to agree: a session where one side offers three communities and the
+ * other offers thirty is not a small sync, it is a large one with a confused
+ * side.
+ */
+export type Scope = "identity" | "messages" | "everything";
+
 type Wire =
   /**
    * Sent immediately by both ends, and the only message that authorises.
@@ -633,6 +693,16 @@ type Wire =
 
       /** Which invite, when `cred` is `invite`. */
       session?: string;
+
+      /**
+       * How much of the account this session is for.
+       *
+       * Travels with `cred` and for the same reason: it is decided by the side
+       * that dialled, and the side that answered adopts it rather than
+       * choosing its own. Two ends disagreeing about scope is not a smaller
+       * sync — it is a full one where one side has stopped listening.
+       */
+      scope?: Scope;
     }
   /** Refused, with a reason worth showing someone. */
   | { t: "no"; why: string }
@@ -811,6 +881,21 @@ export interface PairHooks {
   accountSecret(): string | undefined;
 
   communities(): string[];
+
+  /**
+   * The communities a device needs before it can be signed in at all.
+   *
+   * The private index, in practice — it is what carries the username, so a
+   * device that has the account key and this can show itself as its owner and
+   * stop looking like a fresh install. Everything else is what the app is for
+   * rather than what it needs to open.
+   *
+   * Deliberately a hook rather than a constant in here: which log names the
+   * user is the surrounding app's business, and `pair.ts` has managed not to
+   * know it so far.
+   */
+  essential(): string[];
+
   summary(community: string): Summary;
   missingForSummary(community: string, summary: Summary): SignedEvent[];
   merge(community: string, events: SignedEvent[]): number;
@@ -891,12 +976,16 @@ export interface PairResult {
   adopted?: boolean;
   communities: number;
   done: boolean;
+
+  /** What this pass was for, which decides what "done" means. */
+  scope?: Scope;
 }
 
-/** How a dialling session says which credential it means to use. */
-type Offer =
+/** How a dialling session says what it is doing and what with. */
+type Offer = { scope: Scope } & (
   | { cred: "invite"; session: string; key: Buffer }
-  | { cred: "account"; key: Buffer };
+  | { cred: "account"; key: Buffer }
+);
 
 /* ---- the session --------------------------------------------------------- */
 
@@ -935,6 +1024,16 @@ class Session {
   #cred?: Credential;
   #session?: string;
   #key?: Buffer;
+
+  /**
+   * How much of the account this session is for.
+   *
+   * Set at construction on the side that dialled and adopted from the first
+   * credential-bearing greeting on the side that answered. Undefined until
+   * then, which only matters to the answering side and only before it has
+   * heard anything.
+   */
+  #scope?: Scope;
 
   /**
    * Whether the invite in force was looked up in *this* device's book.
@@ -1028,6 +1127,7 @@ class Session {
     if (offer) {
       this.#cred = offer.cred;
       this.#key = offer.key;
+      this.#scope = offer.scope;
       if (offer.cred === "invite") this.#session = offer.session;
     }
   }
@@ -1096,6 +1196,7 @@ class Session {
       communities: this.#hooks.communities(),
       cred: this.#cred,
       session: this.#session,
+      scope: this.#scope,
     });
   }
 
@@ -1111,6 +1212,11 @@ class Session {
       return "that device did not say how it was authorising — it may be " +
         "running an older version of Reaper";
     }
+
+    // Adopted alongside the credential, and before anything is offered. The
+    // dialling side decides what this session is for; this side follows, or
+    // the two spend a fast pass exchanging a slow one's worth of summaries.
+    this.#scope = msg.scope ?? "everything";
 
     if (msg.cred === "account") {
       const secret = this.#hooks.accountSecret?.();
@@ -1269,9 +1375,19 @@ class Session {
           n: this.#hooks.claimN(),
         });
 
-        // Offer everything at once rather than one community at a time. There
-        // is no ordering to preserve — each `have` names its own community.
-        const mine = new Set([...this.#hooks.communities(), ...msg.communities, PICTURES]);
+        // What this session is actually for. Both sides compute this from the
+        // same scope and the same hooks, so they offer the same set — which is
+        // the property that makes a small sync small rather than lopsided.
+        const scope = this.#scope ?? "everything";
+        this.#result.scope = scope;
+
+        // Offer everything in scope at once rather than one community at a
+        // time. There is no ordering to preserve — each `have` names its own
+        // community.
+        const mine = scope === "identity"
+          ? new Set(this.#hooks.essential())
+          : new Set([...this.#hooks.communities(), ...msg.communities, PICTURES]);
+
         this.#result.communities = mine.size;
 
         for (const community of mine) {
@@ -1280,13 +1396,20 @@ class Session {
         }
 
         // Before anything else that matters: a device with no account cannot
-        // do anything with the history that follows.
+        // do anything with the history that follows. Sent in every scope,
+        // because it is the entire point of the smallest one.
         if (this.#hooks.needsIdentity?.()) {
           this.#open.add("@identity");
           this.#send({ t: "whoami" });
         }
 
-        this.#send({ t: "pics", ids: this.#hooks.pictureIds() });
+        // Pictures only when they were asked for. This is the one part of a
+        // sync whose size does not shrink once both sides have caught up — a
+        // list of every avatar, on every pass, to establish that nothing has
+        // changed — so the pass that runs every few minutes does not do it.
+        if (scope === "everything") {
+          this.#send({ t: "pics", ids: this.#hooks.pictureIds() });
+        }
 
         // Anything that arrived while this side was still deriving its key.
         // Drained here, in arrival order, now that acting on it is safe.
@@ -1347,6 +1470,16 @@ class Session {
         return;
 
       case "pics": {
+        // A peer offering pictures in a scope that did not ask for them is
+        // either out of step or a build that predates scopes. Ignored rather
+        // than acted on: fetching them would quietly turn the fast pass back
+        // into the slow one, which is the failure this exists to prevent and
+        // would be invisible from here.
+        if ((this.#scope ?? "everything") !== "everything") {
+          this.#hooks.trace?.("ignoring an offer of pictures — this pass is not for them");
+          return;
+        }
+
         const held = new Set(this.#hooks.pictureIds());
 
         for (const id of msg.ids) {
@@ -1675,6 +1808,14 @@ export class PairService extends EventEmitter {
       cred: "invite",
       session: invite.session,
       key: inviteKey(password, invite.salt),
+
+      // The account and the index, and nothing else.
+      //
+      // This is the pass somebody is watching. Everything the app is *for*
+      // arrives afterwards, in the background, from a device that is by then
+      // signed in and usable — and it arrives quickly, because the thing that
+      // used to make it slow was doing it before letting anybody in.
+      scope: "identity",
     }).run();
   }
 
@@ -1684,7 +1825,7 @@ export class PairService extends EventEmitter {
    * Needs no code and no typing, because both devices hold the account — which
    * is the whole reason the first link hands the identity over.
    */
-  sync(socket: Socket): Promise<PairResult> {
+  sync(socket: Socket, scope: Scope = "messages"): Promise<PairResult> {
     const secret = this.#hooks.accountSecret();
 
     if (!secret) {
@@ -1702,6 +1843,7 @@ export class PairService extends EventEmitter {
     return new Session(socket, this.#hooks, this.#invites, {
       cred: "account",
       key: accountKey(secret),
+      scope,
     }).run();
   }
 

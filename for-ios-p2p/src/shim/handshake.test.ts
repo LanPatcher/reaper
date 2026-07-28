@@ -54,6 +54,7 @@ function device(name: string, account: string | undefined) {
     accountSecret: () => held,
 
     communities: () => ["@index"],
+    essential: () => ["@index"],
     summary: () => ({ vector: {}, extra: {} }) as never,
     missingForSummary: () => [],
     merge: () => 0,
