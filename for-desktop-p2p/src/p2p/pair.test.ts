@@ -159,10 +159,21 @@ async function dial(service: PairService, port: number) {
 /* ---- the invite ---------------------------------------------------------- */
 
 {
-  const onion = "a".repeat(56) + ".onion";
+  // A real v3 address: 32 bytes of key, 2 of checksum, then the version byte 3.
+  const raw = Buffer.concat([randomBytes(34), Buffer.from([3])]);
+  const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  let bits = 0, value = 0, spelled = "";
+  for (const byte of raw) {
+    value = (value << 8) | byte; bits += 8;
+    while (bits >= 5) { spelled += B32[(value >>> (bits - 5)) & 31]; bits -= 5; }
+  }
+  const onion = spelled.toLowerCase() + ".onion";
   const code = sealInvite({ onion, name: "Ray's desktop" }, "hunter2");
 
-  ck("an invite fits in a QR code", code.length < 220, `${code.length} chars`);
+  // The interface's encoder is byte mode and stops at version 6 — 134 bytes.
+  // Version 4 is 80, and staying inside it keeps the grid coarse enough for a
+  // phone camera to read off a screen across a desk.
+  ck("an invite fits a version 4 QR code", code.length <= 80, `${code.length} chars`);
   ck(
     "and stays inside the QR alphanumeric set, so it scans at low density",
     /^[0-9A-Z $%*+\-.\/:]+$/.test(code),
@@ -177,7 +188,14 @@ async function dial(service: PairService, port: number) {
   const opened = openInvite(code, "hunter2");
   ck("the right password opens it", opened.ok);
   ck("and gets the address back", opened.ok && opened.invite.onion === onion);
-  ck("and the name", opened.ok && opened.invite.name === "Ray's desktop");
+  ck(
+    "and leaves the name to the greeting rather than inventing one",
+    opened.ok && opened.invite.name === "",
+  );
+  ck(
+    "and tolerates spaces from someone reading it aloud",
+    openInvite(code.slice(0, 20) + " " + code.slice(20), "hunter2").ok,
+  );
 
   const wrong = openInvite(code, "hunter3");
   ck("the wrong password does not", !wrong.ok);

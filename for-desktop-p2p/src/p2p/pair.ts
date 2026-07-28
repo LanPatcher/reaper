@@ -166,37 +166,66 @@ function fromBase32(text: string): Buffer | undefined {
 /**
  * Turn an invite into the string a QR code carries.
  *
- * Encrypted with the password rather than merely signed by it. An onion
- * address is a routable location, and a QR code is displayed on a screen in
- * whatever room you happen to be in — a photograph of it from across a café
- * should not hand somebody the address of your device, even though they would
- * still need the password to get anything out of it.
+ * ## Why this is as small as it is
+ *
+ * The QR encoder in the interface is byte mode only and stops at version 6,
+ * which is 134 bytes. That is not a lot, and the first version of this did not
+ * fit: it carried the onion address as the 56-character text people are used
+ * to seeing, plus the device name, plus separators, in base64 — and produced a
+ * 175-character string the encoder refused outright.
+ *
+ * Three things came out of it, in order of how much they saved:
+ *
+ *   - **The address is stored as its 35 raw bytes**, not its 56-character
+ *     spelling. Those characters are base32 of exactly those bytes plus a
+ *     checksum and a version byte that can be recomputed, so writing them out
+ *     costs 21 bytes to say nothing.
+ *
+ *   - **The device name is gone.** It was never needed here: the greeting
+ *     carries it, and by the time there is anything to label the two devices
+ *     are already talking. It was in the code purely so the scanning device
+ *     could say who it was about to link to, which it can now say a second
+ *     later with better information.
+ *
+ *   - **No separators and a two-character prefix**, rather than four
+ *     dot-delimited fields.
+ *
+ * What is left is 48 bytes — a salt, the address, and a tag — which is 77
+ * characters of base32 and fits comfortably inside version 4.
+ *
+ * It is encrypted rather than merely signed, because an onion address is a
+ * routable location and a QR code is displayed on a screen in whatever room
+ * you are standing in. A photograph of it from across a café should yield
+ * nothing at all, not merely nothing usable.
  */
+
+/** Raw bytes of a v3 address: 32 of key, 2 of checksum, 1 of version. */
+const ADDRESS_BYTES = 35;
+
+const SALT_BYTES = 5;
+const TAG_BYTES = 8;
+
 export function sealInvite(invite: Omit<Invite, "salt">, password: string): string {
-  const salt = toBase32(randomBytes(5));
-  const key = inviteKey(password, salt);
+  const address = fromBase32(invite.onion.replace(/\.onion$/i, ""));
 
-  const body = Buffer.from(JSON.stringify({ o: invite.onion, n: invite.name }), "utf8");
-  const pad = Buffer.alloc(body.length);
-
-  // A stream of key material the length of the body. The password is the only
-  // secret, the salt makes it single-use, and the payload is a fixed 60-odd
-  // bytes — so a stream cipher built from the hash is enough, and avoids the
-  // 28 bytes of nonce and tag that GCM would add to something that has to fit
-  // in a photograph.
-  let block = key;
-  for (let at = 0; at < body.length; at += 32) {
-    block = createHmac("sha256", key).update(block).digest();
-    block.copy(pad, at, 0, Math.min(32, body.length - at));
+  if (!address || address.length !== ADDRESS_BYTES) {
+    throw new Error("that is not a v3 onion address");
   }
 
+  const salt = randomBytes(SALT_BYTES);
+  const key = inviteKey(password, toBase32(salt));
+
+  const body = Buffer.from(address);
+  const pad = keystream(key, body.length);
   for (let at = 0; at < body.length; at++) body[at] ^= pad[at];
 
-  const mac = createHmac("sha256", key).update(body).digest().subarray(0, 8);
+  // Over the salt as well as the body, so a code cannot be re-salted to turn a
+  // wrong-password answer into a not-an-invite one.
+  const tag = createHmac("sha256", key)
+    .update(salt).update(body)
+    .digest().subarray(0, TAG_BYTES);
 
-  // Upper case throughout, including the prefix, so the whole string lives in
-  // the QR's alphanumeric set and nothing forces it into byte mode.
-  return ["REAPER1", salt, toBase32(body), toBase32(mac)].join(".");
+  return "R1" + toBase32(Buffer.concat([salt, body, tag]));
 }
 
 /**
@@ -205,52 +234,78 @@ export function sealInvite(invite: Omit<Invite, "salt">, password: string): stri
  * The two failures are told apart on purpose. A code that is not a Reaper
  * invite at all means the camera caught something else, and the answer is to
  * scan again. A code that is an invite but will not open means the password is
- * wrong, and the answer is to type it again — which is a different sentence,
- * and telling someone to rescan a perfectly good code is how they conclude the
+ * wrong, and the answer is to type it again — a different sentence, and
+ * telling someone to rescan a perfectly good code is how they conclude the
  * feature is broken.
  */
 export function openInvite(
   code: string,
   password: string,
 ): { ok: true; invite: Invite } | { ok: false; reason: "not-an-invite" | "wrong-password" } {
-  const parts = code.trim().split(".");
-  // Case-insensitive, because a QR scanner returns what was encoded but a
-  // person typing the code by hand will not hold shift for forty characters.
-  if (parts.length !== 4 || parts[0].toUpperCase() !== "REAPER1") {
+  // Case-insensitive and space-tolerant: a scanner returns what was encoded,
+  // but somebody reading it off a screen will not hold shift for eighty
+  // characters and may well break it into groups.
+  const text = code.trim().replace(/\s+/g, "").toUpperCase();
+
+  if (!text.startsWith("R1")) return { ok: false, reason: "not-an-invite" };
+
+  const raw = fromBase32(text.slice(2));
+  if (!raw || raw.length < SALT_BYTES + ADDRESS_BYTES + TAG_BYTES) {
     return { ok: false, reason: "not-an-invite" };
   }
 
-  const [, salt, payload, mac] = parts;
+  const salt = raw.subarray(0, SALT_BYTES);
+  const body = raw.subarray(SALT_BYTES, SALT_BYTES + ADDRESS_BYTES);
+  const given = raw.subarray(SALT_BYTES + ADDRESS_BYTES, SALT_BYTES + ADDRESS_BYTES + TAG_BYTES);
 
-  const body = fromBase32(payload);
-  const given = fromBase32(mac);
+  const key = inviteKey(password, toBase32(salt));
 
-  if (!body || !given || !body.length || given.length !== 8) {
-    return { ok: false, reason: "not-an-invite" };
-  }
-
-  const key = inviteKey(password, salt);
-  const want = createHmac("sha256", key).update(body).digest().subarray(0, 8);
+  const want = createHmac("sha256", key)
+    .update(salt).update(body)
+    .digest().subarray(0, TAG_BYTES);
 
   if (!timingSafeEqual(want, given)) return { ok: false, reason: "wrong-password" };
 
-  const pad = Buffer.alloc(body.length);
-  let block = key;
-  for (let at = 0; at < body.length; at += 32) {
-    block = createHmac("sha256", key).update(block).digest();
-    block.copy(pad, at, 0, Math.min(32, body.length - at));
-  }
-
   const plain = Buffer.from(body);
+  const pad = keystream(key, plain.length);
   for (let at = 0; at < plain.length; at++) plain[at] ^= pad[at];
 
-  try {
-    const read = JSON.parse(plain.toString("utf8")) as { o: string; n: string };
-    if (!/^[a-z2-7]{56}\.onion$/.test(read.o)) return { ok: false, reason: "wrong-password" };
-    return { ok: true, invite: { onion: read.o, name: String(read.n || "a device"), salt } };
-  } catch {
-    return { ok: false, reason: "wrong-password" };
+  // The version byte is the one part of the address that is fixed, so it is
+  // worth checking: a tag that verifies against a body that is not an address
+  // means the format changed, not that the password was wrong.
+  if (plain[ADDRESS_BYTES - 1] !== 3) return { ok: false, reason: "not-an-invite" };
+
+  return {
+    ok: true,
+    invite: {
+      onion: toBase32(plain).toLowerCase() + ".onion",
+      // Deliberately empty. The greeting carries the real one, and inventing a
+      // placeholder here would mean the interface showed a name that was never
+      // the device's.
+      name: "",
+      salt: toBase32(salt),
+    },
+  };
+}
+
+/**
+ * Key material the length of a payload.
+ *
+ * The password is the only secret and the salt makes it single-use, so a
+ * stream built by iterating the HMAC is enough for a payload this size — and
+ * it avoids the 28 bytes of nonce and tag that GCM would add to something that
+ * has to fit in a photograph.
+ */
+function keystream(key: Buffer, length: number): Buffer {
+  const pad = Buffer.alloc(length);
+  let block = key;
+
+  for (let at = 0; at < length; at += 32) {
+    block = createHmac("sha256", key).update(block).digest();
+    block.copy(pad, at, 0, Math.min(32, length - at));
   }
+
+  return pad;
 }
 
 /**
