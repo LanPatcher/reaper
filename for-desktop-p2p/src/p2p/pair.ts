@@ -82,6 +82,20 @@ const BATCH = 400;
  */
 export const PICTURES = "@avatars";
 
+/**
+ * The protocol this build speaks.
+ *
+ * Sent in the greeting and checked before anything else, because two devices
+ * running different builds is a completely different problem from two devices
+ * disagreeing about a password — and until this existed, it presented as the
+ * latter. An older build sends messages this one does not expect, in an order
+ * it does not expect, and every guard here reported that as though the peer
+ * were trying to skip authorisation.
+ *
+ * Bumped whenever the shape of anything below changes.
+ */
+const PROTOCOL = 1;
+
 /** How long a socket may sit idle before it is assumed dead. */
 const IDLE_MS = 120_000;
 
@@ -341,6 +355,8 @@ type Wire =
    */
   | {
       t: "hello";
+      /** Absent on builds older than this one, which is itself the signal. */
+      v?: number;
       device: string;
       name: string;
       onion: string;
@@ -603,6 +619,7 @@ class Session {
       // old protocol got wrong: there is nothing to wait for.
       this.#send({
         t: "hello",
+        v: PROTOCOL,
         device: this.#hooks.device,
         name: this.#hooks.name,
         onion: this.#hooks.onion(),
@@ -622,6 +639,22 @@ class Session {
   #handle(msg: Wire): void {
     switch (msg.t) {
       case "hello": {
+        // Before the password, because a version mismatch makes every other
+        // check meaningless — and reporting it as a password problem sends
+        // somebody to re-type a password that was never wrong.
+        const theirs = msg.v ?? 0;
+
+        if (theirs !== PROTOCOL) {
+          const older = theirs < PROTOCOL;
+
+          this.#fail(
+            older
+              ? "that device is running an older version of Reaper — update it and try again"
+              : "this device is running an older version of Reaper — update it and try again",
+          );
+          return;
+        }
+
         const password = this.#hooks.password();
         if (!password) return;
 
@@ -639,6 +672,7 @@ class Session {
 
           this.#send({
             t: "hello",
+            v: PROTOCOL,
             device: this.#hooks.device,
             name: this.#hooks.name,
             onion: this.#hooks.onion(),
@@ -715,7 +749,12 @@ class Session {
           // spend memory. The limit is far above anything an honest opening
           // exchange produces — a claim, a summary per community, and a
           // picture list.
-          this.#fail("that device sent data before proving the password");
+          if (this.#pending.length >= 256) {
+            this.#fail("that device sent too much before proving the password");
+            return;
+          }
+
+          this.#pending.push(msg);
           return;
         }
     }

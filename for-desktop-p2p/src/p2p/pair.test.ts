@@ -311,9 +311,14 @@ await pairs("batch", true);
 /**
  * A pairing where the two devices authorise at different times.
  *
- * This is the ordinary case, not an edge case, and it is what produced "that
- * device sent data before proving the password" on every real attempt while
- * every test here passed.
+ * Worth stating plainly: this does **not** reproduce the reported failure. It
+ * passes with the guard that produced that message and without it, because TCP
+ * preserves order and a current build only sends past the greeting once it has
+ * verified a proof. The guard was unreachable between two devices running this
+ * code — which is itself the finding, and is why a version check now exists.
+ *
+ * What it does establish is that authorising at different times is harmless,
+ * which is the property the queueing is there to provide.
  *
  * Each side verifies the *other's* proof, and reaching that point takes as long
  * as scrypt takes — which on a phone and a desktop is not the same length of
@@ -460,6 +465,60 @@ await lopsided();
   );
 
   mute.close();
+}
+
+/* ---- two devices on different builds -------------------------------------- */
+
+/**
+ * A version mismatch has to say it is a version mismatch.
+ *
+ * Everything else in this protocol assumes both ends agree on what the
+ * messages are. When they do not — one device updated, the other not — the
+ * older one sends things the newer one has no case for, in an order it does
+ * not expect, and every guard fires. Before this check existed the result was
+ * "that device sent data before proving the password": an accusation about
+ * security, pointing at a password that was correct, for a problem that is
+ * fixed by installing an update.
+ */
+{
+  const mine = device("mine", "correct horse", "m".repeat(56) + ".onion");
+
+  const listener = new PairService(mine.hooks);
+  const port = await listener.open();
+
+  // A peer speaking something else: a greeting with no version, which is what
+  // every build before this one sends.
+  const socket = new Socket();
+  await new Promise<void>((done) => { socket.connect(port, "127.0.0.1", () => done()); });
+
+  const body = Buffer.from(JSON.stringify({
+    t: "hello", device: "old", name: "an older build",
+    onion: "o".repeat(56) + ".onion", nonce: "x", proof: "", communities: [],
+  }), "utf8");
+
+  const header = Buffer.alloc(5);
+  header.writeUInt32BE(body.length, 0);
+  socket.write(Buffer.concat([header, body]));
+
+  const said = await new Promise<string>((done) => {
+    socket.on("data", (chunk: Buffer) => {
+      try {
+        const msg = JSON.parse(chunk.subarray(5).toString("utf8")) as { t: string; why?: string };
+        if (msg.t === "no") done(msg.why ?? "");
+      } catch { /* the greeting, not the refusal */ }
+    });
+    setTimeout(() => done(""), 3000);
+  });
+
+  ck("an older build is told it is an older build", /older version/.test(said), said);
+  ck(
+    "and is not accused of skipping the password",
+    !/password/i.test(said),
+    said,
+  );
+
+  socket.destroy();
+  await listener.close();
 }
 
 /* ---- what the sync address forwards to ----------------------------------- */
