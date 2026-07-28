@@ -505,6 +505,34 @@ class Session {
   /** Communities still expecting an `end`. */
   readonly #open = new Set<string>();
 
+  /**
+   * Messages that arrived before this side finished authorising the peer.
+   *
+   * ## Why these are kept rather than refused
+   *
+   * Authorisation is not simultaneous. Each side verifies the *other's* proof,
+   * and reaching that point takes as long as scrypt takes — which on a phone
+   * and a desktop is not the same length of time. So the faster side finishes,
+   * decides the connection is good, and starts sending, while the slower side
+   * is still deriving a key.
+   *
+   * Refusing that traffic is what "the device sent data before proving the
+   * password" was: a guard that assumed anything arriving before authorisation
+   * must be an attempt to skip it. It is not — it is the ordinary case, and it
+   * happens on nearly every pairing between two devices of different speeds.
+   *
+   * That guard was also a contradiction. The whole point of this protocol is
+   * that no message is ever "expected", and a rule that some messages may only
+   * arrive after others is an ordering assumption wearing a different hat. It
+   * is the same mistake the old protocol was built on, reintroduced in the
+   * replacement.
+   *
+   * So they are held instead, and nothing is *acted on* until the proof
+   * verifies — which is what the guard was actually protecting. If the proof
+   * never verifies, these are dropped unread along with the connection.
+   */
+  readonly #pending: Wire[] = [];
+
   /** Pictures asked for and not yet arrived. */
   readonly #chasing = new Set<string>();
 
@@ -664,6 +692,12 @@ class Session {
         }
 
         this.#send({ t: "pics", ids: this.#hooks.pictureIds() });
+
+        // Anything that arrived while this side was still deriving its key.
+        // Drained here, in arrival order, now that acting on it is safe.
+        const held = this.#pending.splice(0, this.#pending.length);
+        for (const early of held) this.#handle(early);
+
         this.#maybeDone();
         return;
       }
@@ -677,6 +711,10 @@ class Session {
         // unauthorised is not a protocol slip to be tolerated — it is someone
         // who found the address trying to skip the password.
         if (!this.#authorised) {
+          // Bounded, so a peer that never proves itself cannot use this to
+          // spend memory. The limit is far above anything an honest opening
+          // exchange produces — a claim, a summary per community, and a
+          // picture list.
           this.#fail("that device sent data before proving the password");
           return;
         }

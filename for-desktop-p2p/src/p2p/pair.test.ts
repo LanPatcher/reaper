@@ -306,6 +306,87 @@ await pairs("batch", true);
   await listener.close();
 }
 
+/* ---- one side slower than the other -------------------------------------- */
+
+/**
+ * A pairing where the two devices authorise at different times.
+ *
+ * This is the ordinary case, not an edge case, and it is what produced "that
+ * device sent data before proving the password" on every real attempt while
+ * every test here passed.
+ *
+ * Each side verifies the *other's* proof, and reaching that point takes as long
+ * as scrypt takes — which on a phone and a desktop is not the same length of
+ * time. The faster side finishes, decides the connection is good, and starts
+ * sending. The slower side is still deriving, and used to treat that traffic as
+ * an attempt to skip the password.
+ *
+ * Both machines here run at the same speed, so the difference is introduced
+ * deliberately: one side's relay delays everything travelling towards it, which
+ * has exactly the effect of that side being slow to authorise.
+ */
+async function lopsided() {
+  const password = "correct horse";
+
+  const slow = device("Ray's phone", password, "p".repeat(56) + ".onion");
+  const fast = device("Ray's desktop", password, "d".repeat(56) + ".onion");
+
+  fast.logs.set("@index", [event("a friend"), event("a server")]);
+  fast.logs.set("srv_one", [event("a message")]);
+
+  const picture = randomBytes(2_000);
+  const pictureId = createHash("sha256").update(picture).digest("hex");
+  fast.pictures.set(pictureId, picture);
+
+  const listener = new PairService(slow.hooks);
+  const direct = await listener.open();
+
+  // Delay only what travels towards the listener, so its greeting is answered
+  // long before it has read the answer — the far side authorises first and
+  // starts sending while this one is still catching up.
+  const { createServer: make, Socket: Sock } = await import("node:net");
+
+  const skewed = make((near) => {
+    const far = new Sock();
+    far.connect(direct, "127.0.0.1");
+
+    near.on("data", (c: Buffer) => { setTimeout(() => far.write(c), 120); });
+    far.on("data", (c: Buffer) => { near.write(c); });
+
+    near.on("error", () => {});
+    far.on("error", () => {});
+    near.on("close", () => { setTimeout(() => far.end(), 300); });
+    far.on("close", () => { setTimeout(() => near.end(), 300); });
+  });
+
+  await new Promise<void>((done) => skewed.listen(0, "127.0.0.1", () => done()));
+  const port = (skewed.address() as { port: number }).port;
+
+  let failed = "";
+  let result;
+
+  try {
+    result = await dial(new PairService(fast.hooks), port);
+  } catch (error) {
+    failed = (error as Error).message;
+  }
+
+  ck("a device that authorises later is not accused of skipping the password", !failed, failed);
+  ck("  and the pairing still completes", Boolean(result?.done));
+  ck(
+    "  and the early messages were kept, not dropped",
+    (slow.logs.get("@index") ?? []).length === 2 &&
+      (slow.logs.get("srv_one") ?? []).length === 1,
+    `${(slow.logs.get("@index") ?? []).length} / ${(slow.logs.get("srv_one") ?? []).length}`,
+  );
+  ck("  including the picture", slow.pictures.has(pictureId));
+
+  skewed.close();
+  await listener.close();
+}
+
+await lopsided();
+
 /* ---- a failure that explains itself -------------------------------------- */
 
 /**
