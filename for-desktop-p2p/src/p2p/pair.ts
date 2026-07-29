@@ -1440,7 +1440,25 @@ class Session {
         // Before anything else that matters: a device with no account cannot
         // do anything with the history that follows. Sent in every scope,
         // because it is the entire point of the smallest one.
-        if (this.#hooks.needsIdentity?.()) {
+        // Who asks, and who answers.
+        //
+        // Structural, and deliberately not inferred from anything. The device
+        // that showed the code looked that invite up in its own book — that is
+        // what `#minted` means — so it is the device somebody is standing in
+        // front of, signed in, choosing to link another one. The device that
+        // scanned is the one being linked. There is no ambiguity to resolve
+        // and nothing to guess at.
+        //
+        // It was guessed at, and that is what broke linking: the giving side
+        // decided whether it had an account by looking for a username claim in
+        // its own index, and when that lookup came back false — for any reason
+        // at all — it answered `whoami` with nothing. The scanning device then
+        // adopted nothing, kept the throwaway key it had generated on first
+        // launch, and sat on the setup screen. Worse, the index *did* sync, so
+        // the claims arrived and the phone cheerfully reported being signed in
+        // on the other device: every symptom of a link that worked, except the
+        // one that mattered.
+        if (this.#hooks.needsIdentity?.() && !this.#minted) {
           this.#open.add("@identity");
 
           // Set before the ask, not after the answer. Everything that arrives
@@ -1573,6 +1591,26 @@ class Session {
       }
 
       case "whoami": {
+        // Declined only by a device that is itself waiting for one.
+        //
+        // Read off this session rather than out of a log, and that distinction
+        // is the whole repair. `#awaitingIdentity` is true exactly when *this*
+        // device sent `whoami` — a fact about what happened on this connection
+        // a moment ago, which cannot come back wrong. The previous version
+        // asked a heuristic whether this device had an account worth sending,
+        // and when the heuristic said no, the device answered "I have none" to
+        // the one question linking exists to answer.
+        //
+        // A device showing a code can never be in this state: it does not ask,
+        // because `#minted` says it is the one being linked *from*. So the
+        // ordinary flow — signed in on one screen, scanning on the other —
+        // gives unconditionally, whatever any log search would have said.
+        if (this.#awaitingIdentity) {
+          this.#hooks.trace?.("asked for an account while waiting for one — declining");
+          this.#send({ t: "iam", identity: "" });
+          return;
+        }
+
         // Resolved rather than read, because on iOS the onion key comes back
         // from a native call. Nothing waits on this: the protocol has no
         // ordering, so an answer that arrives three messages later is as good
