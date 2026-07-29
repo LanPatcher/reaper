@@ -701,6 +701,83 @@ async function syncOverTor(
 }
 
 /**
+ * Take the account address when nobody is actually using it.
+ *
+ * ## Why this replaces asking
+ *
+ * Exactly one device answers at an account address at a time. That constraint
+ * is real and cannot be relaxed: an onion address is a public key, so two
+ * devices publishing descriptors for it means the directory keeps whichever
+ * spoke last and peers reach an arbitrary one. Messages land on one device and
+ * not the other, and nothing errors.
+ *
+ * What was wrong was not the constraint but the *question*. A device that was
+ * not holding put a screen in front of the user asking whether to take over —
+ * from a device that was very often switched off, at which point the polite
+ * request went nowhere and the screen stayed. The user pressed a button that
+ * appeared to do nothing, then a second button to insist, and then restarted
+ * the app because the address still had not moved.
+ *
+ * Nobody has the information to answer that question except this code, and it
+ * can find out by asking: reach the holder, or fail to. So it asks the holder
+ * rather than the user.
+ *
+ * Being displaced never stopped a device *sending* — it dials its peers
+ * directly and the outbox drains to whoever is connected. What it stopped was
+ * receiving, because peers dial the account address and arrive wherever that
+ * is. An address stranded on a device that is off is precisely a mailbox
+ * nobody empties, and repairing that without being asked is the whole point.
+ *
+ * ## What stops two devices taking it at once
+ *
+ * Nothing, in the moment. Two devices that cannot reach each other will both
+ * conclude the holder is gone and both take it. That is survivable and
+ * self-correcting rather than a hole: a claim carries a number, the higher one
+ * wins, and the first sync between them settles it. A brief overlap costs far
+ * less than an address stranded indefinitely, which is what the polite version
+ * produced.
+ */
+async function repairAddress(): Promise<void> {
+  const me = thisDevice();
+  const claims = claimsHeld();
+
+  // Already ours, or nobody has ever taken it — `holds` treats an empty ledger
+  // as this device's, which is right for an account that has only run here.
+  if (holds(claims, me.id)) return;
+
+  const winner = holder(claims);
+  if (!winner) return;
+
+  const known = roster(syncAddresses()).find((entry) => entry.device === winner.device);
+
+  const take = async (why: string) => {
+    log("[p2p]", `taking the account address: ${why}`);
+    addClaim(claimFor(claimsHeld(), me.id, me.name));
+    wantsAddress = false;
+
+    await publishIfHolding();
+    announceDevices();
+  };
+
+  // It holds the address and this device has no idea where it is, so there is
+  // nothing to ask. That happens when a claim arrives from a device whose sync
+  // address never did.
+  if (!known) {
+    await take(`${winner.name || "the holder"} is not in the roster`);
+    return;
+  }
+
+  try {
+    await syncOverTor(known, "identity");
+
+    // It answered, so it is alive and holding, and this device is displaced for
+    // a good reason. Nothing to repair.
+  } catch (error) {
+    await take(`${known.name || "the holder"} did not answer — ${(error as Error).message}`);
+  }
+}
+
+/**
  * Try every other device of yours, in turn.
  *
  * `failures` is filled in when the caller passes one. Every failure is logged
@@ -789,9 +866,14 @@ function startSyncSchedule(): void {
     passes += 1;
     const scope: Scope = passes % PICTURES_EVERY === 0 ? "everything" : "messages";
 
-    void syncAllDevices(undefined, scope).then((done) => {
+    void syncAllDevices(undefined, scope).then(async (done) => {
       if (done.some((one) => one.events > 0 || one.files > 0)) announceDevices();
-    });
+
+      // The regular check. A device holding the address can be switched off at
+      // any moment, and the account is unreachable from that moment until
+      // somebody notices — so this is what notices.
+      await repairAddress();
+    }).catch((error: Error) => log("[p2p]", error.message));
   }, SYNC_EVERY_MS);
 
   // Left running while the app is, and not unref'd: this is a background task
@@ -1937,6 +2019,11 @@ export function registerP2PHandlers(): void {
       // seconds, and this is the pass that fills the app underneath them.
       await syncAllDevices(undefined, "messages");
       announceDevices();
+
+      // And take the address if whoever holds it is not actually there. Done
+      // after the catch-up so the claims being judged are the current ones
+      // rather than whatever this device remembered from last time.
+      await repairAddress();
 
       // Then the pictures, once. Faces and server icons are the last thing
       // worth waiting on and the first thing that is noticed missing, so they
