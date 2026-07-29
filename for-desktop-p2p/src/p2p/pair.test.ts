@@ -413,7 +413,7 @@ await pairs("batch", true);
 
   desktop.logs.set("@index", [event("a friend")]);
 
-  const listener = new PairService(fresh.hooks);
+  const listener = new PairService(desktop.hooks);
   const direct = await listener.open();
   const port = await relay(direct, "drip");
 
@@ -425,7 +425,7 @@ await pairs("batch", true);
 
   try {
     if (opened.ok !== true) throw new Error("the minted code did not open");
-    result = await new PairService(desktop.hooks)
+    result = await new PairService(fresh.hooks)
       .join(await connect(port), opened.invite, minted.password);
   } catch (error) {
     failed = (error as Error).message;
@@ -466,13 +466,13 @@ await pairs("batch", true);
   const avatarId = createHash("sha256").update(avatar).digest("hex");
   desktop.pictures.set(avatarId, avatar);
 
-  const listener = new PairService(fresh.hooks);
+  const listener = new PairService(desktop.hooks);
   const port = await listener.open();
   const minted = listener.mint(address());
   const opened = openInvite(minted.code, minted.password);
 
   const result = opened.ok === true
-    ? await new PairService(desktop.hooks)
+    ? await new PairService(fresh.hooks)
         .join(await connect(port), opened.invite, minted.password)
     : undefined;
 
@@ -502,17 +502,17 @@ await pairs("batch", true);
   await listener.close();
 
   // And now the background passes, in the order the app runs them.
-  const second = new PairService(fresh.hooks);
+  const second = new PairService(desktop.hooks);
   const port2 = await second.open();
 
-  await new PairService(desktop.hooks).sync(await connect(port2), "messages");
+  await new PairService(fresh.hooks).sync(await connect(port2), "messages");
 
   ck("the messages pass brings the servers", (fresh.logs.get("srv_big") ?? []).length === 3,
      `${(fresh.logs.get("srv_big") ?? []).length}`);
   ck("  and the conversations", (fresh.logs.get("dm_someone") ?? []).length === 1);
   ck("  and still no pictures", fresh.pictures.size === 0, `${fresh.pictures.size}`);
 
-  await new PairService(desktop.hooks).sync(await connect(port2), "everything");
+  await new PairService(fresh.hooks).sync(await connect(port2), "everything");
 
   ck("the occasional pass brings the pictures", fresh.pictures.has(avatarId));
 
@@ -561,13 +561,13 @@ await pairs("batch", true);
     return adopt(given);
   };
 
-  const listener = new PairService(fresh.hooks);
+  const listener = new PairService(desktop.hooks);
   const port = await listener.open();
   const minted = listener.mint(address());
   const opened = openInvite(minted.code, minted.password);
 
   const result = opened.ok === true
-    ? await new PairService(desktop.hooks)
+    ? await new PairService(fresh.hooks)
         .join(await connect(port), opened.invite, minted.password)
     : undefined;
 
@@ -584,6 +584,66 @@ await pairs("batch", true);
     "  and the history still arrived, held rather than dropped",
     (fresh.logs.get("@index") ?? []).length === 2,
     `${(fresh.logs.get("@index") ?? []).length} events`,
+  );
+
+  await listener.close();
+}
+
+/**
+ * The device showing the code hands over its account. Always.
+ *
+ * ## Why this is asserted so bluntly
+ *
+ * Because the alternative shipped. The giving side decided whether it had an
+ * account worth sending by searching its own index for a username claim, and
+ * when that search came back false it answered "I have no account" — to the
+ * one question this entire feature exists to answer.
+ *
+ * Nothing about that failure is visible from the outside. The index still
+ * syncs, so the claims arrive and the scanning device reports being signed in
+ * on the other one. It just never becomes the account: it keeps the throwaway
+ * key it generated on first launch and sits on the setup screen, having
+ * apparently succeeded.
+ *
+ * So which device gives is structural now — the one that minted the invite,
+ * which is the one whose screen the code is on — and this pins it by making
+ * the log search wrong on purpose. `needsIdentity` lies, `identity` is
+ * available, and the account must still cross.
+ */
+{
+  const desktop = device("desktop", "d".repeat(56) + ".onion");
+  const fresh = device("phone", "p".repeat(56) + ".onion", false);
+
+  desktop.logs.set("@index", [event("a username claim")]);
+
+  // The heuristic that used to gate this, broken in the direction that broke
+  // linking: this device believes it has nothing to give.
+  desktop.hooks.needsIdentity = () => true;
+
+  const listener = new PairService(desktop.hooks);
+  const port = await listener.open();
+  const minted = listener.mint(address());
+  const opened = openInvite(minted.code, minted.password);
+
+  const result = opened.ok === true
+    ? await new PairService(fresh.hooks)
+        .join(await connect(port), opened.invite, minted.password)
+    : undefined;
+
+  ck("the link completes", Boolean(result?.done));
+  ck(
+    "and the scanning device is given the account",
+    fresh.account === desktop.account,
+    `${fresh.account} vs ${desktop.account}`,
+  );
+  ck("and says so, rather than leaving the caller to guess", result?.adopted === true);
+
+  // And the device showing the code never asks for one, however confused it is
+  // about its own state — it is the one somebody is signed in on.
+  ck(
+    "and the device showing the code did not adopt anything itself",
+    desktop.account === '{"userId":"u-desktop"}',
+    String(desktop.account),
   );
 
   await listener.close();
@@ -1063,15 +1123,23 @@ await lopsided();
 
   ck("a new device starts with no account", !fresh.account);
 
-  const listener = new PairService(fresh.hooks);
+  // The signed-in device shows the code; the new one scans it.
+  //
+  // That is the only arrangement the app offers, and it is worth pinning here
+  // rather than in prose: `pairInvite` lives behind Settings, which a device
+  // with no account cannot reach — its setup screen offers pasting and
+  // scanning and nothing else. Tests that had it the other way round were
+  // describing a flow that does not exist, and they went on passing while the
+  // real one was broken.
+  const listener = new PairService(desktop.hooks);
   const port = await listener.open();
   const minted = listener.mint(address());
   const opened = openInvite(minted.code, minted.password);
 
-  ck("a device with no account can still offer a code", opened.ok);
+  ck("the signed-in device offers a code", opened.ok);
 
   const result = opened.ok === true
-    ? await new PairService(desktop.hooks)
+    ? await new PairService(fresh.hooks)
         .join(await connect(port), opened.invite, minted.password)
     : undefined;
 
@@ -1401,11 +1469,16 @@ await lopsided();
       !/needsIdentity: \(\) => !identity/.test(source),
   );
 
-  // And it will not hand one out either, or two fresh devices pairing swap the
-  // throwaway keys they each generated on first launch.
+  // And handing one *out* is not gated on that search, or on any search.
+  //
+  // It was, and that is what broke linking: the device showing the code
+  // decided whether it had an account worth sending by looking for a username
+  // claim in its own index, and a false answer there meant it told the
+  // scanning device it had no account at all. Nothing downstream could tell
+  // that apart from a device that genuinely had none.
   ck(
-    "and offers its own account only once it has been set up",
-    /if \(!identity \|\| !claimed\(\)\) return undefined;/.test(source),
+    "and handing the account over is not gated on a log search",
+    !/!identity \|\| !claimed\(\)/.test(source),
   );
 
   // The file that could not be revoked and did not survive a force-quit. Its

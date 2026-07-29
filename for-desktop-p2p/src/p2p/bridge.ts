@@ -914,6 +914,22 @@ function forgetOldPairPassword(): void {
  */
 let everClaimed = false;
 
+/**
+ * Whether this device still needs to be handed an account.
+ *
+ * The inverse of `claimed`, named separately because the two are asked in
+ * opposite situations and reading `!claimed()` at a call site reads as a
+ * double negative about a heuristic.
+ *
+ * Used only to decide whether to *ask* and whether an answer was needed —
+ * never to decide whether to give. A false positive here costs a `whoami` that
+ * is answered and ignored; the same mistake on the giving side cost the entire
+ * feature.
+ */
+function needsAccount(): boolean {
+  return !claimed();
+}
+
 function claimed(): boolean {
   if (everClaimed) return true;
   if (!identity) return false;
@@ -1015,11 +1031,21 @@ async function openPair(): Promise<number> {
      * wrong.
      */
     identity: async () => {
-      // Nothing to give from a device that has not been set up itself. Two
-      // fresh devices pairing would otherwise hand each other the throwaway
-      // keys they generated on first launch, and whichever answered first
-      // would win — an account nobody chose, on both of them.
-      if (!identity || !claimed()) return undefined;
+      // Whatever this device has, whenever it is asked.
+      //
+      // It used to refuse unless `claimed()` said this key had a username in
+      // the index, on the reasoning that two fresh devices should not swap
+      // throwaway keys. The reasoning was fine and the mechanism was not: it
+      // made handing over an account depend on a *search of a log*, and when
+      // that search came back false the device silently answered "I have no
+      // account" to the one question the whole feature exists to answer.
+      //
+      // Nothing here can tell a false negative from a real one, which is
+      // exactly why it should not be deciding. `pair.ts` decides now, and it
+      // decides on something it cannot be wrong about: only the device that
+      // minted the invite — the one whose screen the code is on — is ever
+      // asked for an account in the first place.
+      if (!identity) return undefined;
 
       let onionKey: string | undefined;
 
@@ -2641,16 +2667,21 @@ export function registerP2PHandlers(): void {
       // there a username claim in the index, signed by the key this device now
       // holds. Anything else is reported as a failure the user can retry,
       // which is far better than a success they have to unpick.
-      if (!identity) {
-        return { ok: false, error: "That device did not send an account. Try a new code." };
-      }
-
-      if (!claimed()) {
+      // What actually happened, not a second opinion about it.
+      //
+      // This used to re-run `claimed()` — the same log search the giving side
+      // was using — so a device that had been handed nothing and a device that
+      // had been handed everything could produce the same answer, and the
+      // message said the account had arrived in both cases.
+      //
+      // `adopted` is set by the session itself, at the moment it takes an
+      // account on. It cannot be true unless one was received and written.
+      if (!result.adopted && needsAccount()) {
         return {
           ok: false,
           error:
-            "The account arrived but its details did not — this device is not " +
-            "signed in. Show a new code on the other device and try again.",
+            "That device did not send its account. Make sure it is signed in, " +
+            "then show a new code and try again.",
         };
       }
 
