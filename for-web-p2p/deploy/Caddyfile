@@ -1,0 +1,13 @@
+# Reaper web, behind Caddy. Certificates are obtained and renewed for you.
+#
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# Run the relay with PORT=8080 and no REAPER_TLS_* — Caddy terminates TLS.
+#
+# WebSocket upgrades need no special case here: Caddy proxies them by default,
+# which is most of why this file is four lines and the nginx one is forty.
+
+hytlands.com {
+	reverse_proxy 127.0.0.1:8080
+}

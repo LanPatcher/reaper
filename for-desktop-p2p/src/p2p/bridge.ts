@@ -1509,10 +1509,64 @@ function storeFor(community: string): CommunityStore {
  * changes: once channel keys land, decryption happens here and the renderer
  * receives plaintext it could not have obtained itself.
  */
+/**
+ * Events already decrypted, by id.
+ *
+ * ## Why this is worth the memory
+ *
+ * Opening a server hands the interface that community's whole log, and every
+ * payload in it is sealed — so every message is an AES-GCM open and a Brotli
+ * decompress. Doing that once is the cost of reading your messages. Doing it
+ * again every time somebody switches tabs is not, and that is what was
+ * happening: `loadCommunity` asks for the entire log on each switch, so moving
+ * between two servers re-decrypted both of them, in full, on every move.
+ *
+ * On a desktop that runs in the main process, on a different thread from the
+ * one drawing the window, and it merely wastes power. On iOS the core and the
+ * interface are the same JavaScript context, so it is the thread that has to
+ * produce the next frame — which is exactly the lag on changing channels.
+ *
+ * An event is immutable and identified by a hash of itself, so a decrypted
+ * copy can never go stale. The only thing that can change the answer is a
+ * community *key* arriving after the fact, and `setKey` clears this for that
+ * reason.
+ */
+const decrypted = new Map<string, SignedEvent>();
+
+/**
+ * Roughly a large account's worth of messages.
+ *
+ * Bounded because this is a cache and not a second copy of the database. The
+ * eviction is deliberately crude — drop the oldest quarter when full — because
+ * anything cleverer would need per-entry bookkeeping on the hot path to avoid
+ * a cost that only appears once the limit is reached.
+ */
+const DECRYPTED_LIMIT = 40_000;
+
 function forRenderer(event: SignedEvent): SignedEvent {
+  const held = decrypted.get(event.id);
+  if (held) return held;
+
   // Decryption happens here, on the main-process side of the boundary, so the
   // renderer only ever handles plaintext it could not have obtained itself.
-  return { ...event, payload: decryptPayload(event.community, event.payload) as never };
+  const plain = {
+    ...event,
+    payload: decryptPayload(event.community, event.payload) as never,
+  };
+
+  if (decrypted.size >= DECRYPTED_LIMIT) {
+    // Map iterates in insertion order, so this drops the least recently
+    // *added* rather than the least recently used. Good enough: the working
+    // set is whatever community is open, and that is what was added last.
+    let drop = Math.floor(DECRYPTED_LIMIT / 4);
+    for (const id of decrypted.keys()) {
+      decrypted.delete(id);
+      if (--drop <= 0) break;
+    }
+  }
+
+  decrypted.set(event.id, plain);
+  return plain;
 }
 
 export function registerP2PHandlers(): void {
@@ -1917,6 +1971,17 @@ export function registerP2PHandlers(): void {
    * Install a community's payload key, from an invite.
    */
   ipcMain.handle(CHANNEL.setKey, (_, community: string, keyBase64: string) => {
+    // A key arriving changes the answer for every event of this community that
+    // has already been read — they were handed over sealed, because there was
+    // nothing to open them with. This is the one thing that can invalidate a
+    // decrypted copy, so it is the one place that clears them.
+    //
+    // Cleared wholesale rather than per community: the cache is keyed by event
+    // id, which is the right key for a cache and the wrong one for finding
+    // every entry belonging to one community. Re-decrypting whatever is open
+    // costs a fraction of a second and happens when somebody joins a server.
+    decrypted.clear();
+
     if (!keyBase64) {
       payloadKeys.delete(community);
       return false;

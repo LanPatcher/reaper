@@ -1,0 +1,19 @@
+# Written before the certificates were copied in, not after.
+#
+# The order matters: a key that reaches a commit is a key that has to be
+# reissued, and `git rm --cached` does not remove it from history. Ignoring it
+# first is the only version of this that is not a race.
+
+# TLS material. The whole directory, and then the extensions again on their
+# own — a certificate that gets dropped somewhere else in a hurry is exactly
+# the one nobody notices in a diff.
+cert/
+*.pfx
+*.p12
+*.key
+*.pem
+*.cer
+*.crt
+
+node_modules/
+dist/
