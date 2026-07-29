@@ -67,6 +67,14 @@ const removed = new Set<string>();
 let timer: ReturnType<typeof setTimeout> | undefined;
 let flushing: Promise<void> | undefined;
 
+/**
+ * A second pass, promised to callers who arrived while one was already running.
+ *
+ * See `flush` — this is what makes "await flush()" mean "my writes are on disk"
+ * rather than "somebody else's were".
+ */
+let queued: Promise<void> | undefined;
+
 // ---- startup ----------------------------------------------------------------
 
 /**
@@ -118,9 +126,17 @@ async function load(path: string): Promise<void> {
       // Capacitor hands back base64 for binary reads, which is what every file
       // here is — encrypted frames and content-addressed blobs.
       files.set(relative(full), Buffer.from(read.data as string, "base64"));
-    } catch {
+    } catch (error) {
       // A file that cannot be read is left out rather than crashing startup.
       // The log tolerates a missing segment; it does not tolerate not opening.
+      //
+      // Said out loud, because the consequences are not local to this line: a
+      // segment that is absent from the map is a segment whose events are not
+      // replayed, and the store will come up looking like it has less history
+      // than it does. The bytes are still on disk and a later launch that reads
+      // them successfully gets them back — but nothing else in the app will
+      // ever mention that this happened.
+      console.error(`[fs] could not read ${full} — its contents are not loaded:`, error);
     }
   }
 }
@@ -379,10 +395,38 @@ function schedule(): void {
  * it is most likely to be killed and therefore the moment a pending write is
  * most likely to be lost.
  */
-export async function flush(): Promise<void> {
+export function flush(): Promise<void> {
   // One at a time. Two overlapping flushes can write the same path in the
   // wrong order, and the loser is a log segment several frames behind.
-  if (flushing) return flushing;
+  //
+  // ## Why waiting for the running one is not enough
+  //
+  // This used to return the in-flight promise, and that quietly broke the one
+  // guarantee the whole thing exists for.
+  //
+  // A pass takes its snapshot of `dirty` the moment it starts. A caller that
+  // writes *after* that and then awaits `flush()` was handed the running pass —
+  // which had already decided what it was writing, and did not include a byte
+  // of theirs. `await flush()` resolved with their work still only in memory.
+  //
+  // Every caller of this is one that cannot afford that. `pairJoin` is the
+  // sharp one: it takes on an account, merges the history behind it, flushes,
+  // and the interface reloads the page — which discards everything still in
+  // memory. If the 400ms debounce happened to be mid-pass at that moment, the
+  // phone came back up as the identity it had before, with the pairing code on
+  // the other device already spent. That is the exact failure the `DURABLE`
+  // list in `bridge.ts` was written to prevent, still reachable through a race.
+  //
+  // So a caller arriving during a pass gets a *new* pass chained behind it.
+  // Shared, so ten callers during one pass cost one extra pass rather than ten.
+  if (flushing) {
+    queued ??= flushing.then(() => {
+      queued = undefined;
+      return flush();
+    });
+
+    return queued;
+  }
 
   flushing = (async () => {
     if (timer) {

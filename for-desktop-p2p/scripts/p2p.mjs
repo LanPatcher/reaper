@@ -53,6 +53,7 @@ const TARGETS = {
     "src/local-ui/boot.test.ts",
     "src/local-ui/membership-ui.test.ts",
     "src/local-ui/qr.test.ts",
+    "src/local-ui/friendcode.test.ts",
   ],
 };
 

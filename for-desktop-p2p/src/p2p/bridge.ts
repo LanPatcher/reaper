@@ -1640,7 +1640,12 @@ function blobsFor(community: string): BlobStore {
   }
   // Re-applied on every access: the key can be installed or rotated long after
   // the store was first created.
-  store.setKey(payloadKeys.get(community));
+  //
+  // With the superseded keys as well, or a rotation makes every file already on
+  // disk unopenable — see `BlobStore.#past`. The same history that keeps sealed
+  // *payloads* readable keeps sealed *files* readable, and there is no reason
+  // for the two to disagree.
+  store.setKey(payloadKeys.get(community), pastKeys.get(community) ?? []);
   return store;
 }
 
