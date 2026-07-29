@@ -92,14 +92,18 @@ const EPHEMERAL = new Set(["voice.here"]);
  * both ways and compare. A rule that merely *looks* safe is how a log loses
  * the event that decided who got the last seat.
  */
-function membership(events: readonly SignedEvent[], cap: number): Set<string> {
+function membership(
+  events: readonly SignedEvent[],
+  cap: number,
+  payloads: ReadonlyMap<string, Payload>,
+): Set<string> {
   const members = new Set<string>();
   const banned = new Set<string>();
   const evicted = new Set<string>();
   let owner: string | undefined;
 
   for (const event of events) {
-    const payload = (event.payload ?? {}) as Payload;
+    const payload = payloads.get(event.id) ?? {};
 
     if (event.type === "community.owner") {
       owner = payload.userId ?? event.author;
@@ -167,7 +171,11 @@ function same(a: Set<string>, b: Set<string>): boolean {
  * identical. Rooms are almost never at capacity, so in practice the churn
  * collapses; when it matters, nothing moves.
  */
-function prunableChurn(events: readonly SignedEvent[], cap: number): Set<string> {
+function prunableChurn(
+  events: readonly SignedEvent[],
+  cap: number,
+  payloads: ReadonlyMap<string, Payload>,
+): Set<string> {
   // The last membership statement each person made about themselves. Anything
   // earlier is a candidate.
   const lastByAuthor = new Map<string, string>();
@@ -179,7 +187,7 @@ function prunableChurn(events: readonly SignedEvent[], cap: number): Set<string>
 
     // Only self-signed statements. A kick is somebody else's decision and is
     // never collapsed away.
-    const payload = (event.payload ?? {}) as Payload;
+    const payload = payloads.get(event.id) ?? {};
     if (payload.userId && payload.userId !== event.author) continue;
 
     lastByAuthor.set(event.author, event.id);
@@ -191,7 +199,7 @@ function prunableChurn(events: readonly SignedEvent[], cap: number): Set<string>
         event.type !== "member.leave" &&
         event.type !== "group.leave") continue;
 
-    const payload = (event.payload ?? {}) as Payload;
+    const payload = payloads.get(event.id) ?? {};
     if (payload.userId && payload.userId !== event.author) continue;
     if (lastByAuthor.get(event.author) === event.id) continue;
 
@@ -200,8 +208,12 @@ function prunableChurn(events: readonly SignedEvent[], cap: number): Set<string>
 
   if (!candidates.size) return candidates;
 
-  const before = membership(events, cap);
-  const after = membership(events.filter((e) => !candidates.has(e.id)), cap);
+  const before = membership(events, cap, payloads);
+  const after = membership(
+    events.filter((e) => !candidates.has(e.id)),
+    cap,
+    payloads,
+  );
 
   // All or nothing. Narrowing down to the subset that is individually safe
   // would mean a pass per candidate, and the case where it matters — a room
@@ -229,9 +241,40 @@ type Payload = {
 export function compact(
   events: readonly SignedEvent[],
   capacity = 10,
+  read: (payload: unknown) => unknown = (payload) => payload,
 ): Compaction {
   const keep: SignedEvent[] = [];
   const pruned: string[] = [];
+
+  // ---- every rule below reads inside a payload, and payloads are sealed ----
+  //
+  // ## Why this parameter exists
+  //
+  // This file used to read `event.payload` directly, and on any community with
+  // an encryption key that is a sealed envelope — `{ e, n, c, t }` — with none
+  // of the fields these rules look for. So `payload.messageId` was undefined,
+  // `payload.id` was undefined, `payload.userId` was undefined, and every rule
+  // that depends on one of them quietly did nothing:
+  //
+  //   - **Deleted messages kept their bodies.** That is the headline saving —
+  //     "the tombstone is small and the body is the part that was megabytes" —
+  //     and it never once happened outside a test.
+  //   - **Renames and icons were never deduped**, so a server renamed twenty
+  //     times kept twenty names.
+  //   - **Membership was computed without kicks or bans**, which is the model
+  //     `prunableChurn` checks its own safety against.
+  //
+  // Nothing failed. Compaction ran, reported a small number of dropped events —
+  // the two rules that happen not to read a payload — and looked like it had
+  // worked. That is the worst shape a bug can have in the one operation that
+  // rewrites history.
+  //
+  // The default is identity, so a caller with no key (the private index, which
+  // is never sealed) and every existing test behave exactly as before.
+  const payloads = new Map<string, Payload>();
+  for (const event of events) {
+    payloads.set(event.id, (read(event.payload) ?? {}) as Payload);
+  }
 
   // ---- first pass: what does the end state look like? ---------------------
   //
@@ -242,11 +285,11 @@ export function compact(
   const superseded = new Set<string>();
 
   // Joining and leaving repeatedly, where doing so decided nothing.
-  for (const id of prunableChurn(events, capacity)) superseded.add(id);
+  for (const id of prunableChurn(events, capacity, payloads)) superseded.add(id);
 
   for (let i = events.length - 1; i >= 0; i--) {
     const event = events[i];
-    const payload = (event.payload ?? {}) as Payload;
+    const payload = payloads.get(event.id) ?? {};
 
     if (event.type === "message.delete" && payload.messageId) {
       deleted.add(payload.messageId);
