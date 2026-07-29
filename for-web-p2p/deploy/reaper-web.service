@@ -1,0 +1,75 @@
+# Run the client and its relay as a service.
+#
+#   sudo cp deploy/reaper-web.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now reaper-web
+#   sudo journalctl -u reaper-web -f
+#
+# This unit binds 443 directly, so the app is the site rather than something on
+# a port. If you already run nginx or Caddy on this machine, use the configs
+# beside this file instead and set PORT=8080 below.
+
+[Unit]
+Description=Reaper web client and Tor relay
+Documentation=file:///root/reaper/for-web-p2p/server/relay.mjs
+After=network-online.target tor.service
+Wants=network-online.target
+# Nothing to relay without it.
+Requires=tor.service
+
+[Service]
+Type=simple
+WorkingDirectory=/root/reaper/for-web-p2p
+ExecStart=/usr/bin/node server/relay.mjs
+
+Environment=PORT=443
+Environment=HOST=0.0.0.0
+Environment=REAPER_SOCKS_HOST=127.0.0.1
+Environment=REAPER_SOCKS_PORT=9050
+Environment=REAPER_STATIC=/root/reaper/for-web-p2p/dist
+
+# The certificate, which travels with the folder.
+#
+# The PEM pair, unencrypted, exactly as the previous webserver on this domain
+# read them. The `.pfx` beside them is the same certificate in a PKCS#12
+# bundle and is passphrase-protected, which is the one thing that makes it
+# harder rather than easier here.
+Environment=REAPER_TLS_CERT=/root/reaper/for-web-p2p/cert/cert.cer
+Environment=REAPER_TLS_KEY=/root/reaper/for-web-p2p/cert/key.key
+
+# Optional. `cert.cer` holds only the leaf, so clients that do not fetch the
+# intermediate themselves have to — most do, via the AIA URL in the
+# certificate, which is why the previous server worked without this. Supplying
+# it saves them the round trip:
+#
+#   curl -o cert/chain.crt http://crt.sectigo.com/SectigoPublicServerAuthenticationCADVR36.crt
+#
+#Environment=REAPER_TLS_CHAIN=/root/reaper/for-web-p2p/cert/chain.crt
+
+# The same certificate as a bundle, if the passphrase is ever to hand.
+#Environment=REAPER_TLS_PFX=/root/reaper/for-web-p2p/cert/_.hytlands.com.pfx
+#Environment=REAPER_TLS_PFX_PASSPHRASE=
+
+# Binding 443 without running as root.
+#
+# The alternative is running the whole thing as root so it can bind one port,
+# which is a large privilege for a small need — this process parses input from
+# the internet and opens sockets on command.
+User=www-data
+Group=www-data
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# It stores nothing, so it needs nothing writable. Said here as well as in the
+# code, because this is the half a reader can verify without trusting the code.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadOnlyPaths=/root/reaper/for-web-p2p /etc/letsencrypt
+
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
