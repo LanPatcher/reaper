@@ -325,7 +325,20 @@ final class TorService {
             arguments.append(contentsOf: ["--SafeLogging", "1"])
             arguments.append(contentsOf: ["--AvoidDiskWrites", "1"])
 
-            configuration.arguments = arguments
+            // `arguments` on `TorConfiguration` is an `NSMutableArray`, not a
+            // Swift array. A literal assigned straight to it works — an
+            // `NSMutableArray` is `ExpressibleByArrayLiteral` — which is why
+            // the single literal this replaced compiled, and why building the
+            // list with `+` did not: there is no `+` between two of those.
+            //
+            // Converted once, here, rather than working in `NSMutableArray`
+            // throughout: the list above is worth having type-checked.
+            //
+            // Deliberately `NSMutableArray(array:)` and not `as! NSMutableArray`,
+            // which is what the compiler suggests and is wrong — a bridged
+            // Swift array arrives as an immutable `NSArray`, so that cast
+            // compiles and then traps at runtime.
+            configuration.arguments = NSMutableArray(array: arguments)
 
             self.configuration = configuration
 
