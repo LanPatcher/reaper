@@ -110,6 +110,17 @@ final class TorService {
      */
     private(set) var publishesAccount = true
 
+    /**
+     * What the launch that actually started tor decided about the account
+     * service, for as long as this process lives.
+     *
+     * Static because tor outlives this object: a WebView reload rebuilds every
+     * Capacitor plugin while tor carries on running in the same process, and
+     * the new instance would otherwise have no way to find out what the old one
+     * configured. Nil until tor has been started here at all.
+     */
+    private static var launchedWithAccount: Bool?
+
     init(emit: @escaping Progress) {
         self.emit = emit
     }
@@ -147,10 +158,6 @@ final class TorService {
     func start(localPort: UInt16, syncPort: UInt16 = 0, account: Bool = true) {
         if running { return }
 
-        // Before the already-running branch below, which reads addresses off
-        // disk and needs to know which of them this launch is entitled to.
-        publishesAccount = account
-
         // Already up from before this object existed.
         //
         // The WebView can reload — importing an identity does exactly that —
@@ -163,12 +170,27 @@ final class TorService {
             bootstrapped = true
             socksPort = SOCKS_PORT
 
+            // What is *actually* published, which is not necessarily what this
+            // call asked for. Nothing here configures tor — it is already
+            // running, with whatever the launch that started it decided — so
+            // taking `account` at its word would have the app believe it had
+            // stopped publishing an address it is still answering at, or the
+            // reverse. `launchedWithAccount` is the only honest source, and it
+            // outlives the reload because it belongs to the process rather
+            // than to this object.
+            publishesAccount = Self.launchedWithAccount ?? account
+
             emit("ready", ["socksPort": Int(SOCKS_PORT)])
 
             // Both addresses come off disk, so they survive the reload too.
             readOnionAddress()
             return
         }
+
+        // From here this call is the one configuring tor, so its answer is the
+        // one that holds for as long as the process lives.
+        publishesAccount = account
+        Self.launchedWithAccount = account
 
         lastError = nil
         forwardTo = localPort
@@ -220,25 +242,21 @@ final class TorService {
             // return a port nothing is listening on.
             try? FileManager.default.removeItem(at: portFile)
 
-            // The account service, when this device is the one that should be
-            // answering at the address. See `account` on `start`.
+            // ## Why this is built up rather than written as one literal
             //
-            // Built separately and spliced in, because the three arguments are
-            // an ordered unit — tor applies `HiddenServicePort` and
-            // `HiddenServiceVersion` to whichever `HiddenServiceDir` preceded
-            // them — so they either all appear, in this order, or none does.
-            let accountService: [String] = account
-                ? [
-                    "--HiddenServiceDir", serviceDirectory.path,
-                    "--HiddenServicePort", "80 127.0.0.1:\(localPort)",
-
-                    // Version 3 addresses. The default now, stated anyway: v2
-                    // is retired and an old default would be silently insecure.
-                    "--HiddenServiceVersion", "3",
-                ]
-                : []
-
-            configuration.arguments = [
+            // The account service is conditional now — see `account` on
+            // `start` — and the obvious way to express that, splicing an array
+            // into a literal with `+`, does not compile. Not for any reason to
+            // do with this code: a forty-element string literal carrying
+            // interpolations, joined by operators whose operand types have to
+            // be inferred, is the shape that makes Swift's type checker give up
+            // rather than finish. It reports that as a failure to type-check
+            // the expression in reasonable time, which reads like a mystery and
+            // is really just a request to be more explicit.
+            //
+            // So every piece below is small and annotated, and nothing has to
+            // be inferred across the whole thing.
+            var arguments: [String] = [
                 // Bound to loopback and to a port tor picks.
                 // Fixed rather than `auto`. See `SOCKS_PORT` above — this is
                 // the value that makes the proxy port knowable without asking
@@ -247,53 +265,67 @@ final class TorService {
 
                 "--ControlPort", "auto",
                 "--ControlPortWriteToFile", portFile.path,
-            ] + accountService + [
-
-                // ---- the second service: this device's sync address -------
-                //
-                // A separate onion, with its own key, used by nothing but the
-                // other devices signed in as the same person.
-                //
-                // It has to be separate from the one above. The account's
-                // address is published by exactly one device at a time — that
-                // is what stops two of them fighting over it — so dialling it
-                // reaches whichever device is already holding, which is
-                // precisely the one that does not need to be reached. A phone
-                // that wants to take the account over from a desktop at home
-                // has no way to say so through an address the desktop owns.
-                //
-                // Published unconditionally, including while this device is
-                // displaced. A device that is not holding is the one that most
-                // needs to be reachable: it is how it finds out what it missed
-                // and how it takes the account back.
-                //
-                // The ordering is load-bearing. tor applies each
-                // `HiddenServicePort` to whichever `HiddenServiceDir`
-                // preceded it, so these four arguments are one unit and
-                // splitting them would silently point both services at the
-                // same port.
-                "--HiddenServiceDir", syncDirectory.path,
-                "--HiddenServicePort", "80 127.0.0.1:\(syncPort)",
-                "--HiddenServiceVersion", "3",
-
-                // Never a relay. The default already, said out loud because a
-                // phone volunteering to carry other people's traffic would be
-                // a surprising thing to discover by accident.
-                "--ClientOnly", "1",
-
-                // Logged to a file, and read back when something fails.
-                //
-                // This is the only way to find out what tor is unhappy about.
-                // There is no console on a device, tor reports configuration
-                // problems by writing a line and exiting, and every failure so
-                // far has been diagnosed by guessing — which has cost a build
-                // cycle each time. `SafeLogging` keeps addresses out of it, so
-                // the file says what went wrong without recording who was
-                // being contacted.
-                "--Log", "notice file \(logFile.path)",
-                "--SafeLogging", "1",
-                "--AvoidDiskWrites", "1",
             ]
+
+            // ---- the account address, if this device is the one holding it --
+            //
+            // The three are an ordered unit: tor applies `HiddenServicePort`
+            // and `HiddenServiceVersion` to whichever `HiddenServiceDir`
+            // preceded them, so they all appear together or not at all.
+            if account {
+                let accountForward: String = "80 127.0.0.1:\(localPort)"
+
+                arguments.append(contentsOf: ["--HiddenServiceDir", serviceDirectory.path])
+                arguments.append(contentsOf: ["--HiddenServicePort", accountForward])
+
+                // Version 3 addresses. The default now, stated anyway: v2 is
+                // retired and an old default would be silently insecure.
+                arguments.append(contentsOf: ["--HiddenServiceVersion", "3"])
+            }
+
+            // ---- the second service: this device's sync address ------------
+            //
+            // A separate onion, with its own key, used by nothing but the
+            // other devices signed in as the same person.
+            //
+            // It has to be separate from the one above. The account's address
+            // is published by exactly one device at a time — that is what stops
+            // two of them fighting over it — so dialling it reaches whichever
+            // device is already holding, which is precisely the one that does
+            // not need to be reached. A phone that wants to take the account
+            // over from a desktop at home has no way to say so through an
+            // address the desktop owns.
+            //
+            // Published unconditionally, including while this device is
+            // displaced. A device that is not holding is the one that most
+            // needs to be reachable: it is how it finds out what it missed and
+            // how it takes the account back.
+            let syncForward: String = "80 127.0.0.1:\(syncPort)"
+
+            arguments.append(contentsOf: ["--HiddenServiceDir", syncDirectory.path])
+            arguments.append(contentsOf: ["--HiddenServicePort", syncForward])
+            arguments.append(contentsOf: ["--HiddenServiceVersion", "3"])
+
+            // Never a relay. The default already, said out loud because a
+            // phone volunteering to carry other people's traffic would be a
+            // surprising thing to discover by accident.
+            arguments.append(contentsOf: ["--ClientOnly", "1"])
+
+            // Logged to a file, and read back when something fails.
+            //
+            // This is the only way to find out what tor is unhappy about.
+            // There is no console on a device, tor reports configuration
+            // problems by writing a line and exiting, and every failure so far
+            // has been diagnosed by guessing — which has cost a build cycle
+            // each time. `SafeLogging` keeps addresses out of it, so the file
+            // says what went wrong without recording who was being contacted.
+            let logLine: String = "notice file \(logFile.path)"
+
+            arguments.append(contentsOf: ["--Log", logLine])
+            arguments.append(contentsOf: ["--SafeLogging", "1"])
+            arguments.append(contentsOf: ["--AvoidDiskWrites", "1"])
+
+            configuration.arguments = arguments
 
             self.configuration = configuration
 
@@ -499,14 +531,6 @@ final class TorService {
     }
 
     /**
-     * The address this device answers at.
-     *
-     * Written by tor into the service directory once the descriptor is
-     * published. It does not exist at the moment the circuit is established, so
-     * this retries rather than reporting an empty address — which the interface
-     * would show as "you are unreachable" while tor was still working.
-     */
-    /**
      * This device's sync address, once its service has published.
      *
      * Split out of `readOnionAddress` because a displaced device reads only
@@ -532,6 +556,14 @@ final class TorService {
         emit("sync", ["syncOnion": address])
     }
 
+    /**
+     * The address this device answers at.
+     *
+     * Written by tor into the service directory once the descriptor is
+     * published. It does not exist at the moment the circuit is established, so
+     * this retries rather than reporting an empty address — which the interface
+     * would show as "you are unreachable" while tor was still working.
+     */
     private func readOnionAddress(attempt: Int = 0) {
         guard let directory = try? Self.serviceDirectory() else { return }
         let hostname = directory.appendingPathComponent("hostname")
