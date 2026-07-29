@@ -1,6 +1,8 @@
 import { Keepalive } from "@reaper/keepalive";
+import { Notify } from "@reaper/notify";
 import { Scanner } from "@reaper/scanner";
 
+import { isForeground, onForeground } from "./lifecycle";
 import { invoke, subscribe } from "./shim/electron";
 import { flush } from "./shim/fs";
 
@@ -150,7 +152,12 @@ export function installNative(): void {
     maximise: () => {},
     close: () => {},
 
-    setBadgeCount: () => {},
+    setBadgeCount: (count: number) => {
+      void Notify.badge({ count: Number(count) || 0 }).catch(() => {
+        // No permission, or an older build. A wrong number on an icon is not
+        // worth a line in the log every time a message arrives.
+      });
+    },
 
     /**
      * Whether a call is up, which decides the audio session's category.
@@ -173,11 +180,88 @@ export function installNative(): void {
       console.warn("[native] saving files is not implemented on iOS yet");
     },
 
-    // Drawn in-window by the interface itself on this platform. iOS
-    // notifications need a permission prompt and an entitlement, and the app
-    // is usually in the foreground anyway.
-    notify: () => {},
-    onNotifyClick: () => {},
+    /**
+     * A message arrived somewhere the reader is not looking.
+     *
+     * ## What is decided here, and what is not
+     *
+     * Almost nothing is decided here, on purpose. Whether this message is
+     * worth interrupting somebody over has already been settled by the shared
+     * interface before this is called: muting, whether the conversation is
+     * open, whether the sender is still allowed to reach you, whether
+     * notifications are switched off at all, and — since the fix for a phone
+     * that buzzed once per message in its entire history — whether the message
+     * is arriving or merely being copied across.
+     *
+     * Two things are left, and both are specific to a phone:
+     *
+     *   - **Only while in the background.** In the foreground the interface
+     *     draws its own notice, and a system banner over the conversation
+     *     somebody is already reading is noise. Checked at post time rather
+     *     than subscribed to, because the app can be backgrounded between a
+     *     message arriving and this running.
+     *
+     *   - **One entry per conversation.** The identifier is the conversation,
+     *     so a busy channel replaces its own row in the shade instead of
+     *     stacking forty. Forty banners from one person is not forty times as
+     *     informative as one.
+     *
+     * The message itself is never included, matching the desktop. A
+     * notification sits on a lock screen where anyone holding the phone can
+     * read it, and "who, and where" is enough to decide whether to pick it up.
+     */
+    notify: (what: {
+      who?: string;
+      where?: string;
+      direct?: boolean;
+      go?: { community?: string; channelId?: string | null };
+    }) => {
+      if (isForeground()) return;
+
+      const who = String(what?.who || "Someone");
+      const where = String(what?.where || "");
+
+      void Notify.show({
+        // One per conversation. `go` is what the interface uses to open it, so
+        // it is also exactly the right grain for "the same place".
+        id: `msg:${what?.go?.community ?? "?"}:${what?.go?.channelId ?? ""}`,
+        title: who,
+        body: what?.direct
+          ? "Sent you a message"
+          : where ? `Wrote in ${where}` : "Wrote a message",
+        data: JSON.stringify(what?.go ?? {}),
+      }).catch(() => {
+        // Refused permission, most likely. Nothing to do and nothing worth
+        // saying: the interface has already shown the unread mark, which is
+        // the part that does not depend on anybody's permission.
+      });
+    },
+
+    /**
+     * Whether the app is being looked at.
+     *
+     * Offered to the shared interface because the page cannot work it out for
+     * itself here: iOS can leave a WebView visible while the app is not
+     * frontmost, so `document.hidden` reports somebody as present while they
+     * are looking at something else. Presence is broadcast to other people, so
+     * that is not a small inaccuracy.
+     *
+     * Absent on the desktop, and the interface falls back to page visibility
+     * there — which is correct, because a desktop window losing focus means
+     * somebody looked at their email rather than put the machine away.
+     */
+    onAppState: (handler: (active: boolean) => void) => onForeground(handler),
+
+    onNotifyClick: (handler: (go: unknown) => void) => {
+      void Notify.addListener("tapped", (event) => {
+        try {
+          handler(JSON.parse(event.data || "{}"));
+        } catch {
+          // A notification from a build that carried something else. Opening
+          // the app is still the right outcome, and it has already happened.
+        }
+      });
+    },
 
     onceScreenPicker: () => {},
     screenPickerCallback: () => {},

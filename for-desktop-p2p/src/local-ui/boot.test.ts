@@ -597,8 +597,20 @@ ck("the conversation list is empty on a fresh device",
 
   // The other half: the app used to stop transmitting the moment it lost the
   // screen, which is right for reading and wrong for talking.
-  const vis = source.slice(source.indexOf('addEventListener("visibilitychange"'));
-  const body = vis.slice(0, 1200);
+  // The handler this is about, not merely the first one.
+  //
+  // This took the first `visibilitychange` in the file, which was fine while
+  // there was one. Presence added another — the app going into the background
+  // is what decides whether other people see you — and it happens to sit
+  // earlier, so this silently started reading a block that has nothing to do
+  // with the microphone and reporting the absence of code it was never going
+  // to find. A test that can be broken by unrelated code moving is not
+  // guarding what it claims to.
+  const body = [...source.matchAll(/addEventListener\("visibilitychange"/g)]
+    .map((found) => source.slice(found.index ?? 0, (found.index ?? 0) + 1200))
+    .find((block) => /roadcast/.test(block)) ?? "";
+
+  ck("the voice visibility handler is still there to check", body !== "");
   ck("hiding the window does not stop the microphone",
      !/visibilityState === "hidden"[\s\S]{0,200}stopBroadcast\(\)/.test(body));
   ck("but coming back repairs a stopped recorder",

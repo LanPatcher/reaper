@@ -3,6 +3,7 @@ import { Keepalive } from "@reaper/keepalive";
 import { Tor, type TorEvent } from "@reaper/tor";
 
 import { registerP2PHandlers } from "../../for-desktop-p2p/src/p2p/bridge";
+import { watchForeground } from "./lifecycle";
 import { invoke } from "./shim/electron";
 import { flush, ready as filesystemReady, heldBytes } from "./shim/fs";
 import { setProxyPort } from "./shim/net";
@@ -141,6 +142,11 @@ export async function boot(): Promise<BootStatus> {
   await startNetwork();
 
   watchLifecycle();
+
+  // One place decides whether the app is being looked at — see `lifecycle.ts`.
+  // Notifications and presence both read it, and they must not be able to
+  // disagree about it.
+  watchForeground();
 
   return status;
 }

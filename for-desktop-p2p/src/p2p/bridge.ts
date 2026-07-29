@@ -2625,6 +2625,35 @@ export function registerP2PHandlers(): void {
 
     try {
       const result = await joinWithInvite(opened.invite, String(password));
+
+      // Checked before anybody is told this worked.
+      //
+      // The interface reloads on `ok`, because the page has to come back up as
+      // the account it was just given — and if the account is not actually
+      // there, what it comes back up as is a setup screen offering to make a
+      // new one. That is not a cosmetic failure: accepting the offer writes a
+      // second profile signed by the *linked* account's key, which is how a
+      // device ends up holding the right identity while showing the wrong
+      // person, and how adding the original as a friend reports it as
+      // yourself.
+      //
+      // `claimed` asks exactly what the interface will ask a second later: is
+      // there a username claim in the index, signed by the key this device now
+      // holds. Anything else is reported as a failure the user can retry,
+      // which is far better than a success they have to unpick.
+      if (!identity) {
+        return { ok: false, error: "That device did not send an account. Try a new code." };
+      }
+
+      if (!claimed()) {
+        return {
+          ok: false,
+          error:
+            "The account arrived but its details did not — this device is not " +
+            "signed in. Show a new code on the other device and try again.",
+        };
+      }
+
       return { ok: true, result };
     } catch (error) {
       return { ok: false, error: (error as Error).message };
