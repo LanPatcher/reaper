@@ -519,6 +519,101 @@ await pairs("batch", true);
   await second.close();
 }
 
+/**
+ * Nothing is written to disk before this device knows whose disk it is.
+ *
+ * A community log is encrypted at rest with a key derived from the device's
+ * private key. So an event merged *before* the account arrives is sealed under
+ * the throwaway key generated on first launch — and the account replaces that
+ * key moments later, leaving the log unreadable. On the next start it is moved
+ * aside as corrupt and the device comes up empty, holding the right identity
+ * and none of its history.
+ *
+ * That failure is very hard to read from outside, because the device is not
+ * broken in any way it can report: the link succeeded, the key is right, and
+ * the interface offers to create an account because as far as it can tell
+ * there is not one. Accepting writes a second profile signed by the linked
+ * account's own key — at which point adding the original as a friend reports
+ * it as yourself, which is the symptom that finally gave it away.
+ *
+ * Nothing here can see an encryption key, so the property is asserted the way
+ * it actually matters: the account must be in place before the first event
+ * lands, whatever order the messages arrive in.
+ */
+{
+  const desktop = device("desktop", "d".repeat(56) + ".onion");
+  const fresh = device("phone", "p".repeat(56) + ".onion", false);
+
+  desktop.logs.set("@index", [event("a friend"), event("a username")]);
+
+  // When each thing happened, in the order it happened.
+  const order: string[] = [];
+
+  const merge = fresh.hooks.merge;
+  fresh.hooks.merge = (community, events) => {
+    order.push("merge");
+    return merge(community, events);
+  };
+
+  const adopt = fresh.hooks.adoptIdentity!;
+  fresh.hooks.adoptIdentity = (given) => {
+    order.push("adopt");
+    return adopt(given);
+  };
+
+  const listener = new PairService(fresh.hooks);
+  const port = await listener.open();
+  const minted = listener.mint(address());
+  const opened = openInvite(minted.code, minted.password);
+
+  const result = opened.ok === true
+    ? await new PairService(desktop.hooks)
+        .join(await connect(port), opened.invite, minted.password)
+    : undefined;
+
+  ck("a first link completes", Boolean(result?.done));
+  ck("  and the account arrived", Boolean(fresh.account));
+
+  ck(
+    "  and nothing was written before it did",
+    order.length > 0 && order[0] === "adopt" && order.indexOf("merge") > 0,
+    order.join(" → ") || "nothing happened",
+  );
+
+  ck(
+    "  and the history still arrived, held rather than dropped",
+    (fresh.logs.get("@index") ?? []).length === 2,
+    `${(fresh.logs.get("@index") ?? []).length} events`,
+  );
+
+  await listener.close();
+}
+
+/**
+ * And the holding does not apply to a device that already has an account.
+ *
+ * It never asks for one, so there is nothing to wait for and no reason to
+ * delay a single event.
+ */
+{
+  const one = device("one", "d".repeat(56) + ".onion");
+  const two = device("two", "p".repeat(56) + ".onion");
+
+  two.hooks.accountSecret = () => one.hooks.accountSecret();
+  one.logs.set("@index", [event("something new")]);
+
+  const listener = new PairService(two.hooks);
+  const port = await listener.open();
+
+  const result = await new PairService(one.hooks).sync(await connect(port), "messages");
+
+  ck("a device that already has an account syncs without waiting", Boolean(result?.done));
+  ck("  and the events arrived", (two.logs.get("@index") ?? []).length === 1);
+  ck("  and nothing was adopted", !result?.adopted);
+
+  await listener.close();
+}
+
 /* ---- syncing afterwards, with nothing typed ------------------------------ */
 
 /**

@@ -12524,7 +12524,7 @@
           [["online","Online"],["idle","Idle"],["dnd","Do not disturb"],["offline","Invisible"]].forEach(function (o) {
             var op = document.createElement("option");
             op.value = o[0]; op.textContent = t(o[1]);
-            if (presence === o[0]) op.selected = true;
+            if (presenceNow() === o[0]) op.selected = true;
             sts.appendChild(op);
           });
           stw.appendChild(stl); stw.appendChild(sts); card.appendChild(stw);
@@ -13371,7 +13371,7 @@
             username = v;
             profile.bio = bt.value;
             profile.pronouns = pnI.value.trim();
-            presence = sts.value;
+            setManualPresence(sts.value);
             userPrefs.autoImages = cb.checked;
             userPrefs.autoDownload = dlc.checked;
             userPrefs.autoMaxBytes = parseInt(sz.value, 10);
@@ -13399,7 +13399,7 @@
               username: v, avatarId: profile.avatarId || null,
               avatarType: profile.avatarType || null, bio: profile.bio,
               pronouns: profile.pronouns, bannerId: profile.bannerId || null,
-              bannerType: profile.bannerType || null, status: presence
+              bannerType: profile.bannerType || null, status: presenceNow()
             });
             await window.p2p.append(INDEX, "user.prefs", userPrefs);
 
@@ -13412,7 +13412,7 @@
               username: v, avatarId: profile.avatarId || null,
               avatarType: profile.avatarType || null, bio: profile.bio,
               pronouns: profile.pronouns, bannerId: profile.bannerId || null,
-              bannerType: profile.bannerType || null, status: presence
+              bannerType: profile.bannerType || null, status: presenceNow()
             };
             closeModal();
             paintMe();
@@ -13463,8 +13463,56 @@
       // a peer we cannot reach is indistinguishable from one that has quit.
       // ===================================================================
 
-      var presence = "online";
+      /**
+       * What this device tells other people, and how it is decided.
+       *
+       * ## Two different questions
+       *
+       * "Is this device reachable" and "what should people see" are not the
+       * same question, and conflating them is what made an honest answer
+       * impossible. Reachability is a fact — a connection either exists or it
+       * does not — and it is the only thing that can be trusted, because it is
+       * observed rather than claimed. What people *see* is a choice, and it is
+       * one the person holding the device gets to make.
+       *
+       * Keeping them apart is what lets somebody appear offline while still
+       * receiving everything. Delivery follows connections, not the label, so
+       * appearing offline costs nothing at all: messages arrive, notifications
+       * fire, and nobody is told you are there.
+       *
+       *   - `manualPresence` is what the user chose in Settings, or null if
+       *     they never have. It always wins while the app is running, which is
+       *     the whole point of choosing it.
+       *   - `autoPresence` follows the app: online while it is being looked at,
+       *     offline while it is not.
+       *
+       * A closed app advertises nothing, and needs to advertise nothing: it
+       * holds no connections, so everyone else already sees it as offline for
+       * the only reason that cannot be faked.
+       */
+      var manualPresence = null;
+      var autoPresence = "online";
+
+      function presenceNow() {
+        return manualPresence || autoPresence;
+      }
+
       var onlineUsers = {};
+
+      /**
+       * What connected peers have said about themselves, this session.
+       *
+       * Deliberately not stored anywhere and deliberately not in the profile
+       * event. Presence is true for about as long as it takes to read, and
+       * writing it into a log that is synced to every device in a community
+       * would mean rewriting a profile — tens of kilobytes into every shared
+       * log — every time somebody's phone went into their pocket.
+       *
+       * So it travels as a signal, which is the transport's existing channel
+       * for things that matter now and never again, and it is forgotten when
+       * the connection is.
+       */
+      var peerPresence = {};
 
       // Attachment autodownload preferences. Declared here because the block
       // that used to hold it was lost in an earlier edit and only the
@@ -13524,19 +13572,53 @@
       var inCallSince = {};   // userId -> when they were seen join
       var lastSeenAt = {};    // userId -> when they were last reachable
 
+      /**
+       * What to show for somebody.
+       *
+       * Connectivity first, and it is not overridable. A peer this device
+       * cannot reach is offline whatever their last profile event claimed —
+       * that is what makes a force-quit or a flat battery show honestly rather
+       * than leaving somebody apparently online for ever.
+       *
+       * Only once they are demonstrably reachable does what they *say* matter,
+       * and then it wins outright, including when what they say is "offline".
+       * Someone appearing offline while connected is not a contradiction to be
+       * resolved: it is a person who would rather not be bothered, and the
+       * whole reason the two are separate.
+       *
+       * A live signal is preferred to the profile event because it is current.
+       * The profile carries a status too, and it is whatever was true when the
+       * profile was last written — which may be months ago.
+       */
       function statusOf(uid) {
-        if (uid === me.userId) return inVoice ? "call" : presence;
+        if (uid === me.userId) return inVoice ? "call" : presenceNow();
         if (!onlineUsers[uid]) return "offline";
+
+        var said = peerPresence[uid] || (profiles[uid] || {}).status;
+        if (said === "offline" || said === "invisible") return "offline";
+
         if (inCallSince[uid]) return "call";
-        return (profiles[uid] || {}).status || "online";
+        return said || "online";
       }
 
       /** A phrase for how someone is, rather than a coloured dot. */
       function statusPhrase(uid) {
         if (uid === me.userId) return inVoice ? t("In a call") : t("Online");
 
+        // Read from `statusOf` rather than from connectivity directly, so the
+        // phrase and the dot cannot disagree. They did: somebody appearing
+        // offline while still connected got an offline dot and the word
+        // "Online" beside it, which gives away the exact thing they chose to
+        // hide.
+        var shown = statusOf(uid);
+
+        if (shown !== "offline") {
+          return shown === "call" ? t("In a call") : t("Online");
+        }
+
         if (onlineUsers[uid]) {
-          return inCallSince[uid] ? t("In a call") : t("Online");
+          // Reachable, and saying otherwise. Nothing here says so.
+          return t("Offline");
         }
 
         if (inCallSince[uid]) {
@@ -13549,6 +13631,96 @@
       }
 
       function isOnline(uid) { return uid === me.userId || !!onlineUsers[uid]; }
+
+      /**
+       * Tell everyone connected what to show for this device.
+       *
+       * A signal rather than an event, because presence is true for about as
+       * long as it takes to read. Writing it into a community log would mean
+       * rewriting a profile into every shared log each time a phone went into
+       * a pocket — and then keeping that lie on disk until the next one.
+       *
+       * Sent to each connected peer rather than broadcast, because that is the
+       * shape the transport offers; the frame is a dozen bytes and this fires
+       * when somebody picks up their phone, not in a loop.
+       */
+      function announcePresence() {
+        var mine = presenceNow();
+
+        netPeers.forEach(function (pr) {
+          if (!pr.userId || pr.userId === me.userId) return;
+          try {
+            window.p2p.netSignal(pr.userId, { t: "presence", status: mine });
+          } catch (e) { /* that peer went away mid-loop */ }
+        });
+      }
+
+      /**
+       * The status the user chose, which always wins while the app is running.
+       *
+       * Null means they never chose one, and the app decides — see
+       * `followAppPresence`. Stored in the profile like it always was, so it
+       * survives a restart and reaches this account's other devices.
+       */
+      function setManualPresence(chosen) {
+        manualPresence = chosen || null;
+        announcePresence();
+        repaint("side"); repaint("members");
+      }
+
+      /**
+       * Follow the app: online while it is being looked at, offline while it
+       * is not.
+       *
+       * ## Why offline and not idle
+       *
+       * Idle is the familiar answer and it is the wrong one here. On a phone
+       * this app stays running in the background on purpose — that is what
+       * keeps messages arriving and notifications working — so "idle" would be
+       * an accurate description of a state that lasts all day and tells
+       * everybody the phone is right there. Offline is what somebody who has
+       * put their phone down actually wants shown, and it costs nothing:
+       * delivery follows the connection, which stays open.
+       *
+       * A status the user chose is never touched. Picking one is a statement
+       * about how you want to appear, and an app that quietly overrode it the
+       * moment the screen locked would be answering a question nobody asked.
+       *
+       * Only where the app really does keep running in the background. On a
+       * desktop a window losing focus means somebody looked at their email,
+       * and going offline for it would be nonsense.
+       */
+      function followAppPresence() {
+        if (!document.documentElement.classList.contains("mobile")) return;
+
+        var apply = function (active) {
+          var next = active ? "online" : "offline";
+          if (next === autoPresence) return;
+
+          autoPresence = next;
+
+          // Nothing to announce if a chosen status is in force — it has not
+          // changed, and this is exactly the case where the user asked not to
+          // be second-guessed.
+          if (manualPresence) return;
+
+          announcePresence();
+          repaint("side"); repaint("members");
+        };
+
+        // Capacitor's app state, not the page's visibility. iOS can leave a
+        // WebView visible while the app is not frontmost, so a page trusting
+        // `document.hidden` would report somebody as present while they were
+        // looking at something else.
+        if (window.native && window.native.onAppState) {
+          window.native.onAppState(apply);
+          return;
+        }
+
+        document.addEventListener("visibilitychange", function () {
+          apply(!document.hidden);
+        });
+      }
 
       // A peer that drops is out of every call it appeared in. Without this
       // its avatar sits in the voice list forever, because the leave event it
@@ -15807,7 +15979,7 @@
           bannerType: profile.bannerType || null,
           bio: profile.bio || "",
           pronouns: profile.pronouns || "",
-          status: presence,
+          status: presenceNow(),
 
           // The onion address travels with the profile.
           //
@@ -17836,6 +18008,9 @@
         updateSyncFocus();
         startResync();
         startPresenceSweep();
+
+        // What this device shows as, once there is an account to show it for.
+        followAppPresence();
         watchForTop();
 
         // Faces that were asked for and never arrived. Half a minute is long
@@ -17951,7 +18126,7 @@
           loadOwnImages();
           // Everyone else's, from disk, before anything is connected.
           loadCachedFaces();
-          presence = latest.payload.status || "online";
+          manualPresence = latest.payload.status || null;
           await boot();
         } else {
           $("setupId").textContent = me.userId;
@@ -18047,6 +18222,16 @@
         // lies achieves nothing an ordinary event could not.
         window.p2p.onSignal(function (from, data) {
           if (!data || typeof data !== "object") return;
+
+          if (data.t === "presence") {
+            // Believed only about the sender, and only while they are
+            // connected — `statusOf` drops it the moment they are not, which
+            // is what stops a parting "I am online" outliving the connection
+            // that carried it.
+            peerPresence[from] = String(data.status || "online");
+            repaint("side"); repaint("members");
+            return;
+          }
 
           if (data.t === "ring") {
             // Reconstructed into the shape maybeRing expects, and put through
@@ -18201,6 +18386,20 @@
 
           knownPeers = now;
           netPeers = peers;
+
+          // Somebody who has just connected knows nothing about this device
+          // except that it is reachable — which, if this device is meant to be
+          // showing as offline, is precisely the wrong conclusion.
+          //
+          // Announced from here rather than from the other peer subscriber
+          // above, and that is not arbitrary: subscribers run in the order
+          // they were registered, so the earlier one would send this to the
+          // *previous* peer list and miss the arrival that prompted it.
+          //
+          // Told to everyone rather than only the new arrivals. The frame is a
+          // dozen bytes, and working out which of them already knows is a way
+          // to get it wrong.
+          if (arrived.length) announcePresence();
 
           // Chased only when somebody genuinely went away. Circuits over Tor
           // fail often and for no lasting reason, so this is worth doing

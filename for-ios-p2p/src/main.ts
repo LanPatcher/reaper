@@ -1,5 +1,8 @@
+import { Notify } from "@reaper/notify";
+
 import { boot, onStatus, type BootStatus } from "./boot";
 import { installBridge, installNative } from "./bridge";
+import { onForeground } from "./lifecycle";
 import { installMobileLayout } from "./mobile";
 
 // The phone layout, as text rather than as a side effect.
@@ -198,6 +201,36 @@ const stalled = setTimeout(() => {
     "state reached is where it stopped.";
 }, 60_000);
 
+/**
+ * Ask for notification permission, once, at a moment it makes sense.
+ *
+ * Deliberately after the interface is up rather than during startup. A system
+ * prompt over a "Reading the log" screen asks somebody to decide about
+ * notifications before they have seen the app, and the honest answer to that
+ * question at that moment is "I do not know yet" — which iOS records as no,
+ * permanently, with no second prompt ever.
+ *
+ * Asked at all rather than left to a settings screen because the app is
+ * useless in the background without it: it stays running and keeps receiving,
+ * and then has no way to tell anybody. That is the whole feature.
+ *
+ * Also clears the shade whenever the app comes to the front. Notifications are
+ * about things that happened while you were away; still being there once you
+ * are back is just a list of things you have already dealt with.
+ */
+function askAboutNotifications(): void {
+  void Notify.permission()
+    .then((state) => (state.asked ? state : Notify.request()))
+    .catch(() => undefined);
+
+  onForeground((active) => {
+    if (!active) return;
+
+    void Notify.clear().catch(() => undefined);
+    void Notify.badge({ count: 0 }).catch(() => undefined);
+  });
+}
+
 void boot().then(async (status) => {
   clearTimeout(stalled);
 
@@ -212,6 +245,7 @@ void boot().then(async (status) => {
 
   try {
     await showInterface();
+    askAboutNotifications();
   } catch (error) {
     // Reported on the screen, not just the console. There is no console on a
     // phone, and a failure here leaves the startup screen up for ever with

@@ -46,6 +46,7 @@ const SHIM_ALIASES = {
   "@reaper/tor": join(HERE, "src/shim/plugins-stub.ts"),
   "@reaper/keepalive": join(HERE, "src/shim/plugins-stub.ts"),
   "@reaper/scanner": join(HERE, "src/shim/plugins-stub.ts"),
+  "@reaper/notify": join(HERE, "src/shim/plugins-stub.ts"),
 };
 
 /**
@@ -267,6 +268,7 @@ try {
                 // at the iOS module. Neither suite starts Tor.
                 "@reaper/tor": join(HERE, "src/shim/plugins-stub.ts"),
                 "@reaper/keepalive": join(HERE, "src/shim/plugins-stub.ts"),
+                "@reaper/notify": join(HERE, "src/shim/plugins-stub.ts"),
               }
             : {}),
         },

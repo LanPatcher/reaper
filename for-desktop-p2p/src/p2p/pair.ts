@@ -1110,6 +1110,48 @@ class Session {
   /** Pictures asked for and not yet arrived. */
   readonly #chasing = new Set<string>();
 
+  /**
+   * Whether this device has asked for an account and not yet received one.
+   *
+   * ## Why nothing may be written while this is true
+   *
+   * A community log is encrypted at rest with a key derived from this device's
+   * private key — see `deriveLogKey`. That is a good property and it has one
+   * sharp consequence: events written before the account arrives are encrypted
+   * under the key this device is about to stop having.
+   *
+   * Nothing in this protocol is ordered, so `iam` arrives whenever it arrives,
+   * and the `give` messages carrying the account's history routinely arrive
+   * first. They were merged immediately, sealed under the throwaway key
+   * generated on first launch, and then the account replaced that key. On the
+   * next start the log would not decrypt, `open` moved it aside as unreadable
+   * and started empty — so a device that had just been handed an account came
+   * up with no profile in it and offered to create one.
+   *
+   * What that looked like from outside is worth writing down, because it is
+   * not obviously one bug: the link "failed", the user made a new account, and
+   * then friends from the *linked* account appeared in it — because the key
+   * really had been adopted, and the next background sync refetched the index
+   * under the right key. Trying to add the linked account as a friend then
+   * reported it as the same identity, which it was.
+   *
+   * So arrivals are held rather than merged. This is the same mechanism as
+   * `#pending` above and the same reasoning: not an expectation about what
+   * comes next, just a refusal to *act* on something before acting on it is
+   * safe.
+   */
+  #awaitingIdentity = false;
+
+  /**
+   * Events that arrived before the account did.
+   *
+   * Bounded, because a peer that never answers `whoami` must not be able to
+   * spend this device's memory. The limit is far above anything the pass that
+   * asks for an identity can produce — that pass carries the private index and
+   * nothing else.
+   */
+  readonly #deferred: Wire[] = [];
+
   readonly #result: PairResult = {
     device: "", name: "", onion: "",
     events: 0, pictures: 0, communities: 0, done: false, adopted: false,
@@ -1400,6 +1442,12 @@ class Session {
         // because it is the entire point of the smallest one.
         if (this.#hooks.needsIdentity?.()) {
           this.#open.add("@identity");
+
+          // Set before the ask, not after the answer. Everything that arrives
+          // from here until `iam` has been applied is held rather than written,
+          // because writing it would seal it under a key this device is about
+          // to replace.
+          this.#awaitingIdentity = true;
           this.#send({ t: "whoami" });
         }
 
@@ -1461,6 +1509,13 @@ class Session {
 
       case "give":
         this.#stage = "transferring";
+
+        // Held, not dropped. See `#awaitingIdentity`: merging now would write
+        // this account's history to disk under the key this device is about to
+        // stop having, and it would be unreadable by the time anything looked
+        // for it.
+        if (this.#awaitingIdentity) { this.#hold(msg); return; }
+
         this.#result.events += this.#hooks.merge(msg.community, msg.events);
         return;
 
@@ -1499,6 +1554,11 @@ class Session {
       }
 
       case "pic": {
+        // Same reason as `give`. A picture is written through the blob store
+        // rather than the log, but a device still waiting for its account has
+        // no settled place to put anything.
+        if (this.#awaitingIdentity) { this.#hold(msg); return; }
+
         this.#chasing.delete(msg.id);
 
         try {
@@ -1542,7 +1602,12 @@ class Session {
         this.#open.delete("@identity");
 
         if (!msg.identity) {
+          // Nothing to take on. The peer is a device with no account of its
+          // own, which is two fresh devices meeting. Whatever was held is
+          // written under the key this device already had, which is the right
+          // one — there is no replacement coming.
           this.#hooks.trace?.("that device has no account to share");
+          this.#settleIdentity();
           this.#maybeDone();
           return;
         }
@@ -1555,6 +1620,11 @@ class Session {
         ).then(
           () => {
             this.#result.adopted = true;
+
+            // Only now. Everything held above is written from here on with the
+            // account's own key, which is the key that will still be here when
+            // somebody next opens the app.
+            this.#settleIdentity();
             this.#maybeDone();
           },
           (error: Error) => {
@@ -1581,6 +1651,44 @@ class Session {
         this.#maybeDone();
         return;
     }
+  }
+
+  /**
+   * Hold an arrival until this device knows which key to seal it with.
+   *
+   * Bounded. A peer that answers `whoami` with silence must not be able to
+   * grow this without limit — and the honest thing when the limit is reached
+   * is to give up rather than to start writing under a key that is about to be
+   * replaced, which is the failure being prevented.
+   */
+  #hold(message: Wire): void {
+    if (this.#deferred.length >= 4096) {
+      this.#fail(
+        "that device kept sending history without ever sending the account — " +
+        "nothing could be saved, so nothing was",
+      );
+      return;
+    }
+
+    this.#deferred.push(message);
+  }
+
+  /**
+   * The account question is settled; write what was waiting on it.
+   *
+   * Drained in arrival order through the ordinary handler, so there is one
+   * code path for an event that waited and an event that did not.
+   */
+  #settleIdentity(): void {
+    if (!this.#awaitingIdentity) return;
+    this.#awaitingIdentity = false;
+
+    const held = this.#deferred.splice(0, this.#deferred.length);
+    if (held.length) {
+      this.#hooks.trace?.(`writing ${held.length} message(s) held for the account`);
+    }
+
+    for (const message of held) this.#handle(message);
   }
 
   /**

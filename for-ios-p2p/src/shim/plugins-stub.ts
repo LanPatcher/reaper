@@ -69,6 +69,23 @@ export const Scanner = {
   scan: unavailable("Scanner.scan"),
 };
 
+/**
+ * Notifications, absent but answering.
+ *
+ * Reports no permission rather than throwing, for the same reason `Tor.status`
+ * does: the code that calls it is a background path reacting to a message
+ * arriving, and a throw there would fail the *message handling* rather than
+ * the notification — turning a missing banner into a lost event.
+ */
+export const Notify = {
+  request: async () => ({ granted: false, asked: true }),
+  permission: async () => ({ granted: false, asked: true }),
+  show: async () => {},
+  clear: async () => {},
+  badge: async () => {},
+  addListener: async () => ({ remove: async () => {} }),
+};
+
 export const Keepalive = {
   start: async () => ({ running: false }),
   stop: async () => ({ running: false }),

@@ -1,0 +1,27 @@
+{
+  "name": "@reaper/notify",
+  "version": "0.1.0",
+  "description": "Local notifications, posted by the app itself while it runs in the background.",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "ios/Sources/",
+    "ReaperNotify.podspec"
+  ],
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}

@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build:plugins": "tsc -p plugins/keepalive && tsc -p plugins/socket && tsc -p plugins/tor && tsc -p plugins/scanner",
+    "build:plugins": "tsc -p plugins/keepalive && tsc -p plugins/socket && tsc -p plugins/tor && tsc -p plugins/scanner && tsc -p plugins/notify",
     "build": "npm run build:plugins && vite build",
     "sync": "npm run build && cap sync ios",
     "shim:test": "node scripts/shim.mjs",
@@ -18,15 +18,16 @@
     "@capacitor/core": "^8.4.2",
     "@capacitor/filesystem": "^8.1.2",
     "@capacitor/preferences": "^8.0.1",
-    "@reaper/keepalive": "file:plugins/keepalive",
-    "@reaper/socket": "file:plugins/socket",
-    "@reaper/tor": "file:plugins/tor",
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
+    "@reaper/keepalive": "file:plugins/keepalive",
+    "@reaper/notify": "file:plugins/notify",
+    "@reaper/scanner": "file:plugins/scanner",
+    "@reaper/socket": "file:plugins/socket",
+    "@reaper/tor": "file:plugins/tor",
     "brotli-wasm": "^3.0.1",
-    "buffer": "^6.0.3",
-    "@reaper/scanner": "file:plugins/scanner"
+    "buffer": "^6.0.3"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.2",
