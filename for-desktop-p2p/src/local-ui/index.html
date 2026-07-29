@@ -1126,6 +1126,32 @@
        * Everything is a CSS variable write, so this is cheap enough to call on
        * every change and does not need to know what is on screen.
        */
+      /**
+       * A number from a form control, or the fallback.
+       *
+       * ## Why this is not fussiness
+       *
+       * `parseInt("")` is NaN, and a NaN that reaches a preferences object does
+       * not stay a display problem. Preferences are written to the index as an
+       * event, events are hashed in canonical form, and `canonicalise` refuses
+       * non-finite numbers outright — a deliberate refusal, because JSON turns
+       * NaN into null and an event that hashes differently on the way out than
+       * on the way back is one that fails to verify with no useful explanation.
+       *
+       * So one empty numeric field poisons the whole object *permanently*: every
+       * later `user.prefs` append throws, for the rest of the session, and the
+       * Save button silently stops saving anything at all — the theme, the
+       * wallpaper, the language, the rate limits. It is invisible until the log
+       * is replayed, at which point the last settings that actually persisted
+       * come back and it reads as the dialog reverting.
+       *
+       * Every control that feeds a persisted number goes through this.
+       */
+      function num(value, fallback) {
+        var parsed = parseInt(value, 10);
+        return Number.isFinite(parsed) ? parsed : fallback;
+      }
+
       function applyAppearance() {
         var theme = THEMES[userPrefs.theme] || THEMES.midnight;
         var root = document.documentElement;
@@ -1322,6 +1348,9 @@
             "Appearance": "Apariencia",
             "Change wallpaper": "Cambiar fondo",
             "Could not read that image": "No se pudo leer esa imagen",
+            "Have them scan this to add you.": "Que escaneen esto para añadirte.",
+            "Scan their code": "Escanear su código",
+            "Could not save your settings — {why}": "No se pudieron guardar tus ajustes — {why}",
             "Daylight": "Luz de día",
             "Deep sea": "Mar profundo",
             "Dimming keeps text readable over a busy picture.": "La atenuación mantiene el texto legible sobre una imagen cargada.",
@@ -2026,6 +2055,9 @@
             "Appearance": "Apparence",
             "Change wallpaper": "Changer de fond d'écran",
             "Could not read that image": "Impossible de lire cette image",
+            "Have them scan this to add you.": "Faites-leur scanner ceci pour vous ajouter.",
+            "Scan their code": "Scanner leur code",
+            "Could not save your settings — {why}": "Impossible d'enregistrer vos réglages — {why}",
             "Daylight": "Lumière du jour",
             "Deep sea": "Grand fond",
             "Dimming keeps text readable over a busy picture.": "L'assombrissement garde le texte lisible sur une image chargée.",
@@ -2730,6 +2762,9 @@
             "Appearance": "Erscheinungsbild",
             "Change wallpaper": "Hintergrundbild ändern",
             "Could not read that image": "Dieses Bild konnte nicht gelesen werden",
+            "Have them scan this to add you.": "Lass sie das scannen, um dich hinzuzufügen.",
+            "Scan their code": "Ihren Code scannen",
+            "Could not save your settings — {why}": "Deine Einstellungen konnten nicht gespeichert werden — {why}",
             "Daylight": "Tageslicht",
             "Deep sea": "Tiefsee",
             "Dimming keeps text readable over a busy picture.": "Das Abdunkeln hält Text über einem unruhigen Bild lesbar.",
@@ -3434,6 +3469,9 @@
             "Appearance": "Aparência",
             "Change wallpaper": "Alterar fundo",
             "Could not read that image": "Não foi possível ler essa imagem",
+            "Have them scan this to add you.": "Pede-lhes para digitalizar isto para te adicionarem.",
+            "Scan their code": "Digitalizar o código deles",
+            "Could not save your settings — {why}": "Não foi possível guardar as tuas definições — {why}",
             "Daylight": "Luz do dia",
             "Deep sea": "Mar profundo",
             "Dimming keeps text readable over a busy picture.": "O escurecimento mantém o texto legível sobre uma imagem carregada.",
@@ -10562,6 +10600,165 @@
         return btoa(s);
       }
 
+      // ---- compact friend codes -------------------------------------------
+      //
+      // ## Why the ordinary code cannot be a QR code
+      //
+      // `encodeCode` is base64 of JSON, which is right for something copied and
+      // pasted and far too big to photograph. A friend code carries a 26-character
+      // id, a 56-character onion address, a 44-character encryption key and a
+      // name — 246 characters once base64'd, against an encoder that stops at
+      // version six and 134 bytes.
+      //
+      // Raising the encoder's ceiling is the wrong end to push on. A denser grid
+      // is a grid a phone camera has to work harder to read across a room, and
+      // the pairing code already established the cheaper answer: stop spelling
+      // things out. Every field here has a shorter true form.
+      //
+      //   kind      1 byte
+      //   id       17 bytes   26 symbols of a 32-letter alphabet, 5 bits each
+      //   address  35 bytes   what the 56 characters of an onion actually are
+      //   key      32 bytes   the raw X25519 public key, not its base64
+      //
+      // 85 bytes, 114 characters of base64 — comfortably inside version six.
+      //
+      // The display name is left out, as it is in the pairing code and for the
+      // same reason: the friend request that follows carries it, and by the time
+      // there is anything to label the two sides are already talking.
+
+      /** The alphabet user ids are drawn from — see `identity.ts`. */
+      var ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+      /** ...and the one v3 onion addresses use, which is RFC 4648, lower case. */
+      var ONION_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
+
+      /** Pack symbols of a 32-letter alphabet into bytes, five bits each. */
+      function packBase32(text, alphabet) {
+        var bits = 0, value = 0;
+        var out = [];
+
+        for (var i = 0; i < text.length; i++) {
+          var at = alphabet.indexOf(text[i]);
+          if (at < 0) return null;
+
+          value = (value << 5) | at;
+          bits += 5;
+
+          if (bits >= 8) {
+            out.push((value >>> (bits - 8)) & 255);
+            bits -= 8;
+          }
+        }
+
+        // Whatever is left over, padded out rather than dropped.
+        if (bits > 0) out.push((value << (8 - bits)) & 255);
+
+        return out;
+      }
+
+      /** The inverse, given how many symbols were packed. */
+      function unpackBase32(bytes, count, alphabet) {
+        var bits = 0, value = 0;
+        var out = "";
+
+        for (var i = 0; i < bytes.length && out.length < count; i++) {
+          value = (value << 8) | bytes[i];
+          bits += 8;
+
+          while (bits >= 5 && out.length < count) {
+            out += alphabet[(value >>> (bits - 5)) & 31];
+            bits -= 5;
+          }
+        }
+
+        return out.length === count ? out : null;
+      }
+
+      function bytesToBase64(bytes) {
+        var s = "";
+        for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        return btoa(s).replace(/=+$/, "");
+      }
+
+      function base64ToBytes(text) {
+        var raw = atob(text.replace(/-/g, "+").replace(/_/g, "/"));
+        var out = new Array(raw.length);
+        for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+        return out;
+      }
+
+      /** How many bytes each part of a compact code takes. */
+      var CODE_ID_BYTES = 17, CODE_AT_BYTES = 35, CODE_EK_BYTES = 32;
+
+      /**
+       * The compact form of this account's friend code, or null.
+       *
+       * Null when there is no address to put in it yet, which is the honest
+       * answer — a code without one names somebody nobody can reach.
+       */
+      function compactFriendCode() {
+        if (!myOnion || !me || !me.encPublicKey) return null;
+
+        var id = packBase32(me.userId, ID_ALPHABET);
+        var at = packBase32(
+          String(myOnion).replace(/\.onion$/i, "").toLowerCase(), ONION_ALPHABET);
+
+        if (!id || !at || id.length !== CODE_ID_BYTES || at.length !== CODE_AT_BYTES) {
+          return null;
+        }
+
+        var ek = base64ToBytes(me.encPublicKey);
+        if (ek.length !== CODE_EK_BYTES) return null;
+
+        return "R3" + bytesToBase64([1].concat(id, at, ek));
+      }
+
+      /**
+       * Read a friend code in either form.
+       *
+       * The compact one comes off a camera; the long one comes off a clipboard.
+       * Both describe the same person, so both are accepted everywhere a code
+       * is taken — a scanned long code works, and a pasted short one does too.
+       */
+      function readFriendCode(text) {
+        var clean = String(text || "").trim();
+        if (!clean) return null;
+
+        // A scanner may hand back a URL wrapper rather than the bare code.
+        clean = clean.replace(/^reaper:\/\/(friend\/)?/i, "");
+
+        if (/^R3/.test(clean)) {
+          var bytes;
+          try {
+            bytes = base64ToBytes(clean.slice(2));
+          } catch (e) {
+            return null;
+          }
+
+          if (bytes.length !== 1 + CODE_ID_BYTES + CODE_AT_BYTES + CODE_EK_BYTES) return null;
+          if (bytes[0] !== 1) return null;
+
+          var idAt = 1;
+          var atAt = idAt + CODE_ID_BYTES;
+          var ekAt = atAt + CODE_AT_BYTES;
+
+          var id = unpackBase32(bytes.slice(idAt, atAt), 26, ID_ALPHABET);
+          var at = unpackBase32(bytes.slice(atAt, ekAt), 56, ONION_ALPHABET);
+          if (!id || !at) return null;
+
+          return {
+            k: "f",
+            id: id,
+            n: "",
+            at: at + ".onion",
+            ek: bytesToBase64(bytes.slice(ekAt)),
+          };
+        }
+
+        return decodeCode(clean);
+      }
+      // ---- end compact friend codes ----------------------------------------
+
       function encodeCode(obj) {
         return btoa(JSON.stringify(obj)).replace(/=+$/, "");
       }
@@ -11721,6 +11918,24 @@
        * `versions.desktop()` is what each build calls itself — "ios", "web",
        * or the platform on a desktop.
        */
+      /**
+       * Whether this build owns a window it can minimise, maximise and close.
+       *
+       * True on a desktop, false in a browser tab and false on a phone. Both of
+       * those supply `window.native` — the interface is one file and wants one
+       * surface to talk to — and both answer the window calls by doing nothing,
+       * which is honest and is not the same as having the controls.
+       */
+      function hasWindowChrome() {
+        try {
+          if (!window.native || !window.native.versions) return false;
+          var kind = window.native.versions.desktop();
+          return kind !== "web" && kind !== "ios";
+        } catch (e) {
+          return false;
+        }
+      }
+
       function throughRelay() {
         try {
           return !!window.native && !!window.native.versions &&
@@ -12063,6 +12278,30 @@
           yours.appendChild(c);
           card.appendChild(yours);
 
+          // The same code as a picture, for the phone in front of you.
+          //
+          // Compact rather than the text above it — see `compactFriendCode`.
+          // Both say the same thing and both are accepted by the box below, so
+          // it does not matter which one somebody ends up handing over.
+          var short = compactFriendCode();
+          if (short) {
+            try {
+              var qr = qrElement(short, 176);
+              qr.style.cssText = "display:block;margin:8px auto 2px;border-radius:8px";
+              card.appendChild(qr);
+
+              var qrn = document.createElement("div");
+              qrn.className = "muted";
+              qrn.style.textAlign = "center";
+              qrn.textContent = t("Have them scan this to add you.");
+              card.appendChild(qrn);
+            } catch (e) {
+              // Nothing to show and nothing to say: the code above works, and
+              // an error about a picture that was only ever a convenience
+              // would be noise.
+            }
+          }
+
           var copyRow = document.createElement("div"); copyRow.className = "mrow";
           var cp = document.createElement("button");
           cp.className = "ghost"; cp.textContent = t("Copy my code");
@@ -12077,12 +12316,13 @@
           var err = document.createElement("div"); err.className = "muted";
           card.appendChild(err);
 
-          buttons(card, t("Add"), async function () {
-            var data = decodeCode(theirs.value);
+          // One path for a code however it arrived — pasted, or off a camera.
+          var add = async function (text) {
+            var data = readFriendCode(text);
             if (!data || !data.id) { err.textContent = t("That code isn't valid."); return; }
             if (data.id === me.userId) { err.textContent = t("That's your own code."); return; }
 
-            var name = data.n || data.id.slice(0, 8);
+            var name = data.n || (profiles[data.id] || {}).username || data.id.slice(0, 8);
             profiles[data.id] = profiles[data.id] || {};
             profiles[data.id].username = name;
 
@@ -12098,7 +12338,30 @@
             await sendRequest(data.id, name);
 
             closeModal(); renderSide();
-          });
+          };
+
+          // Scanning, where there is a camera. Absent rather than disabled on a
+          // desktop, where a control that cannot ever work is a question the
+          // user has to answer for themselves.
+          if (window.native && window.native.scanQr) {
+            var scanRow = document.createElement("div"); scanRow.className = "mrow";
+            var sc = document.createElement("button");
+            sc.className = "ghost"; sc.textContent = t("Scan their code");
+            sc.onclick = async function () {
+              err.textContent = "";
+              try {
+                var found = await window.native.scanQr();
+                if (!found) return;
+                theirs.value = String(found).trim();
+                await add(theirs.value);
+              } catch (e) {
+                err.textContent = String((e && e.message) || e);
+              }
+            };
+            scanRow.appendChild(sc); card.appendChild(scanRow);
+          }
+
+          buttons(card, t("Add"), function () { return add(theirs.value); });
         });
       }
 
@@ -13268,7 +13531,7 @@
           dims.type = "range"; dims.className = "slider";
           dims.min = "0"; dims.max = "90"; dims.step = "5"; dims.value = String(dimStart);
           dims.oninput = function () {
-            userPrefs.wallpaperDim = parseInt(dims.value, 10);
+            userPrefs.wallpaperDim = num(dims.value, 50);
             diml.textContent = dimText(userPrefs.wallpaperDim);
             applyAppearance();
           };
@@ -13285,7 +13548,7 @@
           bls.min = "0"; bls.max = "24"; bls.step = "1";
           bls.value = String(userPrefs.wallpaperBlur || 0);
           bls.oninput = function () {
-            userPrefs.wallpaperBlur = parseInt(bls.value, 10);
+            userPrefs.wallpaperBlur = num(bls.value, 0);
             bll.textContent = blText(userPrefs.wallpaperBlur);
             applyAppearance();
           };
@@ -13598,7 +13861,7 @@
             setManualPresence(sts.value);
             userPrefs.autoImages = cb.checked;
             userPrefs.autoDownload = dlc.checked;
-            userPrefs.autoMaxBytes = parseInt(sz.value, 10);
+            userPrefs.autoMaxBytes = num(sz.value, userPrefs.autoMaxBytes || 0);
             userPrefs.toasts = tsc.checked;
             userPrefs.viewLoad = vlc.checked;
             userPrefs.lowData = ldc.checked;
@@ -13610,8 +13873,8 @@
             // Save adds is keeping it. Clearing the undo is the whole
             // difference between confirming and dismissing.
             modalCancel = null;
-            userPrefs.rateOut = parseInt(rs.value, 10) || 0;
-            userPrefs.rateIn = parseInt(ds.value, 10) || 0;
+            userPrefs.rateOut = num(rs.value, 0);
+            userPrefs.rateIn = num(ds.value, 0);
 
             window.p2p.netTune({
               bytesPerSecond: userPrefs.rateOut,
@@ -13619,13 +13882,29 @@
             }).catch(function () {});
             updateCallFocus();
 
-            await window.p2p.append(INDEX, "profile.update", {
-              username: v, avatarId: profile.avatarId || null,
-              avatarType: profile.avatarType || null, bio: profile.bio,
-              pronouns: profile.pronouns, bannerId: profile.bannerId || null,
-              bannerType: profile.bannerType || null, status: presenceNow()
-            });
-            await window.p2p.append(INDEX, "user.prefs", userPrefs);
+            // Reported, not swallowed.
+            //
+            // These are the two writes that make Save mean anything, and a
+            // rejection here left the dialog half-applied: the appearance was
+            // already on screen, the undo had already been cleared, and nothing
+            // said the settings had not been kept. It only surfaced later, as
+            // the last settings that *did* persist coming back — which reads as
+            // the dialog reverting rather than as a failed write.
+            try {
+              await window.p2p.append(INDEX, "profile.update", {
+                username: v, avatarId: profile.avatarId || null,
+                avatarType: profile.avatarType || null, bio: profile.bio,
+                pronouns: profile.pronouns, bannerId: profile.bannerId || null,
+                bannerType: profile.bannerType || null, status: presenceNow(),
+                // The choice, not the effect — see `publishProfile`.
+                chosen: manualPresence || ""
+              });
+              await window.p2p.append(INDEX, "user.prefs", userPrefs);
+            } catch (e) {
+              flash(t("Could not save your settings — {why}",
+                      { why: String((e && e.message) || e) }));
+              return;
+            }
 
             // Into every shared community, or the change is invisible to
             // everyone but this device.
@@ -14478,7 +14757,7 @@
           sgs.min = "200"; sgs.max = "700"; sgs.step = "50";
           sgs.value = String(segmentMs());
           sgs.oninput = function () {
-            voicePrefs.segment = parseInt(sgs.value, 10);
+            voicePrefs.segment = num(sgs.value, segmentMs());
             sgl.textContent = sgText(voicePrefs.segment);
             // Applied on the next segment boundary by the recording loop, so
             // there is nothing to restart — the change is audible within one
@@ -16252,6 +16531,25 @@
           bio: profile.bio || "",
           pronouns: profile.pronouns || "",
           status: presenceNow(),
+
+          // What was *chosen*, as opposed to what is true right now.
+          //
+          // `status` is the effective presence — a manual choice if there is
+          // one, otherwise whatever the app state says. That is the right thing
+          // to publish, because it is what other people should see.
+          //
+          // It is the wrong thing to read back, and reading it back is what
+          // pinned everybody online. `applyOwnProfile` took `status` as the
+          // user's chosen status, so publishing while automatic and in the
+          // foreground wrote "online" and the next replay turned that into a
+          // manual "online" — after which `followAppPresence` deliberately
+          // stops announcing, because a chosen status is not to be
+          // second-guessed. The device then stayed online in everyone's list
+          // while backgrounded, permanently, and pressing Save was enough to
+          // cause it.
+          //
+          // Empty means automatic, which is the ordinary case.
+          chosen: manualPresence || "",
 
           // The onion address travels with the profile.
           //
@@ -18176,7 +18474,20 @@
         if (profile.bannerId && profile.bannerType) {
           imageType[profile.bannerId] = profile.bannerType;
         }
-        manualPresence = latest.payload.status || null;
+        // The chosen status, which is not the same field as the published one.
+        //
+        // This read `status`, and `status` is the *effective* presence —
+        // whatever the person is showing as right now. So an account that had
+        // never chosen anything published "online" while it was online, read
+        // that back as a deliberate choice, and stopped following the app state
+        // from then on: backgrounded on a phone and still shown as online to
+        // everybody, with no way to fix it short of picking a status and
+        // picking automatic again.
+        //
+        // Absent on events written before `chosen` existed, which reads as
+        // automatic — the right default, and it un-pins every account this
+        // caught.
+        manualPresence = latest.payload.chosen || null;
 
         return true;
       }
@@ -19336,7 +19647,18 @@
       paintVoiceButtons();
       paintReplyBar();
 
-      if (window.native) {
+      // Window controls, only where there is a window to control.
+      //
+      // The test used to be `window.native`, which every build defines — the
+      // browser and iOS both supply the object so the interface has one shape
+      // to talk to, and both answer `minimise`, `maximise` and `close` by doing
+      // nothing, honestly, because a tab and a phone have no window chrome to
+      // drive. So the browser build drew all three and none of them did
+      // anything when pressed.
+      //
+      // Asking what the build *is* rather than whether the object exists is the
+      // question that was meant all along.
+      if (hasWindowChrome()) {
         $("winMin").onclick = function () { window.native.minimise(); };
         $("winMax").onclick = function () { window.native.maximise(); };
         $("winClose").onclick = function () { window.native.close(); };

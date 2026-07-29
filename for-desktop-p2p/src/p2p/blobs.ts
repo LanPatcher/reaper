@@ -128,14 +128,43 @@ export class BlobStore {
   #dir: string;
   #key: Buffer | undefined;
 
+  /**
+   * Keys this store used to use, newest first.
+   *
+   * ## Why a file needs the same memory a payload does
+   *
+   * Blobs are sealed with their community's payload key, and that key rotates —
+   * removing somebody mints a new one so they cannot read what is written
+   * afterwards. Only the current key was ever held here, so the moment a
+   * rotation landed, every file already on disk stopped opening: avatars,
+   * banners, server icons and every attachment anyone had downloaded, in that
+   * community, permanently.
+   *
+   * It is quiet, too. `read` returns undefined for a file it cannot open, and
+   * undefined is also the ordinary answer for a file this device simply does
+   * not have — so the interface shows initials instead of faces and a Download
+   * button that fetches something already sitting on the disk.
+   *
+   * A superseded key is perfectly good for *reading*; it is only useless for
+   * writing, which is the property rotation actually needs. So the current key
+   * seals, and every key ever held opens.
+   */
+  #past: Buffer[] = [];
+
   constructor(dir: string, key?: Buffer) {
     this.#dir = dir;
     this.#key = key;
   }
 
-  /** Install or replace the key used to encrypt blobs at rest. */
-  setKey(key: Buffer | undefined): void {
+  /**
+   * Install or replace the key used to encrypt blobs at rest.
+   *
+   * `past` are keys this community has used before — see `#past`. Passing them
+   * is what keeps files written under an earlier one readable.
+   */
+  setKey(key: Buffer | undefined, past: readonly Buffer[] = []): void {
     this.#key = key;
+    this.#past = [...past];
   }
 
   #path(id: string): string {
@@ -171,8 +200,19 @@ export class BlobStore {
       // is on disk rather than by whether a key is loaded means installing a
       // key later does not orphan everything already stored.
       if (!looksSealed(raw)) return raw;
-      if (!this.#key) return undefined;
-      return openBytes(this.#key, raw);
+
+      if (this.#key) {
+        const opened = openBytes(this.#key, raw);
+        if (opened) return opened;
+      }
+
+      // Sealed under a key this community has since replaced. See `#past`.
+      for (const older of this.#past) {
+        const opened = openBytes(older, raw);
+        if (opened) return opened;
+      }
+
+      return undefined;
     } catch {
       return undefined;
     }

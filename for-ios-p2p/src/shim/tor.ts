@@ -443,6 +443,21 @@ export class TorService extends EventEmitter {
    */
   async setAccount(publish: boolean): Promise<void> {
     setAccountService(publish);
+
+    // And start watching, whichever way the answer went.
+    //
+    // `start` is the only other thing that begins the poll, and
+    // `publishIfHolding` returns *before* calling it when this device is
+    // displaced — so on the one path where this object is the only thing that
+    // knows how to find the addresses, nothing was looking for them. The
+    // account address never reached the interface (no friend code) and neither
+    // did this device's own sync address (so its siblings could not be told
+    // where to reach it, which is how a displaced device gets the account
+    // back).
+    //
+    // Idempotent: `#watch` returns immediately if it is already running, and
+    // stops itself once both addresses and the proxy port are known.
+    this.#watch();
   }
 
   stop(): void {

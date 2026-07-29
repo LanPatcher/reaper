@@ -581,12 +581,33 @@ final class TorService {
         guard let directory = try? Self.serviceDirectory() else { return }
         let hostname = directory.appendingPathComponent("hostname")
 
-        // A displaced device still has the hostname file from the last launch
-        // that did publish, and reading it would report an address this device
-        // is deliberately not answering at — which then travels into friend
-        // codes and the interface's idea of where it can be reached. The file
-        // is kept, because the key behind it is how the address comes back.
+        // A displaced device reads the address but does not announce it.
+        //
+        // ## Why it is read at all
+        //
+        // This used to skip the file entirely, on the reasoning that reporting
+        // an address this device is not answering at would be dishonest. That
+        // reasoning confused two different things, and broke the friend code.
+        //
+        // The account address is the *account's*, not the device's. Exactly one
+        // device answers there at a time and every one of them holds the key to
+        // it — so a friend code built from it is correct and useful from any
+        // device on the account: whoever dials it reaches whichever one is
+        // currently publishing. Withholding it left the interface waiting for
+        // Tor to publish an address that already existed, for ever, with no way
+        // to add anybody.
+        //
+        // What would genuinely be dishonest is the `published` event, which
+        // means "peers can reach *this* device". That is not sent. The address
+        // travels in `status()`, which is what the friend code is built from,
+        // and the failure path below is skipped because no descriptor is coming.
         if !publishesAccount {
+            if onion == nil,
+               let text = try? String(contentsOf: hostname, encoding: .utf8) {
+                let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !address.isEmpty { onion = address }
+            }
+
             readSyncAddress()
             if syncOnion == nil { keepReadingSyncAddress() }
             return

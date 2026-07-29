@@ -77,6 +77,48 @@ try {
   ck("forgotten blob gone", !sealed.has(sref.id));
   ck("forgetting twice is fine", (sealed.forget(sref.id), true));
 
+  // ---- a rotated key ------------------------------------------------------
+  //
+  // Removing somebody from a community mints a fresh payload key, and blobs are
+  // sealed with it. Holding only the current one meant every file already on
+  // disk stopped opening the moment that happened — every avatar, banner, icon
+  // and downloaded attachment in that community, permanently, and silently:
+  // `read` answers undefined for a file it cannot open and undefined is also
+  // what "we do not have it" looks like.
+  {
+    const first = Buffer.from(randomKey(), "base64");
+    const second = Buffer.from(randomKey(), "base64");
+
+    const rotating = new BlobStore(join(dir, "rotating"), first);
+    const face = Buffer.from("a profile picture");
+    const ref = rotating.write(face);
+
+    ck("readable under the key it was sealed with",
+       Buffer.compare(rotating.read(ref.id)!, face) === 0);
+
+    // What a rotation used to do.
+    rotating.setKey(second);
+    ck("a rotation without the history loses it", rotating.read(ref.id) === undefined);
+
+    rotating.setKey(second, [first]);
+    ck("...and keeping the old key gets it back",
+       Buffer.compare(rotating.read(ref.id)!, face) === 0);
+
+    // Anything written now uses the current key, and both stay readable.
+    const fresh = Buffer.from("a newer picture");
+    const newer = rotating.write(fresh);
+
+    ck("new files use the current key",
+       Buffer.compare(rotating.read(newer.id)!, fresh) === 0);
+    ck("and the older one is still there",
+       Buffer.compare(rotating.read(ref.id)!, face) === 0);
+
+    // A key that was never used opens nothing, so this is not simply trying
+    // everything until something looks plausible.
+    rotating.setKey(second, [Buffer.from(randomKey(), "base64")]);
+    ck("an unrelated key does not open it", rotating.read(ref.id) === undefined);
+  }
+
   // ---- a corrupt file is not a crash -------------------------------------
   const junkId = blobId(Buffer.from("junk"));
   writeFileSync(join(dir, "plain", junkId), Buffer.from("not what it claims"));
