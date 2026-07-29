@@ -147,6 +147,24 @@ export class CommunityStore {
    */
   #stubs: Stub[] = [];
 
+  /**
+   * The tips of the DAG, and this author's next number.
+   *
+   * Both were recomputed from the whole log on *every* append — `findHeads`
+   * builds a set of every parent id in the community, and `nextSeq` scans for
+   * the highest number this device has spent. So sending one message walked a
+   * hundred thousand events twice, and on iOS that walk happens on the thread
+   * drawing the window, between pressing enter and the line appearing.
+   *
+   * Both are cheap to maintain instead. Appending makes the new event the only
+   * head, because its parents are exactly the heads it displaced; and its
+   * number is one more than the last. A merge can invalidate either — a
+   * sibling device writes as the same author, so events of ours can arrive
+   * from outside — so a merge simply drops them and the next reader pays once.
+   */
+  #headCache: SignedEvent[] | undefined;
+  #nextSeqCache: number | undefined;
+
   constructor(options: CommunityStoreOptions) {
     this.community = options.community;
     this.#identity = options.identity;
@@ -168,6 +186,10 @@ export class CommunityStore {
    */
   open(): void {
     const loaded: SignedEvent[] = [];
+
+    // Whatever was worked out about a previous contents of this store.
+    this.#headCache = undefined;
+    this.#nextSeqCache = undefined;
 
     try {
       this.#readInto(loaded);
@@ -246,24 +268,48 @@ export class CommunityStore {
    * Append a locally-authored event.
    */
   append(type: string, payload: unknown): SignedEvent {
+    // Numbered so this log can be described by watermark rather than by
+    // listing every id it holds.
+    // Counted over dropped events too. Reusing a number this device has
+    // already spent would produce two different events claiming the same
+    // place in the chain, and a peer would only ever learn about one.
+    const seq =
+      this.#nextSeqCache ??
+      nextSeq(this.#accounted(), this.#identity.userId, this.#floors);
+
     const event = createEvent(
       {
         type,
         community: this.community,
         payload,
-        // Numbered so this log can be described by watermark rather than by
-        // listing every id it holds.
-        // Counted over dropped events too. Reusing a number this device has
-        // already spent would produce two different events claiming the same
-        // place in the chain, and a peer would only ever learn about one.
-        seq: nextSeq(this.#accounted(), this.#identity.userId, this.#floors),
+        seq,
       },
       this.#identity,
-      findHeads(this.#events),
+      this.heads(),
     );
 
+    // The event just written is the only tip: it names every previous one as a
+    // parent, so none of them is a tip any more, and nothing yet names it.
+    this.#headCache = [event];
+    this.#nextSeqCache = seq + 1;
+
     this.#ids.add(event.id);
-    this.#events = causalSort([...this.#events, event]);
+
+    // Appended, not re-sorted.
+    //
+    // `createEvent` gives this event a Lamport clock one greater than the
+    // highest of the current heads — and the highest clock in a DAG is always
+    // held by a head, since anything with a child has a child with a greater
+    // one. So this event's clock is strictly greater than every clock already
+    // here, which is precisely the condition under which `causalSort` would
+    // place it last: it is causally after everything it descends from, and it
+    // wins the comparator against everything it does not.
+    //
+    // The old line sorted the entire history on every message sent. On a log
+    // of any size that is a visible pause between pressing enter and the line
+    // appearing, and on iOS it is the frame budget for the animation that is
+    // supposed to be happening at the same moment.
+    this.#events.push(event);
     this.#log.append(event);
 
     return event;
@@ -278,6 +324,15 @@ export class CommunityStore {
     for (const event of result.accepted) {
       this.#ids.add(event.id);
       this.#log.append(event);
+    }
+
+    // Anything arriving can add a tip or bury one, and — since a sibling device
+    // writes under the same author — can carry numbers this device thought it
+    // had not spent. Both are worked out again on demand rather than here, so
+    // a merge that nobody reads after costs nothing.
+    if (result.accepted.length) {
+      this.#headCache = undefined;
+      this.#nextSeqCache = undefined;
     }
 
     this.#events = result.events;
@@ -306,7 +361,7 @@ export class CommunityStore {
    * Current tips of the DAG. What a peer needs to work out what we're missing.
    */
   heads(): SignedEvent[] {
-    return findHeads(this.#events);
+    return (this.#headCache ??= findHeads(this.#events));
   }
 
   /**
@@ -471,6 +526,12 @@ export class CommunityStore {
     this.#stubs = kept;
     this.#events = plan.keep;
     this.#ids = new Set(plan.keep.map((e) => e.id));
+
+    // The log is a different set of events now, and both of these described
+    // the old one. Dropping the highest-numbered event this device wrote would
+    // otherwise have it mint that number a second time.
+    this.#headCache = undefined;
+    this.#nextSeqCache = undefined;
 
     return { removed: plan.pruned.length, before, after: this.#log.size() };
   }

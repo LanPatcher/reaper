@@ -250,6 +250,46 @@ function capacityOf(community: string): number {
  * make honest clients agree it belongs there: it sorts after the tenth member
  * on every machine, so every machine ignores it and none of them serve it.
  */
+/**
+ * The last answer `membersOf` gave, per community.
+ *
+ * ## Why this is not an optimisation
+ *
+ * `membersOf` walks a community's whole log. `servesPeer` calls it, and
+ * `servesPeer` is asked on every offer, every `have`, every `give` and every
+ * `push` — so a single incoming message replayed the entire history of the
+ * community it arrived in, and a peer offering twenty communities replayed
+ * twenty logs before a byte was exchanged.
+ *
+ * On a desktop that is the main process wasting power on a thread nobody is
+ * drawing from. On iOS the core and the interface are the same JavaScript
+ * context, so it is the thread that has to produce the next frame — which is
+ * exactly the "the app locks up while syncing" report, and why it gets worse
+ * the more history there is.
+ *
+ * Keyed on how many events the log holds. Membership is a pure function of the
+ * log, so the count changing is the only thing that can change the answer —
+ * events are never removed except by compaction, which lowers it. A key
+ * arriving can change it too, and `installPayloadKey` drops the entry for that.
+ */
+const memberCache = new Map<string, { count: number; members: Set<string> }>();
+
+/**
+ * Event types whose *payload* membership actually needs.
+ *
+ * The rest are decided by author and type alone. That distinction is worth
+ * naming because reading it wrong is what made this loop expensive: it
+ * decrypted every event in the log — an AES-GCM open and a Brotli inflate each
+ * — to answer a question that all but a handful of them contribute nothing to.
+ */
+const MEMBERSHIP_PAYLOAD_TYPES = new Set([
+  "community.owner",
+  "member.kick",
+  "member.ban",
+  "member.unban",
+  "member.readmit",
+]);
+
 function membersOf(community: string): Set<string> {
   const members = new Set<string>();
   const banned = new Set<string>();
@@ -274,13 +314,28 @@ function membersOf(community: string): Set<string> {
 
   let owner: string | undefined;
 
+  let events: readonly SignedEvent[];
+  try {
+    events = storeFor(community).events();
+  } catch {
+    // No log yet; nobody is over capacity by definition.
+    return members;
+  }
+
+  const cached = memberCache.get(community);
+  if (cached && cached.count === events.length) return cached.members;
+
   try {
     // One pass in causal order. Joining and leaving are both just events, so
     // they are applied in the order everyone agrees on and every device ends
     // up with the same set — including which people a departure made room for.
-    for (const event of storeFor(community).events()) {
-      const payload = decryptPayload(community, event.payload) as
-        { userId?: string } | null;
+    for (const event of events) {
+      // Decrypted only where the answer depends on it — see
+      // `MEMBERSHIP_PAYLOAD_TYPES`. This used to open every event in the log,
+      // and this loop runs on every frame a peer sends.
+      const payload = MEMBERSHIP_PAYLOAD_TYPES.has(event.type)
+        ? (decryptPayload(community, event.payload) as { userId?: string } | null)
+        : null;
 
       if (event.type === "community.owner") {
         owner = (payload?.userId as string) || event.author;
@@ -341,9 +396,13 @@ function membersOf(community: string): Set<string> {
       if (members.size < cap) members.add(event.author);
     }
   } catch {
-    // No log yet; nobody is over capacity by definition.
+    // A log that cannot be walked says nothing about who belongs. Deliberately
+    // not cached: the next call should try again rather than inherit a partial
+    // answer for as long as the event count happens to stay the same.
+    return members;
   }
 
+  memberCache.set(community, { count: events.length, members });
   return members;
 }
 
@@ -459,11 +518,43 @@ function defaultDeviceName(): string {
   }
 }
 
+/**
+ * Whether an index event was written by this account.
+ *
+ * ## Why the index needs an author check at all
+ *
+ * `@index` is private and never offered to a peer, so for a long time nothing
+ * else could put anything in it. Linking a device changed that, and in the one
+ * way that matters: the device being linked has a *throwaway* identity when the
+ * pairing starts. It generated a key on first launch so the setup screen could
+ * show an id, and `netStart` runs before any of that is resolved — which writes
+ * a `device.claim` and a `device.sync` into that throwaway index.
+ *
+ * Those then travel. The pairing session offers `@index` in both directions, so
+ * the phone hands its throwaway claim to the desktop, which merges it (it
+ * verifies perfectly well — it is a real event, correctly signed by a real key
+ * that simply is not this account's).
+ *
+ * And then the desktop honours it. Both claims sit at `n = 1`, the tie is
+ * broken by wall clock, the phone's is newer — so the phone "holds" the address
+ * and the desktop stops publishing it. Linking a second device silently took
+ * the account address away from the machine the user was sitting at, over an
+ * event written before that device was part of the account at all.
+ *
+ * A claim signed by a key that is not this account's is not this account's
+ * claim. Same for an address. Nothing legitimate is excluded: claims learned
+ * from a sibling are re-signed by `addClaim` on the way in, so they carry this
+ * account's signature like everything else.
+ */
+function ours(event: SignedEvent): boolean {
+  return !!identity && event.author === identity.userId;
+}
+
 /** Every claim recorded in the private index log. */
 function claimsHeld(): Claim[] {
   try {
     return storeFor(INDEX).events()
-      .filter((event) => event.type === CLAIM)
+      .filter((event) => event.type === CLAIM && ours(event))
       .map((event) => decryptPayload(INDEX, event.payload))
       .filter(isClaim);
   } catch {
@@ -603,10 +694,29 @@ let syncPort = 0;
  */
 const syncing = new Set<string>();
 
+/**
+ * What `syncOverTor` says when it declines because one is already running.
+ *
+ * Named rather than written twice, because a caller has to be able to tell it
+ * apart from a real failure. `repairAddress` in particular reads any failure as
+ * "the holder is not there" and takes the account address — and this
+ * "failure" means the exact opposite: there is a live session to that device
+ * happening right now.
+ *
+ * The two overlap easily. The five-minute pass, the debounce after a change and
+ * a repair check all dial the same siblings, so one of them finding another
+ * already in flight is ordinary. Before this was distinguished, that produced
+ * two devices taking the address off each other while they were mid-sync.
+ */
+const ALREADY_SYNCING = "already syncing with that device";
+
 function syncAddresses(): SyncAddress[] {
   try {
     return storeFor(INDEX).events()
-      .filter((event) => event.type === SYNC)
+      // Signed by this account, for the same reason claims are — see `ours`.
+      // An address announced by a device's throwaway key is an address that
+      // belonged to somebody who was not yet part of this account.
+      .filter((event) => event.type === SYNC && ours(event))
       .map((event) => decryptPayload(INDEX, event.payload))
       .filter(isSyncAddress);
   } catch {
@@ -660,7 +770,7 @@ async function syncOverTor(
   scope: Scope = "messages",
 ): Promise<LinkProgress> {
   if (syncing.has(entry.onion)) {
-    throw new Error("already syncing with that device");
+    throw new Error(ALREADY_SYNCING);
   }
 
   syncing.add(entry.onion);
@@ -773,7 +883,19 @@ async function repairAddress(): Promise<void> {
     // It answered, so it is alive and holding, and this device is displaced for
     // a good reason. Nothing to repair.
   } catch (error) {
-    await take(`${known.name || "the holder"} did not answer — ${(error as Error).message}`);
+    const why = (error as Error).message;
+
+    // A session to that device is already running, which is the strongest
+    // possible evidence that it is there. Taking the address off a device this
+    // one is mid-conversation with is the opposite of repairing anything — and
+    // it happened often, because the scheduled pass, the debounce after a
+    // change and this check all dial the same siblings.
+    if (why === ALREADY_SYNCING) {
+      log("[p2p]", `${known.name || "the holder"} is mid-sync — leaving the address where it is`);
+      return;
+    }
+
+    await take(`${known.name || "the holder"} did not answer — ${why}`);
   }
 }
 
@@ -1194,6 +1316,28 @@ async function openPair(): Promise<number> {
       for (const store of stores.values()) store.close();
       stores.clear();
 
+      // And everything else that was derived from the key just replaced.
+      //
+      // These are all in-memory caches keyed by community, and every one of
+      // them was computed with the throwaway identity: the direct-conversation
+      // keys came from X25519 agreement against a private key that is now
+      // gone, the blob stores were opened with those keys, and the decrypted
+      // payloads were read through them. Leaving any of it in place means the
+      // adopted account reading its own history through a stranger's keys —
+      // which fails silently, as messages that will not open, until a restart
+      // rebuilds them correctly. Exactly the class of bug this pairing path
+      // has produced twice before.
+      payloadKeys.clear();
+      pastKeys.clear();
+      decrypted.clear();
+      blobStores.clear();
+      memberCache.clear();
+      communityDirs = undefined;
+
+      // Claiming is memoised in one direction; the account that just arrived is
+      // a different key, so the memo has to go with it.
+      everClaimed = false;
+
       // The address travels with the account, or every friend code anybody
       // holds for this user stops working.
       //
@@ -1223,8 +1367,29 @@ async function openPair(): Promise<number> {
      * Written only from a session that proved the password, which is the fix
      * for a roster that filled with addresses nothing ever answered at: a
      * failed or half-finished attempt now leaves no trace at all.
+     *
+     * ## Only when it is news
+     *
+     * This is called on every authorised session, by both sides. With the
+     * scheduled pass running every five minutes and two devices each writing a
+     * record per pass, the private index gained something like six hundred
+     * events a day that all said the same thing.
+     *
+     * That is not merely wasted disk. The index is scanned in full by
+     * `claimsHeld`, `syncAddresses` and `deviceInfo`, which run on every tor
+     * event and every sync; it is the log carried on every pairing; and once it
+     * is large enough to be worth compacting, it is also large enough that a
+     * fork in it is expensive. An append-only log grows on purpose — it should
+     * not grow to say nothing.
+     *
+     * `recordSyncAddress` has always had this check for this device's own
+     * address. This is the same check, for the other end.
      */
     learn: (peer) => {
+      const known = roster(syncAddresses()).find((entry) => entry.device === peer.device);
+
+      if (known && known.onion === peer.onion && known.name === peer.name) return;
+
       storeFor(INDEX).append(SYNC, {
         device: peer.device,
         name: peer.name,
@@ -1258,7 +1423,19 @@ async function openPair(): Promise<number> {
   // indistinguishable between "no attempt reached me" and "one did and died".
   service.on("paired", (result: PairResult) => {
     log("[pair]", `${result.name || "a device"} linked: ${result.events} events, ${result.pictures} pictures`);
-    announceDevices();
+
+    // Claims arrive in a session this device *answered* just as readily as in
+    // one it dialled — the greeting carries them in both directions. Only the
+    // dialling path acted on them, though: `syncOverTor` ends with a
+    // `publishIfHolding` and this ended with nothing.
+    //
+    // So a device that gave the address up by being asked for it went on
+    // publishing anyway, until its own scheduled pass came round some minutes
+    // later. For that window two devices answered at one address, produced by
+    // the button whose entire purpose is to make sure exactly one does.
+    void publishIfHolding()
+      .then(() => announceDevices())
+      .catch((error: Error) => log("[tor]", error.message));
   });
 
   service.on("failed", (why: string) => {
@@ -1418,14 +1595,110 @@ function encryptPayload(community: string, type: string, payload: unknown): unkn
   return key ? seal(payload, key) : payload;
 }
 
+/**
+ * Keys this community *used* to use, newest first.
+ *
+ * ## Why rotation needs a memory
+ *
+ * Removing somebody rotates the community key, which is what stops them
+ * reading anything written afterwards. It is the achievable half of "remove
+ * this person" and it is right.
+ *
+ * What it also did was lock everybody else out of the *past*. Only one key was
+ * held per community, so the moment a rotation landed, every message sealed
+ * under the previous one stopped opening — on the device that performed the
+ * rotation as much as on everyone else's. It was invisible for a while,
+ * because the decrypted-payload cache still had the plaintext; it appeared on
+ * the next restart, as a server whose entire history before the last kick read
+ * as unreadable, with nothing to say why.
+ *
+ * A key that has been superseded is still perfectly good for reading. It is
+ * only useless for *writing*, which is the property rotation actually needs.
+ * So the current key is what seals, and every key ever held is what opens.
+ *
+ * Bounded, because it is tried in order on a miss and a community that rotates
+ * on every membership change would otherwise grow an unbounded list to try.
+ * Eight covers any realistic history; past that, the oldest messages are the
+ * ones that go, which is the right end to lose from.
+ */
+const pastKeys = new Map<string, Buffer[]>();
+
+const PAST_KEYS_KEPT = 8;
+
 function decryptPayload(community: string, payload: unknown): unknown {
   if (!isSealed(payload)) return payload;
 
   const key = payloadKeys.get(community);
-  if (!key) return { undecryptable: true };
 
-  const opened = openSealed(payload, key);
-  return opened === undefined ? { undecryptable: true } : opened;
+  if (key) {
+    const opened = openSealed(payload, key);
+    if (opened !== undefined) return opened;
+  }
+
+  // Newest first: a log is read from the bottom far more often than the top,
+  // so the most recently superseded key is the likeliest to be the right one.
+  for (const older of pastKeys.get(community) ?? []) {
+    const opened = openSealed(payload, older);
+    if (opened !== undefined) return opened;
+  }
+
+  return { undecryptable: true };
+}
+
+/**
+ * Install a payload key, and forget anything decrypted without it.
+ *
+ * ## Why every key install has to go through here
+ *
+ * `forRenderer` caches by event id, which is sound — an event is a hash of
+ * itself and cannot change. What *can* change is the key, and a key arriving
+ * late is the ordinary case rather than an edge one: the whole of a linked
+ * device's history is merged and handed to the interface *before* the index it
+ * arrived in has been read, so at that moment there is no key for any of it.
+ * Every one of those events was decrypted to `{ undecryptable: true }` and that
+ * answer was cached.
+ *
+ * `setKey` cleared the cache for exactly this reason. `dmKey` and `unwrapKey`
+ * did not, and between them they cover every direct conversation and every
+ * rekeyed server — so a freshly linked device showed the right conversations
+ * full of messages it claimed it could not read, and stayed that way until the
+ * app was relaunched and the cache started empty. That is the other half of
+ * "you have to restart for the sync to show".
+ *
+ * Scoped to the community rather than clearing everything, because the two
+ * callers below run once per friend at startup and dropping the whole cache
+ * each time would re-decrypt every open log per friend.
+ */
+function installPayloadKey(community: string, key: Buffer): void {
+  const existing = payloadKeys.get(community);
+
+  // Nothing changed, so nothing cached can be wrong.
+  if (existing && existing.equals(key)) return;
+
+  payloadKeys.set(community, key);
+
+  // The one being displaced is kept, for reading. See `pastKeys`.
+  if (existing) {
+    const older = pastKeys.get(community) ?? [];
+    if (!older.some((k) => k.equals(existing))) {
+      older.unshift(existing);
+      if (older.length > PAST_KEYS_KEPT) older.length = PAST_KEYS_KEPT;
+      pastKeys.set(community, older);
+    }
+  }
+
+  forgetDecrypted(community);
+}
+
+/** Drop cached plaintext for one community. */
+function forgetDecrypted(community: string): void {
+  for (const [id, event] of decrypted) {
+    if (event.community === community) decrypted.delete(id);
+  }
+
+  // Membership is read out of decrypted payloads too — who the owner is, who
+  // was kicked — so a key that changes what can be read changes that answer.
+  memberCache.delete(community);
 }
 
 /**
@@ -1451,13 +1724,41 @@ function decryptPayload(community: string, payload: unknown): unknown {
  */
 const PRIVATE_PREFIX = "@";
 
+/**
+ * The last directory listing, and when it was taken.
+ *
+ * `knownCommunities` reads the disk. It is also asked by `servesPeer` and
+ * `refusal` for every community a peer names, on every offer and every batch
+ * of events — so an ordinary sync round performed dozens of synchronous
+ * directory listings, and on iOS the "filesystem" is a virtual one in the same
+ * JavaScript context as the interface. That is a frame dropped per listing.
+ *
+ * A short window rather than a permanent cache with invalidation everywhere: a
+ * community appears when a directory is created, and `storeFor` is the only
+ * thing that creates one, so that is the single place a stale answer is
+ * cleared. The timer covers anything that manages to arrive some other way.
+ */
+let communityDirs: { at: number; names: string[] } | undefined;
+
+const COMMUNITY_DIRS_TTL_MS = 3000;
+
 function knownCommunities(): string[] {
+  const now = Date.now();
+  if (communityDirs && now - communityDirs.at < COMMUNITY_DIRS_TTL_MS) {
+    return communityDirs.names;
+  }
+
   const dir = join(root(), "communities");
-  if (!existsSync(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .filter((name) => !name.startsWith(PRIVATE_PREFIX));
+
+  const names = existsSync(dir)
+    ? readdirSync(dir, { withFileTypes: true })
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => entry.name)
+        .filter((name) => !name.startsWith(PRIVATE_PREFIX))
+    : [];
+
+  communityDirs = { at: now, names };
+  return names;
 }
 
 /** Whether a peer may sync this community at all. */
@@ -1580,6 +1881,11 @@ function storeFor(community: string): CommunityStore {
   store.open();
   stores.set(community, store);
 
+  // A community that did not exist a moment ago now does, and the cached
+  // listing above would otherwise not say so for a few seconds — during which
+  // a peer offering it would be told this device has never heard of it.
+  communityDirs = undefined;
+
   return store;
 }
 
@@ -1631,10 +1937,36 @@ function forRenderer(event: SignedEvent): SignedEvent {
 
   // Decryption happens here, on the main-process side of the boundary, so the
   // renderer only ever handles plaintext it could not have obtained itself.
+  const payload = decryptPayload(event.community, event.payload);
+
   const plain = {
     ...event,
-    payload: decryptPayload(event.community, event.payload) as never,
+    payload: payload as never,
   };
+
+  // A failure with no key to blame is never cached.
+  //
+  // "I could not read this" is not a property of the event, it is a property of
+  // what this device held at the moment it asked — and for a community with no
+  // key at all, that is a state which lasts seconds. A linked device merges an
+  // entire history and reads the index that unlocks it immediately afterwards;
+  // caching the answer from in between turned that gap into a permanent one,
+  // survivable only by restarting.
+  //
+  // `installPayloadKey` drops this community's entries when a key arrives, so
+  // this is belt to that brace — but it is the brace that holds if some future
+  // caller sets a key without going through it. Costs nothing: with no key,
+  // `decryptPayload` returns before doing any cryptography at all.
+  //
+  // A failure *with* a key is different — it is a real, stable answer about an
+  // event sealed under something this device does not have — so it is cached.
+  if (
+    (payload as { undecryptable?: boolean })?.undecryptable &&
+    !payloadKeys.has(event.community) &&
+    !pastKeys.get(event.community)?.length
+  ) {
+    return plain;
+  }
 
   if (decrypted.size >= DECRYPTED_LIMIT) {
     // Map iterates in insertion order, so this drops the least recently
@@ -1820,7 +2152,11 @@ export function registerP2PHandlers(): void {
       },
 
       merge: (community, incoming) => {
-        if (!isShareable(community)) return 0;
+        // Nothing taken and nothing held. Shaped like every other answer,
+        // because the transport reads `held` off it — a bare `0` was relying
+        // on the defensive read at the far end to avoid a crash that would
+        // have presented as the *peer* being malformed.
+        if (!isShareable(community)) return { accepted: 0, held: [] };
         const store = storeFor(community);
         const result = store.merge(incoming);
 
@@ -1877,6 +2213,11 @@ export function registerP2PHandlers(): void {
         if (members.size === 0) return undefined;
         return members.has(peerUserId) ? undefined : "not-a-member";
       },
+    }, {
+      // So a friend can tell this machine from the other one signed into the
+      // same account. Without it they look like one peer that keeps opening a
+      // second connection, and the duplicate rule closes one of them.
+      device: thisDevice().id,
     });
 
     transport.on("delivered", (to: string, community: string, ids: string[]) =>
@@ -2060,24 +2401,23 @@ export function registerP2PHandlers(): void {
   ipcMain.handle(CHANNEL.setKey, (_, community: string, keyBase64: string) => {
     // A key arriving changes the answer for every event of this community that
     // has already been read — they were handed over sealed, because there was
-    // nothing to open them with. This is the one thing that can invalidate a
-    // decrypted copy, so it is the one place that clears them.
+    // nothing to open them with.
     //
-    // Cleared wholesale rather than per community: the cache is keyed by event
-    // id, which is the right key for a cache and the wrong one for finding
-    // every entry belonging to one community. Re-decrypting whatever is open
-    // costs a fraction of a second and happens when somebody joins a server.
-    decrypted.clear();
-
+    // Scoped to the community now rather than clearing the whole cache. The
+    // interface calls this once per community it holds, at startup and again
+    // whenever a key is learned, and each of those was throwing away every
+    // other community's plaintext — so opening a server and then joining a
+    // second one re-decrypted the first from scratch.
     if (!keyBase64) {
       payloadKeys.delete(community);
+      forgetDecrypted(community);
       return false;
     }
 
     const key = Buffer.from(keyBase64, "base64");
     if (key.length !== 32) return false;
 
-    payloadKeys.set(community, key);
+    installPayloadKey(community, key);
     return true;
   });
 
@@ -2095,7 +2435,11 @@ export function registerP2PHandlers(): void {
 
       try {
         const secret = agree(identity.encPrivateKey, theirEncPublicKey);
-        payloadKeys.set(community, deriveKey(secret, community));
+        // Through `installPayloadKey`, so anything already read as
+        // undecryptable stops being so. This is the one that mattered: every
+        // direct conversation on a freshly linked device arrives before the
+        // index that carries the key to it.
+        installPayloadKey(community, deriveKey(secret, community));
         return true;
       } catch (error) {
         log("[e2ee]", `could not derive key for ${community}: ${(error as Error).message}`);
@@ -2137,7 +2481,10 @@ export function registerP2PHandlers(): void {
         }
       }
 
-      payloadKeys.set(community, fresh);
+      // The key being replaced is kept for reading, or this device would seal
+      // the rotation event and immediately lose the ability to open everything
+      // written before it.
+      installPayloadKey(community, fresh);
       return { wrapped, key: fresh.toString("base64") };
     },
   );
@@ -2158,7 +2505,9 @@ export function registerP2PHandlers(): void {
         const opened = openSealed(envelope as never, shared) as { key?: string };
         if (!opened?.key) return null;
 
-        payloadKeys.set(community, Buffer.from(opened.key, "base64"));
+        // A rotation is precisely a moment when what was readable and what was
+        // not both change, so the cached answers for this community go.
+        installPayloadKey(community, Buffer.from(opened.key, "base64"));
         return opened.key;
       } catch {
         return null;
@@ -2293,7 +2642,7 @@ export function registerP2PHandlers(): void {
 
     // The key first: without it the payloads merge fine but read as
     // undecryptable, and the server would import looking empty.
-    if (bundle.key) payloadKeys.set(bundle.id, Buffer.from(bundle.key, "base64"));
+    if (bundle.key) installPayloadKey(bundle.id, Buffer.from(bundle.key, "base64"));
 
     const store = storeFor(bundle.id);
     // Signatures are checked here as they are for anything off the network.
@@ -2941,7 +3290,7 @@ export function registerP2PHandlers(): void {
     const others = new Map<string, { size: number; author: string }>();
     const me = identity?.userId;
 
-    let events: SignedEvent[];
+    let events: readonly SignedEvent[];
     try {
       events = storeFor(community).events();
     } catch {
@@ -2994,7 +3343,10 @@ export function registerP2PHandlers(): void {
     // they ever opened the conversation.
     const members = membersOf(community);
     return peers.some(
-      (peer) => peer.userId !== identity?.userId && members.has(peer.userId),
+      (peer) =>
+        !!peer.userId &&
+        peer.userId !== identity?.userId &&
+        members.has(peer.userId),
     );
   }
 

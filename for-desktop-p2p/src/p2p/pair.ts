@@ -1143,6 +1143,17 @@ class Session {
   #awaitingIdentity = false;
 
   /**
+   * Whether this device is joining an account rather than syncing one it has.
+   *
+   * Distinct from `#awaitingIdentity`, which is about *writing* and stops the
+   * moment the account lands. This is about *offering*, and it holds for the
+   * whole session: everything this device holds was written under a throwaway
+   * key and none of it belongs to the account being joined, whether or not the
+   * account has arrived yet. See where it is set, in the greeting.
+   */
+  #stranger = false;
+
+  /**
    * Events that arrived before the account did.
    *
    * Bounded, because a peer that never answers `whoami` must not be able to
@@ -1432,9 +1443,39 @@ class Session {
 
         this.#result.communities = mine.size;
 
+        /**
+         * Whether this device is about to be handed an account.
+         *
+         * Computed here rather than read off `#awaitingIdentity` below, because
+         * the summaries go out first and the answer is needed for them.
+         *
+         * A device in this state holds nothing that belongs to the account it
+         * is joining. What it does hold is a throwaway log: a key generated on
+         * first launch so the setup screen could show an id, and whatever
+         * `netStart` wrote into it before anybody linked anything — which is a
+         * `device.claim` and a sync address, signed by that throwaway key.
+         *
+         * Those were offered like any other history, merged by the device on
+         * the other end, and honoured there. It is how linking a phone could
+         * quietly take the account address off the desktop. The account-side
+         * repair is in `bridge.ts` (`ours`); this is the other half, and the
+         * better one, because it means the junk never travels at all.
+         *
+         * So a device waiting for an account speaks as though it has nothing.
+         * It is not a lie — none of what it has is this account's.
+         */
+        const stranger = !!this.#hooks.needsIdentity?.() && !this.#minted;
+        this.#stranger = stranger;
+
+        const empty: Summary = { vector: {}, extra: [] };
+
         for (const community of mine) {
           this.#open.add(community);
-          this.#send({ t: "have", community, summary: this.#hooks.summary(community) });
+          this.#send({
+            t: "have",
+            community,
+            summary: stranger ? empty : this.#hooks.summary(community),
+          });
         }
 
         // Before anything else that matters: a device with no account cannot
@@ -1458,7 +1499,7 @@ class Session {
         // the claims arrived and the phone cheerfully reported being signed in
         // on the other device: every symptom of a link that worked, except the
         // one that mattered.
-        if (this.#hooks.needsIdentity?.() && !this.#minted) {
+        if (stranger) {
           this.#open.add("@identity");
 
           // Set before the ask, not after the answer. Everything that arrives
@@ -1511,7 +1552,13 @@ class Session {
 
     switch (msg.t) {
       case "have": {
-        const missing = this.#hooks.missingForSummary(msg.community, msg.summary);
+        // Nothing here belongs to the account being joined — see `stranger`
+        // above. Answering with the throwaway log would push events signed by
+        // a key this device is about to stop having into the account's own
+        // history, permanently, on the machine the user is sitting at.
+        const missing = this.#stranger
+          ? []
+          : this.#hooks.missingForSummary(msg.community, msg.summary);
 
         for (let at = 0; at < missing.length; at += BATCH) {
           this.#send({
@@ -1567,7 +1614,29 @@ class Session {
 
       case "getpic": {
         const bytes = this.#hooks.readPicture(msg.id);
-        if (bytes) this.#send({ t: "pic", id: msg.id, bytes: bytes.toString("base64") });
+
+        // Answered even when there is nothing to answer with.
+        //
+        // Silence here was a hang. The asking side puts every id it requested
+        // into `#chasing`, and `#maybeDone` will not finish while that set has
+        // anything in it — so one unanswerable request held the whole session
+        // open until the two-minute idle timer killed it, and the sync was then
+        // reported as a failure despite every event and every other picture
+        // having arrived.
+        //
+        // It is not a rare state. `pics` lists what this device held when the
+        // list was built; by the time a request for one arrives it may have
+        // been swept for space, deleted, or become unreadable. Offering a list
+        // is not a promise to still have all of it.
+        //
+        // An empty body rather than a new message type, so a device running an
+        // older build understands it: it hashes to nothing, its `accept` check
+        // refuses it, and the request is cleared either way.
+        this.#send({
+          t: "pic",
+          id: msg.id,
+          bytes: bytes ? bytes.toString("base64") : "",
+        });
         return;
       }
 
@@ -1577,13 +1646,21 @@ class Session {
         // no settled place to put anything.
         if (this.#awaitingIdentity) { this.#hold(msg); return; }
 
+        // Cleared before anything else can go wrong. Whether the bytes are
+        // usable is a separate question from whether this request is still
+        // outstanding, and conflating them is what let a bad picture stall a
+        // session.
         this.#chasing.delete(msg.id);
 
-        try {
-          this.#hooks.writePicture(msg.id, Buffer.from(msg.bytes, "base64"));
-          this.#result.pictures += 1;
-        } catch {
-          // A picture that will not decode is not worth abandoning a sync for.
+        if (msg.bytes) {
+          try {
+            this.#hooks.writePicture(msg.id, Buffer.from(msg.bytes, "base64"));
+            this.#result.pictures += 1;
+          } catch {
+            // A picture that will not decode is not worth abandoning a sync for.
+          }
+        } else {
+          this.#hooks.trace?.(`the other device no longer has ${msg.id.slice(0, 12)}`);
         }
 
         this.#maybeDone();

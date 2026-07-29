@@ -55,12 +55,38 @@ export interface Summary {
   /**
    * Ids held that the vector does not cover.
    *
-   * Two kinds live here: events written before sequence numbers existed, and
+   * Three kinds live here: events written before sequence numbers existed,
    * events sitting above a gap — if #7 arrived but #6 never did, the watermark
    * stops at 5 and #7 has to be named explicitly or it would be sent again on
-   * every exchange.
+   * every exchange — and every event of an author whose chain has forked.
    */
   extra: string[];
+
+  /**
+   * Per author, the id of the event sitting exactly at their watermark.
+   *
+   * ## The assumption this exists to check
+   *
+   * A watermark means "I have everything from this author up to N". That is
+   * only a statement about *this device's* numbering, and it is sound exactly
+   * as long as one author is one chain.
+   *
+   * Linking a device broke that. Two devices holding one account both write as
+   * the same author, and each numbers from what it holds — so a desktop and a
+   * phone that are both used while apart mint their own #1, #2, #3. When they
+   * meet, the phone says "I have you up to 3" and the desktop believes it,
+   * skips its own first three messages, and they are lost to the phone
+   * permanently. Not delayed — never sent, because every later exchange makes
+   * the same claim. It is silent on both screens, and it is exactly the shape
+   * of "things another client never picks up while it was offline".
+   *
+   * One hash per author is enough to catch it: if the peer's event at N is not
+   * the one we have at N, the two chains are not the same chain, and the
+   * watermark for that author cannot be trusted. See `missingFrom`.
+   *
+   * Optional, so a peer that does not send one is treated exactly as before.
+   */
+  tips?: Record<string, string>;
 }
 
 /**
@@ -93,6 +119,22 @@ export function summarise(
   const extra: string[] = [];
   const numbered = new Map<string, Map<number, string>>();
 
+  /**
+   * Numbers where this author has two different events, per author.
+   *
+   * Proof that the chain was written from more than one place, which is what
+   * linking a device makes possible. At an ambiguous number a watermark means
+   * nothing, so the watermark stops *below the first one* and everything from
+   * there up is named by id — the treatment events from before numbering
+   * already get.
+   *
+   * Stopping at the first collision rather than abandoning the author entirely
+   * matters for the index log, which is both the one most likely to fork (both
+   * devices write to it constantly) and the one synced most often. A fork at
+   * message five thousand should cost five ids, not five thousand.
+   */
+  const ambiguous = new Map<string, Set<number>>();
+
   for (const event of events) {
     const seq = seqOf(event);
 
@@ -108,10 +150,23 @@ export function summarise(
 
     let byId = numbered.get(event.author);
     if (!byId) { byId = new Map(); numbered.set(event.author, byId); }
-    byId.set(seq, event.id);
+
+    const already = byId.get(seq);
+
+    if (already === undefined) {
+      byId.set(seq, event.id);
+      continue;
+    }
+
+    if (already === event.id) continue;
+
+    let clashes = ambiguous.get(event.author);
+    if (!clashes) { clashes = new Set(); ambiguous.set(event.author, clashes); }
+    clashes.add(seq);
   }
 
   const vector: Record<string, number> = {};
+  const tips: Record<string, string> = {};
 
   // Every author mentioned by either source. A floor with nothing held still
   // has to be reported, or the events it stands for would come back.
@@ -119,23 +174,35 @@ export function summarise(
 
   for (const author of authors) {
     const seen = held.get(author) ?? new Set<number>();
+    const clashes = ambiguous.get(author);
     const floor = floors[author] ?? 0;
 
-    // Walk up from the floor for as long as the chain is unbroken.
+    // Walk up from the floor for as long as the chain is unbroken *and* every
+    // number on the way means exactly one event.
     let mark = floor;
-    while (seen.has(mark + 1)) mark++;
+    while (seen.has(mark + 1) && !clashes?.has(mark + 1)) mark++;
 
     vector[author] = mark;
 
-    // Anything above the gap is held but not covered, so it is named.
     const byId = numbered.get(author);
     if (!byId) continue;
-    for (const [seq, id] of byId) {
-      if (seq > mark) extra.push(id);
-    }
+
+    // What the peer can check the watermark against. Unambiguous by
+    // construction: the walk above stopped before the first number that is not.
+    const tip = byId.get(mark);
+    if (tip) tips[author] = tip;
   }
 
-  return { vector, extra };
+  // Everything the watermarks do not cover, named. One pass over the events
+  // rather than over `numbered`, because `numbered` keeps one id per number
+  // and a collision is precisely the case where that is not all of them.
+  for (const event of events) {
+    const seq = seqOf(event);
+    if (seq === undefined) continue;         // already named above
+    if (seq > (vector[event.author] ?? 0)) extra.push(event.id);
+  }
+
+  return { vector, extra, tips };
 }
 
 /**
@@ -151,6 +218,56 @@ export function missingFrom(
 ): SignedEvent[] {
   const covered = summary.vector ?? {};
   const known = new Set(summary.extra ?? []);
+  const tips = summary.tips ?? {};
+
+  /**
+   * Authors whose watermark provably does not mean what it says.
+   *
+   * Their claim is "everything from this author up to N". We hold an event at
+   * N and it is not the one they named — so their 1..N and our 1..N are
+   * different events, and skipping ours on the strength of that number would
+   * lose every one of them. This is the case neither side can see locally: two
+   * devices that were used apart each hold one clean chain, and the collision
+   * only exists in the comparison.
+   */
+  const contradicted = new Set<string>();
+
+  /**
+   * Numbers where *our* copy holds two different events, per author.
+   *
+   * The other half of the same fault, and the half that repairs it. Once a
+   * device holds both chains, its own numbering is ambiguous at those points —
+   * so a peer's watermark cannot speak for them, however clean the peer's copy
+   * looks, and those events are offered regardless of it.
+   *
+   * Only those. Numbers that mean one event are still covered by the
+   * watermark, which is what keeps a repaired pair from re-offering the whole
+   * shared prefix on every pass.
+   */
+  const ambiguous = new Map<string, Set<number>>();
+  const seenSeq = new Map<string, Map<number, string>>();
+
+  for (const event of events) {
+    const seq = seqOf(event);
+    if (seq === undefined) continue;
+
+    let byId = seenSeq.get(event.author);
+    if (!byId) { byId = new Map(); seenSeq.set(event.author, byId); }
+
+    const already = byId.get(seq);
+
+    if (already === undefined) byId.set(seq, event.id);
+    else if (already !== event.id) {
+      let clashes = ambiguous.get(event.author);
+      if (!clashes) { clashes = new Set(); ambiguous.set(event.author, clashes); }
+      clashes.add(seq);
+    }
+
+    const theirs = tips[event.author];
+    if (theirs && seq === covered[event.author] && theirs !== event.id) {
+      contradicted.add(event.author);
+    }
+  }
 
   return events.filter((event) => {
     if (known.has(event.id)) return false;
@@ -160,7 +277,11 @@ export function missingFrom(
     // named it.
     if (seq === undefined) return true;
 
-    return seq > (covered[event.author] ?? 0);
+    if (contradicted.has(event.author)) return true;
+
+    if (seq > (covered[event.author] ?? 0)) return true;
+
+    return ambiguous.get(event.author)?.has(seq) ?? false;
   });
 }
 
@@ -229,5 +350,6 @@ export function sameSummary(a: Summary, b: Summary): boolean {
 export function summarySize(summary: Summary): number {
   const vector = Object.keys(summary.vector ?? {}).length * 40;
   const extra = (summary.extra ?? []).length * 66;
-  return vector + extra;
+  const tips = Object.keys(summary.tips ?? {}).length * 66;
+  return vector + extra + tips;
 }

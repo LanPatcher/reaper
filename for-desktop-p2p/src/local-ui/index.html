@@ -518,11 +518,29 @@
       #deviceNote { color: var(--dim); font-size: 11px; line-height: 1.5; }
       #deviceBtns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 
+      /* Centred, and able to overflow without eating its own ends.
+         A fixed full-screen flex column with `justify-content: center`
+         overflows in *both* directions once its content is taller than the
+         viewport, and the overflow past the start edge cannot be scrolled to
+         — so the last row, which is the one with Leave call in it, was simply
+         cut off. It showed up on every platform because the rule is shared:
+         a phone in landscape, a desktop window dragged short, or a call with
+         enough faces in it to wrap all reach the same height.
+         `safe center` is the fix for exactly this: centre while there is room,
+         fall back to the start edge when there is not, so nothing is ever
+         placed where it cannot be reached. */
       #callOverlay {
         position: fixed; inset: 0; z-index: 60; display: none;
         background: rgba(9,9,9,.92); backdrop-filter: blur(6px);
-        flex-direction: column; align-items: center; justify-content: center; gap: 22px;
+        flex-direction: column; align-items: center; gap: 22px;
+        justify-content: center;
+        justify-content: safe center;
+        overflow-y: auto;
+        padding: 24px 16px;
       }
+      /* Nothing in here may be squashed to make room. Shrinking the button row
+         is what turns "clipped" into "clipped and the wrong size". */
+      #callOverlay > * { flex: 0 0 auto; max-width: 100%; }
       #callOverlay.show { display: flex; }
       #callTitle { font-size: 19px; font-weight: 700; }
       #callSub { color: var(--dim); font-size: 13px; margin-top: -14px; }
@@ -537,7 +555,10 @@
       .callface.speaking .av { box-shadow: 0 0 0 3px var(--good); }
       .callface .cn { font-size: 13px; max-width: 104px; overflow: hidden;
         text-overflow: ellipsis; white-space: nowrap; }
-      #callBtns { display: flex; gap: 14px; }
+      /* Wraps, because four 52px circles plus gaps is 250px and a narrow phone
+         is not always wider than that — and a control that runs off the side
+         of the screen is the same failure as one clipped off the bottom. */
+      #callBtns { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
       #callBtns button {
         width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer;
         background: var(--side); color: var(--text);
@@ -6163,10 +6184,11 @@
           b.onclick = function () { openServer(s.id); };
           b.oncontextmenu = function (e) { serverCtx(e, s); };
           if (isMuted(s.id)) b.style.opacity = ".45";
-          if (isListening(s.id)) {
-            // A quiet mark rather than a badge: it is a property of the
-            // server, not something waiting for attention.
-            b.style.boxShadow = "0 0 0 2px var(--good)";
+          if (!isListening(s.id)) {
+            // Marked when it is *not* followed, which is now the unusual case.
+            // A ring on almost every server says nothing; a ring on the two
+            // somebody deliberately quietened says exactly what it should.
+            b.style.boxShadow = "0 0 0 2px var(--dim)";
           }
           if (!isReady(s.id)) {
             b.style.opacity = ".4";
@@ -6581,14 +6603,41 @@
        * A device preference, so it lives in the index and nobody else sees
        * what you follow.
        */
-      var listening = {};   // communityId -> true
+      /**
+       * Servers explicitly turned off, and explicitly turned on.
+       *
+       * ## Why this is an opt-*out* now
+       *
+       * It used to be opt-in: a server was reconciled only while it was open,
+       * or while it had been followed by hand. Everything else went dark in
+       * *both* directions — this device stopped comparing notes about it, and
+       * told its peers to stop pushing live messages for it too. So a server
+       * nobody had explicitly followed had no unread mark, no notification and
+       * no history, until it was opened, at which point it spent a while
+       * catching up while somebody watched.
+       *
+       * That is a poor default. It was chosen when reconciling was expensive:
+       * a full id list per community on every announce, and a whole-log
+       * membership check on every frame. Both of those are gone — offers are
+       * suppressed unless the id set actually changed, and membership is
+       * memoised — so the cost of following a quiet server is now close to
+       * nothing, and the cost of *not* following one is a server that is
+       * silently wrong.
+       *
+       * The stored event keeps its shape, so a log written by an older build
+       * still reads correctly: `listening: true` and `listening: false` both
+       * mean what they say, and a server that has never been mentioned is now
+       * followed rather than ignored.
+       */
+      var listening = {};   // communityId -> true | false, if chosen by hand
 
-      function isListening(communityId) { return !!listening[communityId]; }
+      function isListening(communityId) {
+        return listening[communityId] !== false;
+      }
 
       async function toggleListening(communityId) {
-        var next = !listening[communityId];
-        if (next) listening[communityId] = true;
-        else delete listening[communityId];
+        var next = !isListening(communityId);
+        listening[communityId] = next;
 
         await window.p2p.append(INDEX, "listen.set", {
           id: communityId, listening: next,
@@ -6749,10 +6798,28 @@
         if (!window.p2p.netFocus) return;
 
         var active = {};
+
+        // Whatever is open, whether or not it is followed. Looking at it is
+        // the strongest statement there is that its messages matter.
         if (current) active[current] = 1;
         if (view && view !== "home") active[view] = 1;
+
+        // Every server, unless it has been turned off by hand. This is the
+        // watch-by-default rule — see `listening`. A server left out here is
+        // one this device neither reconciles nor receives live writes for, so
+        // leaving one out by accident is a server that is quietly wrong.
+        servers.forEach(function (s) {
+          if (isListening(s.id)) active[s.id] = 1;
+        });
+
+        // ...and a server nobody has described to us yet, even if it has been
+        // turned off: "do not follow this" is about live traffic, not about
+        // refusing to find out what the place is.
         inactiveServers().forEach(function (s) { active[s.id] = 1; });
-        Object.keys(listening).forEach(function (id) { active[id] = 1; });
+
+        // Groups are never suppressed. The core adds them to the declaration
+        // regardless, and naming them here keeps the two in step.
+        groups.forEach(function (g) { active[g.id] = 1; });
 
         // A community this device has left but not yet managed to tell anyone
         // about. Without this the focus set drops it the moment it leaves the
@@ -8563,12 +8630,21 @@
           }
           else if (e.type === "voice.join" || e.type === "voice.here") {
             markVoicePresent(p.channelId, e.author);
-            markVoiceSeen(p.channelId, e.author);
+            markVoiceSeen(p.channelId, e.author, timeOf(e));
           }
           else if (e.type === "voice.leave") {
             voiceState[p.channelId] = (voiceState[p.channelId] || []).filter(function (u) { return u !== e.author; });
           }
         });
+
+        // Anybody the replay put in a call who has not proved it recently.
+        //
+        // Run here rather than waiting for the periodic sweep, because the
+        // window between the two is a window in which the call overlay is
+        // drawn with people in it who left days ago. The sweep is a heartbeat
+        // check; this is the same check applied the moment there is something
+        // to check.
+        sweepVoice();
 
         messages.forEach(function (m) { if (deleted[m.id]) m.hidden = true; });
 
@@ -10458,7 +10534,23 @@
 
       var peerAddresses = {};   // userId -> onion
       var peerEncKeys = {};     // userId -> X25519 public key
-      var communityKeys = {};   // community id -> base64 key
+      var communityKeys = {};   // community id -> base64 key (the current one)
+
+      /**
+       * Every key a community has ever had here, oldest first.
+       *
+       * Rotation is how removing somebody is made to mean something: a new key
+       * they never receive locks them out of everything written afterwards.
+       * But only the newest was ever installed, so it also locked *this*
+       * device out of everything written before — a server's history simply
+       * became unreadable from the last kick backwards, on the next restart,
+       * with nothing on screen to explain it.
+       *
+       * Superseded keys are useless for writing and perfectly good for
+       * reading, so they are replayed too. The core keeps a bounded number and
+       * tries them in turn on a miss.
+       */
+      var communityKeyHistory = {};
       var dialTimer = null;
 
       /** 32 random bytes, base64 — a fresh community key. */
@@ -11221,6 +11313,7 @@
               ? t("Brought over {n} events", { n: got.events })
               : t("Already up to date");
             await refreshDevices();
+            refreshIndexSoon();
           } catch (e) {
             go.textContent = t("Could not reach the other device — try again later");
           }
@@ -11656,7 +11749,16 @@
        */
       async function installKeys() {
         for (var id in communityKeys) {
-          await window.p2p.setKey(id, communityKeys[id]);
+          // Oldest first, so the newest ends up as the one that seals and the
+          // rest are kept behind it for reading. A community whose log predates
+          // this list still gets its single key installed.
+          var history = communityKeyHistory[id] || [communityKeys[id]];
+          for (var h = 0; h < history.length; h++) {
+            await window.p2p.setKey(id, history[h]);
+          }
+          if (history[history.length - 1] !== communityKeys[id]) {
+            await window.p2p.setKey(id, communityKeys[id]);
+          }
         }
         for (var i = 0; i < friends.length; i++) {
           var f = friends[i];
@@ -11814,6 +11916,12 @@
       async function rememberCommunityKey(id, key) {
         if (!key || communityKeys[id] === key) return;
         communityKeys[id] = key;
+
+        // Kept in the running history too, so a rotation inside this session
+        // behaves the same as one replayed from the log at startup.
+        var seen = communityKeyHistory[id] || (communityKeyHistory[id] = []);
+        if (seen.indexOf(key) < 0) seen.push(key);
+
         await window.p2p.append(INDEX, "community.key", { id: id, key: key });
         await window.p2p.setKey(id, key);
       }
@@ -12394,8 +12502,27 @@
         if (voiceState[channelId].indexOf(uid) < 0) voiceState[channelId].push(uid);
       }
 
-      function markVoiceSeen(channelId, uid) {
-        voiceSeen[channelId + "/" + uid] = Date.now();
+      /**
+       * Record that somebody proved they were in a call, and *when*.
+       *
+       * `at` is the event's own timestamp and not the clock, which is the whole
+       * of a bug worth writing down. This stamped `Date.now()` unconditionally,
+       * so replaying a log — which happens every time a server is opened, and
+       * again for every batch a sync delivers — marked every historical
+       * `voice.join` as having been proved this instant.
+       *
+       * A join with no matching leave is the ordinary residue of an app being
+       * killed mid-call: the log is append-only and nobody got to say goodbye.
+       * The staleness sweep exists precisely to drop those, and this fed it a
+       * fresh timestamp so it kept them instead — which is people appearing in
+       * a call they left days ago, or never joined from this device's point of
+       * view at all.
+       *
+       * Falls back to the clock only when an event carries no time, which is a
+       * build difference rather than a backfill.
+       */
+      function markVoiceSeen(channelId, uid, at) {
+        voiceSeen[channelId + "/" + uid] = typeof at === "number" && at ? at : Date.now();
       }
 
       function sweepVoice() {
@@ -13437,6 +13564,9 @@
                   ? t("Brought over {n} events", { n: got.events })
                   : t("Already up to date");
                 await refreshDevices();
+                // Whatever came across is on disk now; this is what puts it on
+                // the screen without the app being restarted.
+                refreshIndexSoon();
               } catch (e) {
                 syn.textContent = String((e && e.message) || e);
               }
@@ -15913,6 +16043,19 @@
         if (inVoice && inVoice.channelId === e.payload.channelId) return;
         if (incoming) return;
 
+        // Something happening, not something being copied across.
+        //
+        // `voice.join` is an ordinary event in an append-only log, so every
+        // one ever written arrives again the first time a peer or a sibling
+        // device backfills that community — and each of them rang the phone.
+        // A device linked after a weekend of calls came up ringing, from
+        // people who were not calling, for a channel nobody was in.
+        //
+        // The message path has had this guard for a while (`justHappened`, and
+        // the note about a phone buzzing once per message in its history). The
+        // call path never did, and it is the louder of the two.
+        if (!justHappened(e)) return;
+
         // Before the mute check, and deliberately: muting a conversation is a
         // decision not to be interrupted, not a decision to have it sink down
         // the list while somebody is trying to reach you.
@@ -16949,7 +17092,20 @@
       var JUST_HAPPENED_MS = 2 * 60 * 1000;
 
       function justHappened(e) {
-        var at = e && e.at;
+        // `timestamp`, which is what a signed event actually carries — see the
+        // field of that name in `events.ts`.
+        //
+        // This read `e.at`, which no event has ever had. So the check could
+        // only ever take the "cannot be dated" branch below and answer *true*
+        // for everything, which is to say it did nothing at all: every
+        // backfilled message counted as live, and a device catching up
+        // notified for its entire history. That is the failure this function
+        // was written to prevent, and it has been quietly present for as long
+        // as the function has.
+        //
+        // `at` is still accepted, because it costs a line and covers anything
+        // that was ever handed one.
+        var at = e && (typeof e.timestamp === "number" ? e.timestamp : e.at);
 
         // No timestamp at all: treat it as live. An event that cannot be dated
         // is far more likely to be a build difference than a backfill, and the
@@ -16957,6 +17113,14 @@
         if (typeof at !== "number" || !at) return true;
 
         return Date.now() - at < JUST_HAPPENED_MS;
+      }
+
+      /** An event's own time, or nothing. See `justHappened`. */
+      function timeOf(e) {
+        if (!e) return undefined;
+        if (typeof e.timestamp === "number" && e.timestamp) return e.timestamp;
+        if (typeof e.at === "number" && e.at) return e.at;
+        return undefined;
       }
 
       /**
@@ -17976,18 +18140,80 @@
         await boot();
       }
 
-      async function boot() {
-        paintMe();
+      /**
+       * Read this device's own profile out of the index.
+       *
+       * Shared by startup and by the live refresh below, because the two have
+       * to agree about who this device is — and they did not. Startup read it
+       * once; the refresh did not read it at all. So an account that arrived by
+       * sync, which is the entire point of linking a device, was written to
+       * disk and stayed invisible until the app was relaunched.
+       *
+       * Returns whether this key has ever claimed a name, which is the same
+       * question `start` asks to choose between the setup screen and the app.
+       */
+      function applyOwnProfile(index) {
+        var mine = index.filter(function (e) {
+          return e.author === me.userId &&
+            (e.type === "profile.update" || e.type === "username.claim");
+        });
 
+        if (!mine.length) return false;
+
+        var latest = mine[mine.length - 1];
+        username = latest.payload.username;
+        profile.avatar = latest.payload.avatar || null;
+        profile.bio = latest.payload.bio || "";
+        profile.pronouns = latest.payload.pronouns || "";
+        profile.banner = latest.payload.banner || null;
+        profile.avatarId = latest.payload.avatarId || null;
+        profile.bannerId = latest.payload.bannerId || null;
+        profile.avatarType = latest.payload.avatarType || null;
+        profile.bannerType = latest.payload.bannerType || null;
+        if (profile.avatarId && profile.avatarType) {
+          imageType[profile.avatarId] = profile.avatarType;
+        }
+        if (profile.bannerId && profile.bannerType) {
+          imageType[profile.bannerId] = profile.bannerType;
+        }
+        manualPresence = latest.payload.status || null;
+
+        return true;
+      }
+
+      /**
+       * Rebuild everything this device derives from its private index.
+       *
+       * Split out of `boot` so it can be run more than once, which is the fix
+       * for the loudest thing wrong with syncing: the server list, the friends,
+       * the groups, the payload keys and the profile were all computed exactly
+       * once per launch. A sync that brought a new server across wrote it to
+       * disk, notified the interface, and the interface repainted the *same
+       * stale arrays*. "It clearly syncs but nothing shows until you restart"
+       * is that, and only that.
+       *
+       * Two things are carried over rather than rebuilt. `readAt` and
+       * `conversations` are written in memory the instant something is read or
+       * somebody writes to you, and appended to the log a moment later — so a
+       * rebuild that landed in between would resurrect an unread mark that was
+       * already cleared. Taking the later of the two values keeps both honest.
+       */
+      async function replayIndex() {
         var index = await window.p2p.events(INDEX);
+
+        applyOwnProfile(index);
+
+        var keptRead = readAt || {};
+        var keptConversations = conversations || {};
+
         var strangers = {};   // userId -> name, for requests from non-friends
         var serverOrder = [];
         readAt = {};
         listening = {};
         servers = []; friends = []; dms = []; groups = [];
         conversations = {}; closedDMs = {};
-        conversations = {}; closedDMs = {};
         peerAddresses = {}; blocked_ = {}; peerEncKeys = {}; communityKeys = {};
+        communityKeyHistory = {};
         var icons = {}, renames = {};
 
         index.forEach(function (e) {
@@ -18058,7 +18284,13 @@
           else if (e.type === "dm.close") closedDMs[p.userId] = true;
           else if (e.type === "invite.seen") seenInvites[p.eventId] = true;
           else if (e.type === "peer.enckey") peerEncKeys[p.userId] = p.ek;
-          else if (e.type === "community.key") communityKeys[p.id] = p.key;
+          else if (e.type === "community.key") {
+            communityKeys[p.id] = p.key;
+            // In log order, so the last one installed is the current one and
+            // the rest become the read-only history behind it.
+            var seen = communityKeyHistory[p.id] || (communityKeyHistory[p.id] = []);
+            if (p.key && seen.indexOf(p.key) < 0) seen.push(p.key);
+          }
           else if (e.type === "block.set") { if (p.blocked) blocked_[p.userId] = true; else delete blocked_[p.userId]; }
           else if (e.type === "voice.prefs") voicePrefs = Object.assign(voicePrefs, p);
           else if (e.type === "user.prefs") {
@@ -18090,7 +18322,9 @@
             if (p.collapsed) collapsed[p.key] = true; else delete collapsed[p.key];
           }
           else if (e.type === "listen.set") {
-            if (p.listening) listening[p.id] = true; else delete listening[p.id];
+            // Both answers are recorded, because "never mentioned" now means
+            // followed and "turned off" has to be distinguishable from it.
+            listening[p.id] = !!p.listening;
           }
           else if (e.type === "read.set") readAt[p.key] = p.at;
           // Someone who has asked to be friends but is not one yet. They are
@@ -18121,6 +18355,163 @@
           avatarId: profile.avatarId || null,
           avatarType: profile.avatarType || null,
         };
+
+        // The two that are written in memory before they reach the log.
+        Object.keys(keptRead).forEach(function (key) {
+          if ((keptRead[key] || 0) > (readAt[key] || 0)) readAt[key] = keptRead[key];
+        });
+        Object.keys(keptConversations).forEach(function (uid) {
+          if ((keptConversations[uid] || 0) > (conversations[uid] || 0)) {
+            conversations[uid] = keptConversations[uid];
+          }
+        });
+
+        return strangers;
+      }
+
+      /**
+       * Index event types that change something the interface draws.
+       *
+       * Deliberately not "everything". Read marks, mute settings, folded
+       * categories and outbox bookkeeping are written constantly by this device
+       * and change nothing anybody can see, so rebuilding on them would put a
+       * full replay on the path of reading a message.
+       *
+       * Everything that *is* here is either rare or arrives from another
+       * device, which is the same list — a sibling only ever sends the handful
+       * of kinds in `WORTH_SYNCING`, plus whatever a full pass carries.
+       */
+      var INDEX_RESHAPES = {
+        "community.create": 1, "community.leave": 1,
+        "community.rename": 1, "community.icon": 1,
+        "community.key": 1,
+        "friend.add": 1, "friend.remove": 1,
+        "friend.incoming": 1, "friend.outgoing": 1,
+        "group.create": 1, "group.left": 1,
+        "peer.enckey": 1, "peer.address": 1, "peer.forget": 1,
+        "profile.update": 1, "username.claim": 1,
+        "block.set": 1, "server.order": 1, "dm.close": 1,
+      };
+
+      var indexRefreshTimer = null;
+      var indexRefreshing = false;
+      var indexRefreshAgain = false;
+
+      /**
+       * Whether the app proper has started.
+       *
+       * A device waiting to be linked sits on the setup screen with none of
+       * this running. When the account finally arrives over a sync, the
+       * difference between "redraw" and "start the app" is exactly this flag.
+       */
+      var booted = false;
+
+      /** ...and whether it is happening right now. See `refreshIndex`. */
+      var booting = false;
+
+      /**
+       * Rebuild from the index shortly.
+       *
+       * Debounced, because a sync delivers the index in batches and joining a
+       * server writes several events in a row — one rebuild for the lot is both
+       * cheaper and less visually jumpy than one per event.
+       */
+      function refreshIndexSoon() {
+        if (indexRefreshTimer) return;
+        indexRefreshTimer = setTimeout(function () {
+          indexRefreshTimer = null;
+          void refreshIndex();
+        }, 250);
+      }
+
+      /**
+       * Take on whatever the index now says, without a restart.
+       *
+       * Everything here is a repeat of something `boot` does once. It is not
+       * `boot` itself because boot also starts timers, sweeps and loops, and
+       * running those again would double every one of them.
+       */
+      async function refreshIndex() {
+        if (indexRefreshing) { indexRefreshAgain = true; return; }
+
+        // Startup is already doing all of this, and it is not quick — it reads
+        // every direct conversation and dials everybody. An index event
+        // arriving while it runs is the *normal* case, because the first sync
+        // after launch is what delivers them, so without this the very first
+        // batch would start a second `boot` alongside the first and every
+        // interval, sweep and dial loop would exist twice for the session.
+        if (booting) { refreshIndexSoon(); return; }
+
+        indexRefreshing = true;
+
+        try {
+          var strangers = await replayIndex();
+
+          // The account itself can arrive this way — that is what linking a
+          // device is — and this device has been sitting on the setup screen
+          // with none of the app started behind it. Nothing short of the full
+          // startup is right here: the timers, sweeps and loops have never run.
+          //
+          // This is the path that used to need a relaunch. It still needs the
+          // page to come up as somebody, but now it does that itself.
+          if (!booted && username) {
+            var setup = $("setup");
+            if (setup) setup.classList.remove("show");
+            loadOwnImages();
+            loadCachedFaces();
+            await boot();
+            return;
+          }
+
+          // Keys before anything reads a log. A server that arrived in this
+          // pass carries its payload key in the same index, and reading its
+          // events first would hand the interface a screen of messages it
+          // cannot open — which is its own "restart to see it" bug.
+          await installKeys();
+
+          paintMe();
+          repaint("rail"); repaint("side"); repaint("members");
+
+          updateSyncFocus();
+          checkAllServers();
+          startDialing();
+
+          // Request state lives in each direct conversation, so somebody who
+          // only just appeared has none loaded. Only the new ones — the rest
+          // are kept current by the live event handler.
+          var pending = friends.map(function (f) { return f.userId; });
+          Object.keys(strangers).forEach(function (uid) {
+            if (pending.indexOf(uid) === -1) {
+              profiles[uid] = profiles[uid] || {};
+              if (!profiles[uid].username && strangers[uid]) {
+                profiles[uid].username = strangers[uid];
+              }
+              pending.push(uid);
+            }
+          });
+
+          for (var i = 0; i < pending.length; i++) {
+            if (requests[pending[i]]) continue;
+            await loadRequests(pending[i]);
+          }
+          friends.forEach(function (f) { requests[f.userId] = "accepted"; });
+
+          loadCachedFaces();
+          repaint("side");
+        } catch (e) {
+          // Unreadable for the moment. The next event schedules another pass,
+          // and nothing on a timer depends on this having succeeded.
+        } finally {
+          indexRefreshing = false;
+          if (indexRefreshAgain) { indexRefreshAgain = false; refreshIndexSoon(); }
+        }
+      }
+
+      async function boot() {
+        booting = true;
+        paintMe();
+
+        var strangers = await replayIndex();
 
         // Everything known is dialled now and retried on a timer. Previously
         // the only dial happened while accepting an invite, so peers dropped
@@ -18208,6 +18599,13 @@
           inboundBytesPerSecond: userPrefs.rateIn || 0,
         }).catch(function () {});
 
+        booted = true;
+        booting = false;
+
+        // Anything the first sync delivered while this was running. It was
+        // deliberately held off above; this is where it is taken on.
+        refreshIndexSoon();
+
         openHome();
       }
 
@@ -18223,29 +18621,10 @@
         await window.p2p.open(INDEX);
 
         var index = await window.p2p.events(INDEX);
-        var mine = index.filter(function (e) {
-          return e.author === me.userId &&
-            (e.type === "profile.update" || e.type === "username.claim");
-        });
 
-        if (mine.length) {
-          var latest = mine[mine.length - 1];
-          username = latest.payload.username;
-          profile.avatar = latest.payload.avatar || null;
-          profile.bio = latest.payload.bio || "";
-          profile.pronouns = latest.payload.pronouns || "";
-          profile.banner = latest.payload.banner || null;
-          profile.avatarId = latest.payload.avatarId || null;
-          profile.bannerId = latest.payload.bannerId || null;
-          profile.avatarType = latest.payload.avatarType || null;
-          profile.bannerType = latest.payload.bannerType || null;
-          if (profile.avatarId && profile.avatarType) {
-            imageType[profile.avatarId] = profile.avatarType;
-          }
-          if (profile.bannerId && profile.bannerType) {
-            imageType[profile.bannerId] = profile.bannerType;
-          }
-
+        // The same reading of the index the live refresh uses, so the two can
+        // never disagree about who this device is.
+        if (applyOwnProfile(index)) {
           // Our own pictures back into memory from the permanent cache.
           //
           // The log gives the hashes, not the bytes. Without this the account
@@ -18255,7 +18634,6 @@
           loadOwnImages();
           // Everyone else's, from disk, before anything is connected.
           loadCachedFaces();
-          manualPresence = latest.payload.status || null;
           await boot();
         } else {
           $("setupId").textContent = me.userId;
@@ -18320,6 +18698,12 @@
               hideResync();
               if (info.synced.events) {
                 flash(t("Brought over {n} events", { n: info.synced.events }));
+
+                // And take them on. The per-event notifications do this too,
+                // so this is the belt to their braces — but it is the only one
+                // that survives a merge that happened before the interface had
+                // subscribed, which is precisely the first sync after a link.
+                refreshIndexSoon();
               }
             }
 
@@ -18553,10 +18937,18 @@
 
         function paintPeerCount(peers) {
           var b = $("btnNet");
+
+          // People, not sockets. Somebody with a desktop and a phone signed
+          // into one account is two connections and one peer, and counting
+          // them separately made the number wrong in exactly the situation
+          // where somebody is most likely to be looking at it.
+          var who = {};
+          peers.forEach(function (pr) { if (pr.userId) who[pr.userId] = true; });
+
+          var n = Object.keys(who).length || peers.length;
+
           b.style.color = peers.length ? "var(--good)" : "";
-          b.title = peers.length
-          ? t("{n} peer(s) connected", { n: peers.length })
-          : t("Network");
+          b.title = n ? t("{n} peer(s) connected", { n: n }) : t("Network");
         }
 
         // Who is online is derived entirely from who is connected, and the
@@ -18721,13 +19113,24 @@
           // being discarded by the guard below, and the rail only caught up
           // when something else happened to repaint it.
           if (community === INDEX) {
+            // Rebuilt, not merely redrawn.
+            //
+            // This used to repaint the rail and the sidebar and stop there —
+            // and both of those draw from arrays that are derived from the
+            // index exactly once, at startup. So a server joined on another
+            // device, a friend added, a group created, or the account itself
+            // arriving would sync to disk, fire this handler, and redraw the
+            // identical stale list. Every one of them needed a relaunch to
+            // appear, which is the "the backend syncs but there is no visual
+            // layer" report.
+            //
+            // The list is `INDEX_RESHAPES` rather than "anything", because read
+            // marks and mute settings also land here, constantly, and change
+            // nothing anyone can see.
             var listChanged = events.some(function (e) {
-              return e.type === "community.create" || e.type === "community.leave" ||
-                e.type === "community.rename" || e.type === "community.icon" ||
-                e.type === "friend.add" || e.type === "friend.remove" ||
-                e.type === "group.create" || e.type === "group.leave";
+              return INDEX_RESHAPES[e.type] === 1;
             });
-            if (listChanged) { repaint("rail"); repaint("side"); }
+            if (listChanged) { repaint("rail"); repaint("side"); refreshIndexSoon(); }
             return;
           }
 
@@ -18835,10 +19238,14 @@
                 // everybody every few seconds; treating each one as a fresh
                 // join is what made the call tiles shuffle continuously.
                 markVoicePresent(e.payload.channelId, e.author);
-                markVoiceSeen(e.payload.channelId, e.author);
+                markVoiceSeen(e.payload.channelId, e.author, timeOf(e));
 
+                // ...and only for a join that is actually happening. A sync
+                // delivering a community's history replays every join it ever
+                // held, and each one was a chime — a batch of two hundred is
+                // two hundred chimes for a call that ended last week.
                 if (!alreadyIn && e.author !== me.userId &&
-                    inThisCall(e.payload.channelId)) {
+                    inThisCall(e.payload.channelId) && justHappened(e)) {
                   soundJoinOther();
                 }
               } else {
@@ -18849,8 +19256,10 @@
                   (voiceState[e.payload.channelId] || []).filter(function (u) { return u !== e.author; });
                 delete voiceSeen[e.payload.channelId + "/" + e.author];
 
+                // Same reasoning as the join chime above: a backfilled
+                // departure is not somebody leaving now.
                 if (wasIn && e.author !== me.userId &&
-                    inThisCall(e.payload.channelId)) {
+                    inThisCall(e.payload.channelId) && justHappened(e)) {
                   soundLeaveOther();
                 }
               }

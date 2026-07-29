@@ -48,7 +48,20 @@ public class TorPlugin: CAPPlugin, CAPBridgedPlugin {
         // onion services forward to different places.
         let syncPort = call.getInt("syncPort") ?? 0
 
-        tor?.start(localPort: UInt16(port), syncPort: UInt16(max(0, min(65535, syncPort))))
+        // Whether to publish the account address from this device at all.
+        //
+        // Absent means yes, which is what every caller meant before the option
+        // existed and is right for the only-device case. It is said no to when
+        // another of the user's devices holds the address — two devices
+        // publishing descriptors for one address means peers reach an arbitrary
+        // one of them, and nothing anywhere reports a problem.
+        let account = call.getBool("account") ?? true
+
+        tor?.start(
+            localPort: UInt16(port),
+            syncPort: UInt16(max(0, min(65535, syncPort))),
+            account: account
+        )
         call.resolve(["running": tor?.running ?? false])
     }
 

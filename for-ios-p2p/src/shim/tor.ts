@@ -56,6 +56,42 @@ export function rememberPorts(next: { localPort: number; syncPort: number }): vo
 }
 
 /**
+ * Whether this device should publish the account address.
+ *
+ * ## Why a module-level flag rather than a parameter
+ *
+ * `bridge.ts` decides this — it is the file that reads the claim ledger — and
+ * it says so by calling `TorService.setAccount`. On the desktop that rewrites
+ * the torrc and restarts tor. Here tor cannot be restarted inside one process
+ * (it keeps global state initialised once; a second start crashes natively, and
+ * the app simply vanishes), so the answer has to be known *before* the one
+ * start this launch gets.
+ *
+ * It is, and by a comfortable margin. `boot.ts` runs `netStart` — which is what
+ * calls `setAccount` — before it calls `Tor.start`, so by the time the flag is
+ * read it has been set from the ledger.
+ *
+ * Defaults to publishing, which is right for the case where there is only one
+ * device and for every path that never asks.
+ *
+ * The consequence of the launch-time grain is worth stating rather than hiding:
+ * a device displaced *while running* goes on publishing until it is next
+ * opened. That window is now bounded by a restart rather than being permanent,
+ * and the events that land on the wrong device in the meantime are not lost —
+ * they reach the other one on the next sibling sync.
+ */
+let publishAccount = true;
+
+export function setAccountService(publish: boolean): void {
+  publishAccount = publish;
+}
+
+/** What `boot.ts` should ask for, given everything decided so far. */
+export function accountService(): boolean {
+  return publishAccount;
+}
+
+/**
  * Start Tor if it is not already running, and say whether it is now.
  *
  * Idempotent — the native side returns early when it is up — and safe to call
@@ -82,7 +118,7 @@ async function ensureRunning(): Promise<boolean> {
   if (!ports) return false;
 
   try {
-    await Tor.start(ports);
+    await Tor.start({ ...ports, account: publishAccount });
     return true;
   } catch {
     // Reported by the caller, in terms of what it was trying to do.
@@ -396,15 +432,17 @@ export class TorService extends EventEmitter {
    * error naming the transport, thrown by the address bookkeeping that runs
    * after the transport has already started successfully.
    *
-   * The consequence of it being a no-op is worth stating plainly rather than
-   * hiding: a phone that has been displaced goes on publishing the account
-   * descriptor until it is next launched, so for that window two devices
-   * answer at one address. Withdrawing it properly needs the native side to
-   * support a second configuration, which is a change to make deliberately and
-   * not as a side effect of this.
+   * So it cannot withdraw a service that is already published. What it can do
+   * — and now does — is record the answer, so the *next* launch does not
+   * configure the account service at all. That is the same grain the platform
+   * already forces on importing an identity, and it turns "permanently two
+   * devices answering at one address" into "until the app is reopened".
+   *
+   * `boot.ts` reads this immediately after `netStart`, which is where the
+   * decision is made, and before the one `Tor.start` this launch gets.
    */
-  async setAccount(_publish: boolean): Promise<void> {
-    // Nothing to do, and nothing pretended.
+  async setAccount(publish: boolean): Promise<void> {
+    setAccountService(publish);
   }
 
   stop(): void {

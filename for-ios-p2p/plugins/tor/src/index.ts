@@ -107,6 +107,24 @@ export interface TorPlugin {
      * it makes this device dialable at an address nothing is listening for.
      */
     syncPort?: number;
+
+    /**
+     * Whether to publish the *account* address from this device.
+     *
+     * An onion address is a keypair, so exactly one device may answer at it:
+     * two publishing descriptors for one address means the directory keeps
+     * whichever spoke last and peers reach an arbitrary one, with nothing
+     * anywhere reporting a problem. `devices.ts` decides which device that is.
+     *
+     * The sync service is published either way — a displaced device is the one
+     * that most needs to be reachable by its siblings.
+     *
+     * Absent means yes, which is right for the only-device case and is what
+     * every caller meant before this existed. It takes effect at launch,
+     * because the service directory is read once at startup and tor cannot be
+     * reconfigured in place inside one process.
+     */
+    account?: boolean;
   }): Promise<{ running: boolean }>;
 
   stop(): Promise<{ running: boolean }>;
