@@ -635,6 +635,34 @@ async function publishIfHolding(): Promise<string | undefined> {
     return undefined;
   }
 
+  // Got what it asked for, so stop asking.
+  //
+  // ## The ping-pong this ends
+  //
+  // `wantsAddress` is the request the Reconnect button records. It was cleared
+  // in the two places that *grant* it — `take`, and the holder's `yield` — and
+  // in neither of the places where this device *receives* it. So a device that
+  // asked once, and was given the address by a sibling yielding, went on
+  // asking for it forever.
+  //
+  // That is invisible with one device and vicious with two. `claim` is
+  // exchanged in every pairing greeting, and the rule on the other side is "if
+  // they want it and I hold it, hand it over". Once both devices had asked at
+  // some point in their lives, every sync between them moved the address:
+  // A yields to B, five minutes later B yields back to A, forever. Each swap
+  // writes a claim into the index, and — because exactly one device answers at
+  // the account address — each swap moves where the user's friends can reach
+  // them. From outside it reads as the two devices fighting over the
+  // conversation, which is precisely what they are doing.
+  //
+  // Holding is the end of the request, so this is where it belongs: every path
+  // that can change who holds — startup, repair, take-over, a completed sync,
+  // and answering one — passes through here.
+  if (wantsAddress) {
+    wantsAddress = false;
+    log("[p2p]", "this device now holds the account address");
+  }
+
   // Holding again: make sure the account service is offered.
   await tor.setAccount(true);
 
@@ -964,8 +992,20 @@ const PICTURES_EVERY = 6;
 /** How long to let a burst of changes settle before acting on it. */
 const SYNC_SETTLE_MS = 20 * 1000;
 
+/**
+ * ...and how long a burst of *typing* settles for.
+ *
+ * Longer, and — unlike the one above — it does not restart when another
+ * message arrives. That difference is the whole design: joining a server
+ * writes several index events in a row and should produce one sync after the
+ * last of them, whereas a conversation is a stream with no last message, and a
+ * timer that restarts on every one would never fire while anybody was talking.
+ */
+const MESSAGE_SETTLE_MS = 30 * 1000;
+
 let syncTimer: ReturnType<typeof setInterval> | undefined;
 let syncSoon: ReturnType<typeof setTimeout> | undefined;
+let messageSoon: ReturnType<typeof setTimeout> | undefined;
 let passes = 0;
 
 /**
@@ -977,6 +1017,48 @@ let passes = 0;
  * later ones carry no information and train people to dismiss the first.
  */
 let recommended = false;
+
+/**
+ * This device wrote a message, so its siblings are now behind.
+ *
+ * ## The asymmetry this fixes
+ *
+ * Everything *arriving* reaches both of a user's devices already: a friend
+ * broadcasts to every peer connected to them, and both devices dial out
+ * regardless of which one holds the account address. Everything *sent* reaches
+ * only the device it was typed on and the person it was addressed to.
+ *
+ * The sibling then had two ways to find out, and both are slow: the five-minute
+ * pass, or reconciling with the recipient, who re-offers an unchanged id set
+ * only every four minutes. So a conversation held on a desktop showed up on the
+ * phone as the other half of it — their replies, promptly, with nothing in
+ * between. That reads as the two devices competing for the conversation rather
+ * than sharing it.
+ *
+ * A sibling sync is a Tor circuit and a summary per community in both
+ * directions, so this is deliberately not immediate. Half a minute after the
+ * talking stops is the difference between "a moment behind" and "minutes
+ * behind", and the cost is bounded by the fact that the timer does not restart.
+ */
+function wroteSomethingSiblingsWant(): void {
+  // One is already coming. Deliberately not rescheduled — see
+  // `MESSAGE_SETTLE_MS`.
+  if (messageSoon) return;
+
+  // Checked after the cheap guard above, because it reads the whole index and
+  // this is called on the path that appends a message.
+  if (!others(syncAddresses(), thisDevice().id).length) return;
+
+  messageSoon = setTimeout(() => {
+    messageSoon = undefined;
+
+    void syncAllDevices(undefined, "messages")
+      .then((done) => {
+        if (done.some((one) => one.events > 0)) announceDevices();
+      })
+      .catch((error: Error) => log("[p2p]", error.message));
+  }, MESSAGE_SETTLE_MS);
+}
 
 function startSyncSchedule(): void {
   if (syncTimer) return;
@@ -1877,7 +1959,16 @@ function storeFor(community: string): CommunityStore {
 
   if (!identity) throw new Error("p2p: identity not initialised");
 
-  const store = new CommunityStore({ root: root(), community, identity });
+  const store = new CommunityStore({
+    root: root(),
+    community,
+    identity,
+
+    // Both only ever read by compaction, and both are the difference between
+    // it working and it quietly doing nothing. See `CommunityStoreOptions`.
+    capacity: capacityOf(community),
+    decrypt: (payload) => decryptPayload(community, payload),
+  });
   store.open();
   stores.set(community, store);
 
@@ -2026,6 +2117,18 @@ export function registerP2PHandlers(): void {
       if (community === INDEX && WORTH_SYNCING.has(type)) {
         viewer = event.sender;
         changedSomethingWorthSyncing();
+      }
+
+      // ...and they care about what was actually said, which the list above
+      // deliberately does not cover because none of it lives in the index.
+      //
+      // Narrow on purpose. Read marks, typing state and presence all pass
+      // through here too and none of them is worth a circuit; what a sibling
+      // notices the absence of is the half of a conversation that was typed
+      // somewhere else. See `wroteSomethingSiblingsWant`.
+      if (isShareable(community) &&
+          (type === "message.send" || type === "message.delete")) {
+        wroteSomethingSiblingsWant();
       }
 
       // Push straight to connected peers. Anyone offline picks it up from the

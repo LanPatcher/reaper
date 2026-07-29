@@ -18280,6 +18280,32 @@
           else if (e.type === "peer.forget") delete peerAddresses[p.userId];
           else if (e.type === "dm.note") {
             conversations[p.userId] = Math.max(conversations[p.userId] || 0, p.at || 0);
+
+            // A note after a close is a reopening.
+            //
+            // ## Why the close needs undoing here rather than by its own event
+            //
+            // `reopenConversation` deleted the flag in memory and wrote a
+            // `dm.note` — and nothing in the log ever cancelled the
+            // `dm.close`. So the reopening lived only in this session: the
+            // next replay set the flag again and `conversationList` dropped
+            // the person, while `friends` — which the close does not touch —
+            // still listed them. Exactly "they vanished from my DMs but are
+            // still in my friends list".
+            //
+            // It used to take a restart to see, because the index was only
+            // replayed at startup. It is now replayed whenever the index
+            // changes, which is every time a sibling device syncs — so the
+            // conversation disappears mid-session and comes back the moment
+            // anything writes another note, which is the flicker being
+            // reported.
+            //
+            // Reading it off the ordering is what `reopenConversation`
+            // already meant: it writes a note *because* it is reopening. The
+            // replay is in causal order, so note-then-close closes and
+            // close-then-note reopens, which needs no new event type and
+            // repairs every log already written.
+            delete closedDMs[p.userId];
           }
           else if (e.type === "dm.close") closedDMs[p.userId] = true;
           else if (e.type === "invite.seen") seenInvites[p.eventId] = true;
@@ -18390,7 +18416,16 @@
         "group.create": 1, "group.left": 1,
         "peer.enckey": 1, "peer.address": 1, "peer.forget": 1,
         "profile.update": 1, "username.claim": 1,
-        "block.set": 1, "server.order": 1, "dm.close": 1,
+        "block.set": 1, "server.order": 1,
+
+        // Both halves of whether a conversation is on the list. `dm.note` is
+        // what puts somebody there — including, now, somebody a *sibling*
+        // device started talking to — and what un-closes them; `dm.close` is
+        // what takes them off.
+        //
+        // Written at most once a minute per conversation, so this is not the
+        // per-keystroke path it might look like.
+        "dm.note": 1, "dm.close": 1,
       };
 
       var indexRefreshTimer = null;

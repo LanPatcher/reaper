@@ -289,5 +289,72 @@ try {
   rmSync(dir, { recursive: true, force: true });
 }
 
+// ---- sealed payloads -----------------------------------------------------
+//
+// Every rule in this file reads a field *inside* a payload, and in any
+// community with an encryption key the payload is an envelope — `{ e, n, c, t }`
+// — carrying none of them. So each of those rules did nothing at all, on every
+// real community, and said nothing about it: compaction ran, reported the two
+// rules that happen not to read a payload, and looked like it had worked.
+//
+// The events here are shaped exactly as `seal` shapes them, so the test fails
+// against a `compact` that reads `event.payload` directly.
+{
+  const box = (payload: unknown) => ({
+    e: 1,
+    n: "nonce",
+    c: Buffer.from(JSON.stringify(payload), "utf8").toString("base64"),
+    t: "tag",
+  });
+
+  const open = (sealed: unknown) => {
+    const envelope = sealed as { e?: number; c?: string };
+    if (envelope?.e !== 1 || typeof envelope.c !== "string") return sealed;
+    return JSON.parse(Buffer.from(envelope.c, "base64").toString("utf8"));
+  };
+
+  const doomed = createEvent(
+    { type: "message.send", community: "c1", payload: box({ content: "gone" }) },
+    alice,
+    [],
+  );
+
+  const events = [
+    doomed,
+    createEvent(
+      { type: "message.delete", community: "c1", payload: box({ messageId: doomed.id }) },
+      alice,
+      [doomed],
+    ),
+    createEvent(
+      { type: "community.rename", community: "c1", payload: box({ id: "c1", name: "one" }) },
+      alice,
+      [],
+    ),
+    createEvent(
+      { type: "community.rename", community: "c1", payload: box({ id: "c1", name: "two" }) },
+      alice,
+      [],
+    ),
+  ];
+
+  // What the old behaviour produced, and what makes this worth a test: nothing.
+  const blind = compact(events);
+  ck("without a reader a sealed log looks like it has nothing to drop",
+     blind.pruned.length === 0, String(blind.pruned.length));
+
+  const seeing = compact(events, 10, open);
+
+  ck("the body of a deleted message is dropped",
+     seeing.pruned.includes(doomed.id),
+     seeing.pruned.join(","));
+  ck("...and its tombstone is kept",
+     seeing.keep.some((e) => e.type === "message.delete"));
+  ck("a superseded rename is dropped", seeing.pruned.length === 2,
+     String(seeing.pruned.length));
+  ck("and the latest one survives",
+     seeing.keep.filter((e) => e.type === "community.rename").length === 1);
+}
+
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");
 process.exit(f ? 1 : 0);

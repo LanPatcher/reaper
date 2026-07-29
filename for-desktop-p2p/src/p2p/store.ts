@@ -90,6 +90,27 @@ export interface CommunityStoreOptions {
 
   /** This device's identity */
   identity: Identity;
+
+  /**
+   * How many people this community holds.
+   *
+   * Only compaction reads it, and only to answer "would dropping these
+   * join/leave events change who is in the room" — a question whose answer
+   * depends entirely on whether the room was ever full. Defaulted to ten, and
+   * a direct conversation holds two: computing that answer against the wrong
+   * capacity is how a pair of events that *did* decide a seat gets collapsed.
+   */
+  capacity?: number;
+
+  /**
+   * Open a payload, for the one caller that has to look inside one.
+   *
+   * The store itself never does — an event is opaque to it, and that is the
+   * right shape. Compaction is the exception: every rule it applies is about a
+   * field *inside* a payload, and payloads are sealed. Injected rather than
+   * imported so the store keeps no keys and a test can pass identity.
+   */
+  decrypt?: (payload: unknown) => unknown;
 }
 
 export class CommunityStore {
@@ -165,9 +186,14 @@ export class CommunityStore {
   #headCache: SignedEvent[] | undefined;
   #nextSeqCache: number | undefined;
 
+  readonly #capacity: number | undefined;
+  readonly #decrypt: ((payload: unknown) => unknown) | undefined;
+
   constructor(options: CommunityStoreOptions) {
     this.community = options.community;
     this.#identity = options.identity;
+    this.#capacity = options.capacity;
+    this.#decrypt = options.decrypt;
 
     this.#dir = join(options.root, "communities", options.community);
     this.#log = new EventLog(
@@ -441,7 +467,10 @@ export class CommunityStore {
    * Returns what it did, or null when there was nothing worth doing.
    */
   compact(): { removed: number; before: number; after: number } | null {
-    const plan = compact(this.#events);
+    // With this community's real capacity and a way to read its payloads.
+    // Without either, compaction is deciding what history to throw away from
+    // behind a sealed envelope — see `CommunityStoreOptions`.
+    const plan = compact(this.#events, this.#capacity, this.#decrypt);
     if (!plan.pruned.length) return null;
 
     const before = this.#log.size();
