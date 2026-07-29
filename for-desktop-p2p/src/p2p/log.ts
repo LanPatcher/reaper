@@ -140,7 +140,28 @@ export class EventLog {
       return;
     }
 
-    this.#flushTimer ??= setTimeout(() => this.flush(), this.#flushIntervalMs);
+    this.#flushTimer ??= setTimeout(() => {
+      // Guarded, because this one has no caller to throw to.
+      //
+      // An exception from a timer callback is an uncaught exception in the
+      // main process, which takes the whole app down — over a full disk, or a
+      // directory the recovery path moved aside a moment earlier. The events
+      // are still buffered (see `flush`), so the right response is to say so
+      // and try again rather than to die holding them.
+      try {
+        this.flush();
+      } catch (error) {
+        console.warn(
+          `[log] ${this.#dir}: could not write ${this.#pending.length} buffered ` +
+            `event(s), will retry — ${(error as Error).message}`,
+        );
+
+        this.#flushTimer ??= setTimeout(
+          () => { try { this.flush(); } catch { /* reported above */ } },
+          this.#flushIntervalMs,
+        );
+      }
+    }, this.#flushIntervalMs);
   }
 
   /**
@@ -161,9 +182,23 @@ export class EventLog {
       this.#pending.flatMap((event) => [event, Buffer.from("\n")]),
     );
 
-    this.#pending = [];
-
+    // Written first, and only then forgotten.
+    //
+    // This cleared the buffer *before* the write, so anything that made
+    // `appendFileSync` throw — a full disk, or the directory having been moved
+    // aside by the unreadable-log recovery in `store.open` — silently took a
+    // whole batch of events with it. Silently is the operative word: the
+    // exception surfaced somewhere far away as a failed IPC call or a dropped
+    // peer connection, and the events it had just discarded were never
+    // mentioned. The comment in `store.open` even claims appends survive this
+    // "because they buffer", which is exactly what the ordering here prevented.
+    //
+    // Keeping them means a failing write retries on the next flush instead of
+    // costing whatever was in the batch, which for a merge from a peer is a
+    // slice of somebody's history that has to be fetched all over again.
     appendFileSync(this.#activeSegment(), encodeFrame(payload, this.#key));
+
+    this.#pending = [];
   }
 
   /**
@@ -223,7 +258,21 @@ export class EventLog {
    * Flush and stop accepting writes.
    */
   close(): void {
-    this.flush();
+    // Closed even when the last write fails.
+    //
+    // Every caller of this is tidying up — quitting, swapping a compacted log
+    // in, or dropping every store because the account was just replaced — and
+    // in all three an exception here does more harm than the failed write. The
+    // one that matters is adopting an account: it closes every store in a loop,
+    // and one throw would abandon the rest half-open.
+    try {
+      this.flush();
+    } catch (error) {
+      console.warn(
+        `[log] ${this.#dir}: could not flush on close — ${(error as Error).message}`,
+      );
+    }
+
     this.#closed = true;
   }
 }

@@ -240,9 +240,14 @@ type Payload = {
  */
 export function compact(
   events: readonly SignedEvent[],
-  capacity = 10,
+  capacity: number = 10,
   read: (payload: unknown) => unknown = (payload) => payload,
 ): Compaction {
+  // Undefined rather than omitted is what a caller with nothing to say looks
+  // like once this is reached through an optional field.
+  capacity = capacity ?? 10;
+  read = read ?? ((payload) => payload);
+
   const keep: SignedEvent[] = [];
   const pruned: string[] = [];
 
