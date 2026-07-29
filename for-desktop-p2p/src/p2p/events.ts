@@ -336,6 +336,19 @@ export function mergeEvents(
     accepted.push(event);
   }
 
+  // Nothing new, nothing to reorder.
+  //
+  // `local` is already the output of `causalSort` over exactly this set, and
+  // the sort is a deterministic function of the set — so re-running it here
+  // provably returns the same array. It was being run anyway, on every merge,
+  // and merges that accept nothing are the *common* case: peers re-send
+  // freely, batches overlap, and a converged pair exchanges duplicates on
+  // every pass. That is a full topological sort of the entire history for each
+  // one, on the thread that draws the interface on mobile.
+  if (accepted.length === 0) {
+    return { events: local, accepted, rejected };
+  }
+
   return {
     events: causalSort([...byId.values()]),
     accepted,

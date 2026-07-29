@@ -224,5 +224,114 @@ function ev(author: string, seq?: number, id?: string): SignedEvent {
      `${[...mineAfter].sort().join(",")} vs ${[...yoursAfter].sort().join(",")}`);
 }
 
+// ---- two devices, one account --------------------------------------------
+//
+// The case a watermark quietly gets wrong, and the reason `tips` exists.
+//
+// A desktop and a phone hold the same account, so they write as the same
+// author. Used while apart, each numbers from what it holds and both mint
+// their own 1, 2, 3. Every one of those is a real, signed, different event.
+//
+// Before the tip check, the phone said "I have you up to 3", the desktop
+// believed it and skipped its own first three messages — permanently, since
+// every later exchange made the same claim. Nothing errored on either side.
+{
+  const desktop = [ev("me", 1, "d1"), ev("me", 2, "d2"), ev("me", 3, "d3"),
+                   ev("me", 4, "d4")];
+  const phone = [ev("me", 1, "p1"), ev("me", 2, "p2")];
+
+  const toPhone = missingFrom(desktop, summarise(phone));
+
+  ck("a fork is noticed at the watermark",
+     toPhone.length === 4,
+     toPhone.map((e) => e.id).join(","));
+  ck("...including the numbers the phone thought it had",
+     ["d1", "d2", "d3"].every((id) => toPhone.some((e) => e.id === id)));
+
+  // The phone takes them, and now holds two events at each of 1 and 2.
+  const phoneAfter = [...phone, ...toPhone];
+  const s = summarise(phoneAfter);
+
+  ck("a watermark stops below the first ambiguous number",
+     (s.vector.me ?? -1) === 0, String(s.vector.me));
+  ck("and everything above it is named", s.extra.length === phoneAfter.length,
+     String(s.extra.length));
+
+  // ...which is what lets the phone's own two events reach the desktop.
+  const toDesktop = missingFrom(phoneAfter, summarise(desktop));
+
+  ck("the phone's own writes reach the desktop",
+     ["p1", "p2"].every((id) => toDesktop.some((e) => e.id === id)),
+     toDesktop.map((e) => e.id).join(","));
+
+  // And once both hold everything, nothing is offered again.
+  const desktopAfter = [...desktop, ...toDesktop];
+  ck("a repaired pair goes quiet",
+     missingFrom(desktopAfter, summarise(phoneAfter)).length === 0 &&
+     missingFrom(phoneAfter, summarise(desktopAfter)).length === 0);
+}
+
+// ---- a fork late in a long chain -----------------------------------------
+//
+// The index log is the one that forks — both of your devices write to it
+// constantly — and it is also the one synced every few minutes. So the cost of
+// a fork has to be proportional to the fork, not to the history behind it.
+{
+  const shared: SignedEvent[] = [];
+  for (let i = 1; i <= 200; i++) shared.push(ev("me", i, "s" + i));
+
+  const desktop = [...shared, ev("me", 201, "d201"), ev("me", 202, "d202")];
+  const phone = [...shared, ev("me", 201, "p201")];
+
+  const both = [...desktop, ev("me", 201, "p201")];
+  const s = summarise(both);
+
+  ck("the watermark holds right up to the divergence", s.vector.me === 200,
+     String(s.vector.me));
+  ck("and only the diverged tail is named", s.extra.length === 3,
+     String(s.extra.length));
+  ck("a tip is still offered, at an unambiguous number", s.tips?.me === "s200");
+
+  // The shared prefix is never re-offered once both sides hold everything.
+  const quiet = missingFrom(both, summarise(both));
+  ck("a repaired pair does not re-offer two hundred shared events",
+     quiet.length === 0, String(quiet.length));
+
+  // ...but the diverged tail still crosses. An ambiguous number offers both of
+  // its events, since nothing below a peer's watermark says which one they
+  // hold — one redundant event per fork point, and never the history behind it.
+  const toDesktop = missingFrom(both, summarise(desktop));
+  ck("the other chain's tail is still offered",
+     toDesktop.some((e) => e.id === "p201"),
+     toDesktop.map((e) => e.id).join(","));
+  ck("and the cost is the fork, not the chain", toDesktop.length === 2,
+     String(toDesktop.length));
+}
+
+// ---- and the ordinary case is untouched ----------------------------------
+{
+  const mine = [ev("a", 1), ev("a", 2), ev("a", 3)];
+  const s = summarise(mine);
+
+  ck("an unforked chain still collapses to one number", s.vector.a === 3);
+  ck("with a tip naming the event at it", s.tips?.a === "a-3", String(s.tips?.a));
+  ck("and a peer holding the same chain is sent nothing",
+     missingFrom(mine, s).length === 0);
+
+  // A peer that is simply behind is not a fork.
+  const behind = summarise([ev("a", 1), ev("a", 2)]);
+  ck("being behind is not a fork",
+     missingFrom(mine, behind).map((e) => e.id).join(",") === "a-3");
+}
+
+// ---- a peer that speaks the older summary --------------------------------
+{
+  const mine = [ev("a", 1), ev("a", 2), ev("a", 3)];
+  const old = { vector: { a: 2 }, extra: [] };
+
+  ck("a summary with no tips behaves exactly as it always did",
+     missingFrom(mine, old).map((e) => e.id).join(",") === "a-3");
+}
+
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");
 process.exit(f ? 1 : 0);

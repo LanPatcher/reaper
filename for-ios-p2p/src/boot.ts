@@ -7,7 +7,7 @@ import { watchForeground } from "./lifecycle";
 import { invoke } from "./shim/electron";
 import { flush, ready as filesystemReady, heldBytes } from "./shim/fs";
 import { setProxyPort } from "./shim/net";
-import { rememberPorts, waitForProxy } from "./shim/tor";
+import { accountService, rememberPorts, waitForProxy } from "./shim/tor";
 import { ready as brotliReady } from "./shim/zlib";
 
 /**
@@ -302,8 +302,25 @@ async function startNetwork(): Promise<void> {
   // same configuration, rather than reporting a port it has no way to open.
   rememberPorts({ localPort: forwardTo, syncPort: syncPort || forwardTo });
 
+  // Whether to publish the account address from this device.
+  //
+  // Decided by `netStart` above, which read the claim ledger and called
+  // `setAccount` — so by here the answer is known. It has to be applied at
+  // launch: tor reads its service directories once at startup and cannot be
+  // reconfigured in place, so this is the only moment there is.
+  //
+  // Two devices publishing descriptors for one address is not an error
+  // anywhere. The directory keeps whichever spoke last, peers reach an
+  // arbitrary one, and it presents as messages arriving on one device and not
+  // the other with no sign that anything is wrong.
+  const account = accountService();
+
+  if (!account) {
+    console.warn("[boot] another of your devices holds the account address — publishing sync only");
+  }
+
   try {
-    await Tor.start({ localPort: forwardTo, syncPort: syncPort || forwardTo });
+    await Tor.start({ localPort: forwardTo, syncPort: syncPort || forwardTo, account });
 
     // Tor may already have been running.
     //

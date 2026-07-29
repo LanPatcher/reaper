@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { causalSort, findHeads } from "./events";
 import { createIdentity } from "./identity";
 import { CommunityStore } from "./store";
 
@@ -148,6 +149,65 @@ const root2 = mkdtempSync(join(tmpdir(), "store2-"));
 
   again.close();
   rmSync(root3, { recursive: true, force: true });
+}
+
+// --- the shortcuts append takes ---------------------------------------------
+//
+// Appending no longer re-sorts the log, recomputes the heads, or rescans for
+// the next sequence number. All three are safe only because of properties that
+// are easy to state and easy to break later, so they are checked rather than
+// asserted in a comment.
+{
+  const root4 = mkdtempSync(join(tmpdir(), "store4-"));
+  const s = new CommunityStore({ root: root4, community: "fast", identity: ray });
+  s.open();
+
+  for (let i = 0; i < 30; i++) s.append("message.send", { content: `m${i}` });
+
+  // A merge from a peer, then more local writes on top of it.
+  const other = new CommunityStore({ root: root4, community: "fast2", identity: friend });
+  other.open();
+  for (let i = 0; i < 10; i++) other.append("message.send", { content: `f${i}` });
+  s.merge([...other.events()]);
+  other.close();
+
+  for (let i = 0; i < 10; i++) s.append("message.send", { content: `after${i}` });
+
+  const order = s.events().map((e) => e.id);
+  check("appending leaves the log in causal order",
+    causalSort([...s.events()]).map((e) => e.id).join(",") === order.join(","));
+
+  check("the cached heads match a full recomputation",
+    s.heads().map((e) => e.id).sort().join(",") ===
+      findHeads([...s.events()]).map((e) => e.id).sort().join(","),
+    s.heads().length + " heads");
+
+  const numbers = s.events()
+    .filter((e) => e.author === ray.userId)
+    .map((e) => (e as { seq?: number }).seq);
+
+  check("every number this device spent is distinct",
+    new Set(numbers).size === numbers.length,
+    numbers.join(","));
+  check("...and there are no gaps in them",
+    numbers.slice().sort((a, b) => (a ?? 0) - (b ?? 0))
+      .every((n, i) => n === i + 1),
+    numbers.join(","));
+
+  // A merge that accepts nothing must not disturb anything.
+  const before = s.events().map((e) => e.id).join(",");
+  const again = s.merge([...s.events()]);
+  check("re-merging what is already held accepts nothing",
+    again.accepted.length === 0 && again.rejected.length === 0);
+  check("...and does not reorder the log",
+    s.events().map((e) => e.id).join(",") === before);
+
+  const next = s.append("message.send", { content: "still fine" });
+  check("and appending after it still works",
+    s.events()[s.events().length - 1].id === next.id);
+
+  s.close();
+  rmSync(root4, { recursive: true, force: true });
 }
 
 rmSync(root, { recursive: true, force: true });

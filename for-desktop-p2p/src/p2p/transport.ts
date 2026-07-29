@@ -259,11 +259,38 @@ const IDLE_TIMEOUT_MS = 40000;
 export interface TransportTiming {
   pingEveryMs?: number;
   idleTimeoutMs?: number;
+
+  /**
+   * This install's id, announced so peers can tell two of your machines apart.
+   *
+   * Optional, and absent it behaves exactly as it did before the field
+   * existed. It is not security-relevant — it decides which of two sockets to
+   * keep, and a peer that lies about it costs itself a connection.
+   */
+  device?: string;
 }
 
 /** Wire messages. */
 type Wire =
-  | { t: "hello"; userId: string; communities: string[] }
+  // `caps` is what a build understands beyond the original protocol — see
+  // `CAPABILITIES`. Optional, because a peer that predates it says nothing and
+  // is talked to in the older way.
+  //
+  // It was being sent and read without ever being declared here, which the
+  // compiler had been objecting to for as long as it has existed. Worth fixing
+  // rather than suppressing: this union is the only written statement of what
+  // the two sides may say to each other, and a field missing from it is a
+  // field nothing checks the shape of.
+  // `device` distinguishes two machines signed into one account — see the
+  // duplicate-connection rule in `#handle`. Optional, because a peer that
+  // predates it is a peer for whom one user id really did mean one machine.
+  | {
+      t: "hello";
+      userId: string;
+      communities: string[];
+      caps?: string[];
+      device?: string;
+    }
   // Liveness. Cheap enough to send unconditionally; the reply is what proves
   // the circuit still carries traffic in both directions.
   //
@@ -316,7 +343,11 @@ type Wire =
   // member list, or by re-sending the invitation that would have made the
   // refusal wrong.
   | { t: "refuse"; community: string; reason: string }
-  | { t: "have"; community: string; ids: string[] }
+  // `ids` is the original form — every event id held. `summary` is the compact
+  // one, a watermark per author, sent only to a peer that said it understands
+  // them. Exactly one of the two is meaningful; `ids` is empty when a summary
+  // is present.
+  | { t: "have"; community: string; ids: string[]; summary?: Summary }
   | { t: "give"; community: string; events: SignedEvent[] }
   | { t: "push"; community: string; events: SignedEvent[] }
   // Voice signalling. Carried here rather than in the event log because SDP
@@ -346,6 +377,16 @@ export interface PeerInfo {
   id: string;
   address: string;
   userId?: string;
+
+  /**
+   * Which of that person's machines this is, when they said.
+   *
+   * A user id names an account, and an account can be signed in on several
+   * devices at once. Without this the transport could not tell a second
+   * machine from a second socket to the same one.
+   */
+  device?: string;
+
   inbound: boolean;
 
   /**
@@ -384,6 +425,17 @@ const WIRE_STATS: {
 /** How long the rolling rate window looks back. */
 const RATE_WINDOW_MS = 10000;
 
+/**
+ * Where the live part of `recent` starts.
+ *
+ * `Array.shift` is O(n) in the length of the array, and this runs on every
+ * frame in both directions — including audio, which is five a second per peer
+ * during a call, on top of every blob chunk of every transfer. Dropping the
+ * head by moving an index instead makes the common path O(1), and the array is
+ * compacted only when the dead prefix is worth reclaiming.
+ */
+let recentHead = 0;
+
 function note(out: boolean, type: string, bytes: number): void {
   const side = out ? WIRE_STATS.out : WIRE_STATS.in;
   const c = side[type] || (side[type] = { frames: 0, bytes: 0 });
@@ -396,8 +448,17 @@ function note(out: boolean, type: string, bytes: number): void {
   // Pruned on write rather than on read: the reader is a UI poll and should
   // not be the thing that decides how much memory this keeps.
   const cutoff = now - RATE_WINDOW_MS;
-  while (WIRE_STATS.recent.length && WIRE_STATS.recent[0].at < cutoff) {
-    WIRE_STATS.recent.shift();
+  while (
+    recentHead < WIRE_STATS.recent.length &&
+    WIRE_STATS.recent[recentHead].at < cutoff
+  ) {
+    recentHead++;
+  }
+
+  // One copy when half of it is dead, rather than one shift per frame.
+  if (recentHead > 256 && recentHead * 2 >= WIRE_STATS.recent.length) {
+    WIRE_STATS.recent = WIRE_STATS.recent.slice(recentHead);
+    recentHead = 0;
   }
 }
 
@@ -413,7 +474,8 @@ export function wireStats(): {
   let outBytes = 0;
   let inBytes = 0;
 
-  for (const r of WIRE_STATS.recent) {
+  for (let i = recentHead; i < WIRE_STATS.recent.length; i++) {
+    const r = WIRE_STATS.recent[i];
     if (r.at < cutoff) continue;
     if (r.out) outBytes += r.bytes; else inBytes += r.bytes;
   }
@@ -433,6 +495,7 @@ export function resetWireStats(): void {
   WIRE_STATS.in = {};
   WIRE_STATS.dropped = { frames: 0, bytes: 0 };
   WIRE_STATS.recent = [];
+  recentHead = 0;
 }
 
 function encode(msg: Wire): Buffer {
@@ -655,6 +718,7 @@ export class Transport extends EventEmitter {
 
   #pingEvery: number;
   #idleTimeout: number;
+  #device: string | undefined;
 
   constructor(userId: string, hooks: TransportHooks, timing: TransportTiming = {}) {
     super();
@@ -662,6 +726,7 @@ export class Transport extends EventEmitter {
     this.#hooks = hooks;
     this.#pingEvery = timing.pingEveryMs ?? PING_EVERY_MS;
     this.#idleTimeout = timing.idleTimeoutMs ?? IDLE_TIMEOUT_MS;
+    this.#device = timing.device;
   }
 
   /** Port we are listening on, or undefined if not started. */
@@ -991,6 +1056,7 @@ export class Transport extends EventEmitter {
       userId: this.#userId,
       communities: this.#hooks.communities(),
       caps: this.#capabilities(),
+      ...(this.#device ? { device: this.#device } : {}),
     });
 
     // Declared immediately, so a peer never spends a round of pushes sending
@@ -1000,13 +1066,45 @@ export class Transport extends EventEmitter {
     }
   }
 
+  /**
+   * Messages that are only answered once we know who is asking.
+   *
+   * Every access decision above this layer is made about a *user id* — whether
+   * they are in the community, whether the community has room for them,
+   * whether a file may be handed over. `servesPeer` answers "yes" for a peer it
+   * cannot name, on the reasoning that the greeting has not arrived yet and
+   * refusing would break first contact.
+   *
+   * That reasoning holds for the moment between connecting and greeting, and
+   * not for a peer that simply never greets. One that opens a socket and goes
+   * straight to `want` was, until this, handed the file: not identified, so not
+   * judged, so served. The same held for `have`, which answers with the id set
+   * of a community, and for `give`, which puts events into a log.
+   *
+   * The protocol already guarantees this costs nothing: `hello` is the first
+   * frame either side enqueues, and a stream is ordered, so an honest peer is
+   * always named before it asks for anything.
+   */
+  static #NEEDS_IDENTITY = new Set([
+    "have", "give", "push", "want", "blob", "noblob", "announce", "ack", "refuse",
+  ]);
+
   #handle(id: string, socket: Socket, msg: Wire): void {
     const peer = this.#peers.get(id);
     if (!peer) return;
 
+    if (!peer.info.userId && Transport.#NEEDS_IDENTITY.has(msg.t)) {
+      this.emit(
+        "log",
+        `ignored "${msg.t}" from a peer that has not said who it is`,
+      );
+      return;
+    }
+
     switch (msg.t) {
       case "hello": {
         peer.info.userId = msg.userId;
+        peer.info.device = msg.device;
         peer.caps = new Set(msg.caps ?? []);
 
         // Two devices that dial each other at the same time end up with two
@@ -1018,8 +1116,32 @@ export class Transport extends EventEmitter {
         // the rule is fixed: keep the connection dialled by whichever user id
         // sorts lower. Each side reaches that conclusion independently and
         // closes the same socket.
+        //
+        // ## Why the device has to be part of the test
+        //
+        // A user id is not one machine any more. Somebody with a desktop and a
+        // phone signed into the same account has two devices with *the same*
+        // user id, and both of them dial their friends — being displaced from
+        // the account address stops a device being reached, never stops it
+        // reaching out. So a friend saw two connections claiming to be the
+        // same person and collapsed them, every time, killing whichever one
+        // lost the coin toss.
+        //
+        // The dropped device redials, is collapsed again, and repeats: its
+        // messages sit in the outbox, its presence flaps, and from both ends it
+        // reads as a bad connection rather than as a rule doing this on
+        // purpose. Two sockets to two machines are not a duplicate — they are
+        // two peers who happen to be one person.
+        //
+        // Compared with `?? ""` on both sides so a peer that predates the field
+        // behaves exactly as before: two anonymous devices still collapse,
+        // which is the old rule, and is right for the old single-device case
+        // it was written for.
         const twin = [...this.#peers].find(
-          ([otherId, other]) => otherId !== id && other.info.userId === msg.userId,
+          ([otherId, other]) =>
+            otherId !== id &&
+            other.info.userId === msg.userId &&
+            (other.info.device ?? "") === (msg.device ?? ""),
         );
 
         if (twin) {
@@ -1123,16 +1245,19 @@ export class Transport extends EventEmitter {
         // the peer asked, so they are the one who wants it, and refusing here
         // would leave them unable to catch up from us.
         if (peer.info.inbound) {
-          const back = peer.caps?.has("vec")
-            ? this.#hooks.summaryFor?.(msg.community)
-            : undefined;
-
-          this.#send(id, back
-            ? { t: "have", community: msg.community, ids: [], summary: back }
-            : {
-                t: "have", community: msg.community,
-                ids: this.#hooks.idsFor(msg.community),
-              });
+          // Through the same path every other offer takes.
+          //
+          // This used to build and send the reply directly, which meant it
+          // skipped the "has this changed since last time" check that all the
+          // other offers go through — so a converged pair sent each other a
+          // list of every event id they hold, in full, on every reconciliation
+          // round, forever. On a large community that is the single biggest
+          // thing an idle connection spends, and it is spent over Tor.
+          //
+          // Suppression is safe precisely because it is conditional on having
+          // already said the same thing recently: if the list has not changed,
+          // the peer already has it.
+          this.#offerOne(id, peer, msg.community);
         }
         break;
       }

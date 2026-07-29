@@ -101,6 +101,15 @@ final class TorService {
     private(set) var socksPort: UInt16 = 0
     private(set) var lastError: String?
 
+    /**
+     * Whether this launch configured the account service at all.
+     *
+     * Read by `readOnionAddress`, which would otherwise pick up the hostname
+     * file left by an earlier launch and report an address this device is
+     * deliberately not answering at.
+     */
+    private(set) var publishesAccount = true
+
     init(emit: @escaping Progress) {
         self.emit = emit
     }
@@ -116,8 +125,31 @@ final class TorService {
      * reported as events rather than waited for. A promise held open that long
      * is indistinguishable from a hang.
      */
-    func start(localPort: UInt16, syncPort: UInt16 = 0) {
+    /**
+     * `account` decides whether the account address is published at all.
+     *
+     * Exactly one device may answer at an account address — an onion address is
+     * a keypair, and two devices publishing descriptors for it means the
+     * directory keeps whichever spoke last, so peers reach an arbitrary one and
+     * nothing errors. The desktop enforces that by rewriting its torrc and
+     * restarting; this build could not, because tor is not built to be torn
+     * down and started again inside one process, so a displaced phone went on
+     * publishing until it was next launched.
+     *
+     * Deciding it here, at launch, is what this build *can* do — the service
+     * directory is read once at startup, so the decision has the same grain as
+     * the launch itself. A phone that was displaced while it was closed comes
+     * back up quiet, which is the case that actually happens.
+     *
+     * Defaults to true, so any caller that does not pass it behaves exactly as
+     * this did before the parameter existed.
+     */
+    func start(localPort: UInt16, syncPort: UInt16 = 0, account: Bool = true) {
         if running { return }
+
+        // Before the already-running branch below, which reads addresses off
+        // disk and needs to know which of them this launch is entitled to.
+        publishesAccount = account
 
         // Already up from before this object existed.
         //
@@ -188,6 +220,24 @@ final class TorService {
             // return a port nothing is listening on.
             try? FileManager.default.removeItem(at: portFile)
 
+            // The account service, when this device is the one that should be
+            // answering at the address. See `account` on `start`.
+            //
+            // Built separately and spliced in, because the three arguments are
+            // an ordered unit — tor applies `HiddenServicePort` and
+            // `HiddenServiceVersion` to whichever `HiddenServiceDir` preceded
+            // them — so they either all appear, in this order, or none does.
+            let accountService: [String] = account
+                ? [
+                    "--HiddenServiceDir", serviceDirectory.path,
+                    "--HiddenServicePort", "80 127.0.0.1:\(localPort)",
+
+                    // Version 3 addresses. The default now, stated anyway: v2
+                    // is retired and an old default would be silently insecure.
+                    "--HiddenServiceVersion", "3",
+                ]
+                : []
+
             configuration.arguments = [
                 // Bound to loopback and to a port tor picks.
                 // Fixed rather than `auto`. See `SOCKS_PORT` above — this is
@@ -197,17 +247,7 @@ final class TorService {
 
                 "--ControlPort", "auto",
                 "--ControlPortWriteToFile", portFile.path,
-
-                // The onion service. These two are an ordered pair — tor
-                // applies `HiddenServicePort` to whichever `HiddenServiceDir`
-                // preceded it — which is why they are arguments rather than
-                // entries in `options`, where order is not preserved.
-                "--HiddenServiceDir", serviceDirectory.path,
-                "--HiddenServicePort", "80 127.0.0.1:\(localPort)",
-
-                // Version 3 addresses. The default now, stated anyway: v2 is
-                // retired and an old default would be silently insecure.
-                "--HiddenServiceVersion", "3",
+            ] + accountService + [
 
                 // ---- the second service: this device's sync address -------
                 //
@@ -466,28 +506,48 @@ final class TorService {
      * this retries rather than reporting an empty address — which the interface
      * would show as "you are unreachable" while tor was still working.
      */
+    /**
+     * This device's sync address, once its service has published.
+     *
+     * Split out of `readOnionAddress` because a displaced device reads only
+     * this half — it publishes no account service, so there is no account
+     * address for it to be waiting on.
+     *
+     * It publishes on its own schedule and may well arrive first, so it is
+     * picked up whenever it appears rather than waited for: a device reachable
+     * by its siblings before it is reachable by its friends is an ordinary
+     * state, and worth reporting as soon as it is true.
+     */
+    private func readSyncAddress() {
+        guard syncOnion == nil, let syncDirectory = try? Self.syncDirectory() else { return }
+
+        let syncHostname = syncDirectory.appendingPathComponent("hostname")
+
+        guard let text = try? String(contentsOf: syncHostname, encoding: .utf8) else { return }
+
+        let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !address.isEmpty else { return }
+
+        syncOnion = address
+        emit("sync", ["syncOnion": address])
+    }
+
     private func readOnionAddress(attempt: Int = 0) {
         guard let directory = try? Self.serviceDirectory() else { return }
         let hostname = directory.appendingPathComponent("hostname")
 
-        // The sync address, read on the same pass.
-        //
-        // It publishes on its own schedule and may well arrive first, so it is
-        // picked up whenever it appears rather than waited for — a device that
-        // is reachable by its siblings before it is reachable by its friends
-        // is a perfectly ordinary state and worth reporting as soon as it is
-        // true.
-        if syncOnion == nil, let syncDirectory = try? Self.syncDirectory() {
-            let syncHostname = syncDirectory.appendingPathComponent("hostname")
-
-            if let text = try? String(contentsOf: syncHostname, encoding: .utf8) {
-                let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !address.isEmpty {
-                    syncOnion = address
-                    emit("sync", ["syncOnion": address])
-                }
-            }
+        // A displaced device still has the hostname file from the last launch
+        // that did publish, and reading it would report an address this device
+        // is deliberately not answering at — which then travels into friend
+        // codes and the interface's idea of where it can be reached. The file
+        // is kept, because the key behind it is how the address comes back.
+        if !publishesAccount {
+            readSyncAddress()
+            if syncOnion == nil { keepReadingSyncAddress() }
+            return
         }
+
+        readSyncAddress()
 
         if let text = try? String(contentsOf: hostname, encoding: .utf8) {
             let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
