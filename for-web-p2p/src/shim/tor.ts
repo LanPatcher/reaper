@@ -119,6 +119,9 @@ export class TorService extends EventEmitter {
   #options: { targetPort?: number; syncPort?: number; account?: boolean };
   #watching: ReturnType<typeof setInterval> | undefined;
 
+  /** One attempt at a time; publishing is slow and retrying is on a timer. */
+  #publishing = false;
+
   constructor(options?: { targetPort?: number; syncPort?: number; account?: boolean }) {
     super();
     this.#options = options ?? {};
@@ -187,16 +190,56 @@ export class TorService extends EventEmitter {
     }
   }
 
+  /**
+   * Keep trying, rather than failing once and staying failed.
+   *
+   * Publishing needs Tor's control port, and the most likely reason it is not
+   * there is that the torrc has not been changed yet. That is a thing somebody
+   * fixes *while the tab is open* — so a session that gave up at startup would
+   * sit there addressless next to a Tor that had just been made ready for it,
+   * and the only way through would be a reload nobody knows to do.
+   *
+   * Also covers the relay dropping and coming back, which takes the services
+   * with it: Tor withdraws anything registered on a control connection when
+   * that connection closes, so they have to be registered again.
+   */
   #watch(): void {
     if (this.#watching) return;
 
     this.#watching = setInterval(() => {
       const now = relayReady();
-      if (now === this.running) return;
 
-      this.running = now;
-      this.emit("log", now ? "the relay is back" : "the relay dropped");
-    }, 3_000);
+      if (now !== this.running) {
+        this.running = now;
+        this.emit("log", now ? "the relay is back" : "the relay dropped");
+      }
+
+      if (!now || this.#publishing) return;
+
+      const wantsSync = this.#options.syncPort && !this.syncAddress;
+      const wantsAccount =
+        this.#options.account !== false && this.#options.targetPort && !this.address;
+
+      if (!wantsSync && !wantsAccount) return;
+
+      this.#publishing = true;
+
+      void (async () => {
+        try {
+          if (wantsSync) {
+            this.syncAddress = await this.#serve("sync", this.#options.syncPort!);
+            if (this.syncAddress) this.emit("sync", this.syncAddress);
+          }
+
+          if (wantsAccount) {
+            this.address = await this.#serve("account", this.#options.targetPort!);
+            if (this.address) this.emit("ready", this.address);
+          }
+        } finally {
+          this.#publishing = false;
+        }
+      })();
+    }, 10_000);
   }
 
   /**

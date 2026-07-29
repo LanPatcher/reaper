@@ -1454,6 +1454,8 @@
             "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "¿No están en la misma red? Tus dispositivos también se alcanzan por Tor. No hay que abrir puertos — basta con la dirección de abajo, y solo le sirve a quien ya tenga tu clave.",
             "This code has expired. Show a new one when you are ready to link a device.": "Este código ha caducado. Muestra uno nuevo cuando quieras enlazar un dispositivo.",
             "Show a new code": "Mostrar un código nuevo",
+            "Publishing your address…": "Publicando tu dirección…",
+            "Tor is creating an address for this session. It takes a moment, and your friend code appears once it has.": "Tor está creando una dirección para esta sesión. Tarda un momento, y tu código de amistad aparece en cuanto la tenga.",
             "Not available in a browser — open Reaper on a device that publishes an address and copy your code there.": "No disponible en el navegador — abre Reaper en un dispositivo que publique una dirección y copia allí tu código.",
             "Not available in a browser — copy it from one of your other devices.": "No disponible en el navegador — cópialo desde otro de tus dispositivos.",
             "Connected through this site": "Conectado a través de este sitio",
@@ -2156,6 +2158,8 @@
             "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "Pas sur le même réseau ? Vos appareils se joignent aussi via Tor. Rien à rediriger — l'adresse ci-dessous suffit, et elle n'est utile qu'à quelqu'un qui a déjà votre clé.",
             "This code has expired. Show a new one when you are ready to link a device.": "Ce code a expiré. Affichez-en un nouveau quand vous serez prêt à associer un appareil.",
             "Show a new code": "Afficher un nouveau code",
+            "Publishing your address…": "Publication de votre adresse…",
+            "Tor is creating an address for this session. It takes a moment, and your friend code appears once it has.": "Tor crée une adresse pour cette session. Cela prend un instant, et votre code d'ami apparaît dès qu'elle existe.",
             "Not available in a browser — open Reaper on a device that publishes an address and copy your code there.": "Indisponible dans un navigateur — ouvrez Reaper sur un appareil qui publie une adresse et copiez-y votre code.",
             "Not available in a browser — copy it from one of your other devices.": "Indisponible dans un navigateur — copiez-le depuis un autre de vos appareils.",
             "Connected through this site": "Connecté via ce site",
@@ -2858,6 +2862,8 @@
             "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "Nicht im selben Netzwerk? Deine Geräte erreichen sich auch über Tor. Es muss nichts weitergeleitet werden — die Adresse unten genügt, und sie nützt nur jemandem, der deinen Schlüssel ohnehin hat.",
             "This code has expired. Show a new one when you are ready to link a device.": "Dieser Code ist abgelaufen. Zeige einen neuen an, wenn du ein Gerät verbinden möchtest.",
             "Show a new code": "Neuen Code anzeigen",
+            "Publishing your address…": "Deine Adresse wird veröffentlicht…",
+            "Tor is creating an address for this session. It takes a moment, and your friend code appears once it has.": "Tor erstellt eine Adresse für diese Sitzung. Das dauert einen Moment, und dein Freundescode erscheint, sobald sie da ist.",
             "Not available in a browser — open Reaper on a device that publishes an address and copy your code there.": "Im Browser nicht verfügbar — öffne Reaper auf einem Gerät, das eine Adresse veröffentlicht, und kopiere deinen Code dort.",
             "Not available in a browser — copy it from one of your other devices.": "Im Browser nicht verfügbar — kopiere ihn von einem deiner anderen Geräte.",
             "Connected through this site": "Verbunden über diese Seite",
@@ -3560,6 +3566,8 @@
             "Not on the same network? Your devices also reach each other over Tor. Nothing needs forwarding — the address below is enough, and it is only useful to somebody who already has your key.": "Não estão na mesma rede? Os teus dispositivos também se alcançam por Tor. Não é preciso encaminhar nada — o endereço abaixo chega, e só serve a quem já tem a tua chave.",
             "This code has expired. Show a new one when you are ready to link a device.": "Este código expirou. Mostra um novo quando quiseres ligar um dispositivo.",
             "Show a new code": "Mostrar um código novo",
+            "Publishing your address…": "A publicar o teu endereço…",
+            "Tor is creating an address for this session. It takes a moment, and your friend code appears once it has.": "O Tor está a criar um endereço para esta sessão. Demora um momento, e o teu código de amigo aparece assim que existir.",
             "Not available in a browser — open Reaper on a device that publishes an address and copy your code there.": "Indisponível no navegador — abre o Reaper num dispositivo que publique um endereço e copia aí o teu código.",
             "Not available in a browser — copy it from one of your other devices.": "Indisponível no navegador — copia-o de outro dos teus dispositivos.",
             "Connected through this site": "Ligado através deste site",
@@ -9311,10 +9319,39 @@
           : t("You do not have permission to send here");
       }
 
+      /**
+       * The community id for a direct conversation.
+       *
+       * Deterministic and symmetric, so both sides derive the same one without
+       * having to agree on it first. That part was always right.
+       *
+       * ## The bug this replaces, because it was a serious one
+       *
+       * It used to be `[me, them].sort().join("").slice(0, 24)`. A user id is
+       * twenty-six characters, so joining two gives fifty-two — and taking the
+       * first twenty-four of that is a prefix of *the smaller id alone*. The
+       * second participant did not appear in the identifier at all.
+       *
+       * So every conversation between you and anybody whose id sorted after
+       * yours produced the same community. Two friends became one shared log:
+       * their messages appeared in each other's conversations, and each of them
+       * could see that the other existed, when they had written, and under what
+       * name. The bodies stayed encrypted — a DM key comes from agreement
+       * between two people and neither third party had it — so it presented as
+       * a wall of "Encrypted", which is exactly the shape that makes it look
+       * cosmetic rather than a disclosure.
+       *
+       * It is not cosmetic. Who you talk to and when is the thing this whole
+       * application is built to keep, and it was being handed to the wrong
+       * person.
+       *
+       * Twelve characters from each side rather than twenty-four from one. The
+       * id is the same length as before, both participants are in it, and
+       * sixty bits per side is far past collision.
+       */
       function dmIdFor(userId) {
-        // Deterministic so both sides derive the same conversation id without
-        // having to agree on one first.
-        return "dm" + [me.userId, userId].sort().join("").slice(0, 24);
+        var pair = [String(me.userId), String(userId)].sort();
+        return "dm" + pair[0].slice(0, 12) + pair[1].slice(0, 12);
       }
 
       async function openDM(friend) {
@@ -11032,13 +11069,33 @@
         var box = $("deviceOverlay");
         if (!box) return;
 
-        // Nothing known yet, or this device is the one answering. The second
-        // is by far the common case and must cost nothing.
-        if (!devices || !devices.standing ||
-            devices.standing.state !== "displaced") {
-          box.className = "hide";
-          return;
-        }
+        /**
+         * Never shown any more.
+         *
+         * This asked the user a question they had no way to answer: another of
+         * your devices holds the account address — should this one take it?
+         * The information needed is whether that device is actually running,
+         * which the person cannot see and the app can simply find out.
+         *
+         * So it does. `repairAddress` reaches the holder on every sync; if it
+         * answers, this device stays displaced because there is a real reason
+         * to; if it does not, the address moves here without anybody being
+         * asked. See the note on it in `bridge.ts`.
+         *
+         * What this screen actually did was block the app behind a button that
+         * did nothing whenever the other device was switched off — which is
+         * the case it existed for. Then a second button to insist, and then a
+         * restart, because the address still had not moved.
+         *
+         * Being displaced was never a reason to stop: a device in that state
+         * still dials its peers and still sends. Only receiving depended on
+         * the address, and that is what the repair is for.
+         *
+         * The element is left in the markup and simply never shown, so the
+         * function stays a single place to change if this is ever reconsidered.
+         */
+        box.className = "hide";
+        return;
 
         var by = devices.standing.by || {};
         box.className = "";
@@ -11894,11 +11951,7 @@
           yours.innerHTML = "<label>" + t("Your code") + "</label>";
           var c = document.createElement("div");
           c.className = "code";
-          c.textContent = myOnion
-            ? myFriendCode()
-            : throughRelay()
-            ? t("Not available in a browser — open Reaper on a device that publishes an address and copy your code there.")
-            : t("Waiting for Tor to publish your address…");
+          c.textContent = myOnion ? myFriendCode() : t("Waiting for Tor to publish your address…");
           yours.appendChild(c);
           card.appendChild(yours);
 
@@ -13249,11 +13302,7 @@
           var fcc = document.createElement("div");
           fcc.className = "code";
           fcc.style.cssText = "word-break:break-all;max-height:88px;overflow:auto";
-          fcc.textContent = myOnion
-            ? myFriendCode()
-            : throughRelay()
-            ? t("Not available in a browser — copy it from one of your other devices.")
-            : t("Waiting for Tor…");
+          fcc.textContent = myOnion ? myFriendCode() : t("Waiting for Tor…");
           fcw.appendChild(fcc);
           var fcn = document.createElement("div");
           fcn.className = "muted";
@@ -15966,8 +16015,8 @@
           ? "<b>" + t("Reachable over Tor") + "</b><div class='muted'>" +
           t("{n} peer(s) connected", { n: netPeers.length }) + "</div>"
           : throughRelay()
-          ? "<b>" + t("Connected through this site") + "</b><div class='muted'>" +
-          t("This session reaches your devices and peers over Tor. They cannot reach it, so keep this tab open while you use it.") + "</div>"
+          ? "<b>" + t("Publishing your address…") + "</b><div class='muted'>" +
+          t("Tor is creating an address for this session. It takes a moment, and your friend code appears once it has.") + "</div>"
           : "<b>" + t("Starting Tor…") + "</b><div class='muted'>" +
           t("This takes up to a minute on first run") + "</div>";
           st.appendChild(g);

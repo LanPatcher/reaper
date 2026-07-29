@@ -12,11 +12,13 @@
          inside this one, and a path reaching out of it resolves during `dev`
          and vanishes from `build`.
 
-         Several sizes because the browser, the tab strip, an installed app and
-         an iOS home screen all pick differently, and the one that is missing is
-         always the one somebody looks at. -->
+         PNG only, and deliberately. There is an `icon.svg` in the desktop
+         assets and it is months older than the artwork everything else uses —
+         and a browser *prefers* an SVG icon to a raster one, so linking it
+         quietly overrode the current icon with a stale one. -->
+    <link rel="icon" href="/icon.png" type="image/png" sizes="1024x1024" />
+    <link rel="icon" href="/icon-512.png" type="image/png" sizes="512x512" />
     <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
 
