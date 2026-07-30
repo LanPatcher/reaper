@@ -103,6 +103,11 @@ export const WORTH_SYNCING = new Set([
   "profile.update",
   "outbox.add",
   "peer.enckey",
+  // Notes-to-self live in the index and are the user's own writing — they will
+  // very much look for them on another device, so they sync promptly like a
+  // friend added rather than waiting for the periodic pass.
+  "note.add",
+  "note.del",
 ]);
 
 /**
