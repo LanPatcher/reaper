@@ -277,6 +277,11 @@
       .msg:hover { background: rgba(255,255,255,.02); }
       .msg .who { font-weight: 600; }
       .msg .when { color: var(--dim); font-size: 11px; margin-left: 7px; }
+      /* Delivery/read tick on your own direct messages. */
+      .receipt { display: inline-block; margin-top: 2px; font-size: 11px;
+                 letter-spacing: -1px; color: var(--dim); user-select: none; }
+      .receipt.sending { opacity: .45; }
+      .receipt.read { color: var(--accent); }
       .msg .body { white-space: pre-wrap; word-break: break-word; }
       /* Never wider than the column it is in. The pixel cap keeps a small
          image from being blown up on a wide window; the percentage is what
@@ -523,21 +528,6 @@
       }
 
       /* call overlay */
-      /* The resync note. Deliberately small and out of the way — it is a
-         suggestion about something that will sort itself out, not a problem. */
-      #resync {
-        position: fixed; left: 50%; transform: translateX(-50%);
-        bottom: 16px; z-index: 55;
-        display: flex; align-items: center; gap: 8px;
-        background: var(--side); border: 1px solid var(--line);
-        border-radius: 9px; padding: 8px 10px 8px 14px;
-        font-size: 12px; color: var(--dim);
-        box-shadow: 0 8px 26px rgba(0,0,0,.4);
-        max-width: min(560px, calc(100vw - 32px));
-      }
-      #resync.hide { display: none; }
-      #resync button { font-size: 12px; padding: 4px 8px; }
-      #resyncNo { color: var(--dim); padding: 4px 7px; }
 
       /* Another of your devices holds the address.
 
@@ -586,42 +576,42 @@
          `safe center` is the fix for exactly this: centre while there is room,
          fall back to the start edge when there is not, so nothing is ever
          placed where it cannot be reached. */
+      /* The DM / group-chat call surface. A compact banner across the top of
+         the conversation rather than a screen over it, so a call no longer
+         stops you reading and typing beneath it — the Discord-style DM call.
+         Lives in the flow at the top of #main, so it never covers the rail or
+         the window controls. (Server calls use the in-channel voice list and
+         are deliberately untouched.) */
       #callOverlay {
-        position: fixed; inset: 0; z-index: 60; display: none;
-        background: rgba(9,9,9,.92); backdrop-filter: blur(6px);
-        flex-direction: column; align-items: center; gap: 22px;
-        justify-content: center;
-        justify-content: safe center;
-        overflow-y: auto;
-        padding: 24px 16px;
+        position: relative; z-index: 4; display: none;
+        flex-direction: row; align-items: center; gap: 12px;
+        background: var(--side); border-bottom: 1px solid var(--line);
+        box-shadow: 0 4px 14px rgba(0,0,0,.25);
+        padding: 8px 14px; overflow: hidden;
       }
-      /* Nothing in here may be squashed to make room. Shrinking the button row
-         is what turns "clipped" into "clipped and the wrong size". */
-      #callOverlay > * { flex: 0 0 auto; max-width: 100%; }
       #callOverlay.show { display: flex; }
-      #callTitle { font-size: 19px; font-weight: 700; }
-      #callSub { color: var(--dim); font-size: 13px; margin-top: -14px; }
+      #callOverlay.ringing { background: var(--rail); }
+      #callFaces, #callBtns { flex: 0 0 auto; }
+      #callTitle { font-size: 14px; font-weight: 600;
+        max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #callSub { color: var(--dim); font-size: 12px; white-space: nowrap; }
       #callNotice {
-        color: var(--dim); font-size: 12px; margin-top: -10px;
-        display: flex; align-items: center; gap: 4px; max-width: 520px;
-        text-align: center; justify-content: center;
+        color: var(--dim); font-size: 12px;
+        display: flex; align-items: center; gap: 4px;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
-      #callFaces { display: flex; flex-wrap: wrap; gap: 20px; justify-content: center; max-width: 70vw; }
-      .callface { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 108px; }
+      #callFaces { display: flex; flex-wrap: nowrap; gap: 4px; }
+      .callface { display: flex; flex-direction: row; align-items: center; width: auto; gap: 0; }
+      .callface .cn { display: none; }
       .callface .av { box-shadow: 0 0 0 0 transparent; transition: box-shadow .1s; }
-      .callface.speaking .av { box-shadow: 0 0 0 3px var(--good); }
-      .callface .cn { font-size: 13px; max-width: 104px; overflow: hidden;
-        text-overflow: ellipsis; white-space: nowrap; }
-      /* Wraps, because four 52px circles plus gaps is 250px and a narrow phone
-         is not always wider than that — and a control that runs off the side
-         of the screen is the same failure as one clipped off the bottom. */
-      #callBtns { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+      .callface.speaking .av { box-shadow: 0 0 0 2px var(--good); }
+      #callBtns { display: flex; gap: 8px; margin-left: auto; flex-wrap: nowrap; }
       #callBtns button {
-        width: 52px; height: 52px; border-radius: 50%; border: 0; cursor: pointer;
-        background: var(--side); color: var(--text);
+        width: 38px; height: 38px; border-radius: 50%; border: 0; cursor: pointer;
+        background: var(--main); color: var(--text);
         display: flex; align-items: center; justify-content: center;
       }
-      #callBtns button:hover { background: var(--main); }
+      #callBtns button:hover { background: var(--line); }
       #callBtns button.act { background: #4a4a4a; }
       #callBtns button.hang { background: #d0353d; color: #fff; }
       #callBtns button.ans { background: #3ba55c; color: #fff; }
@@ -686,6 +676,17 @@
         font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
         color: var(--dim); padding: 14px 4px 6px;
       }
+      /* Notes tab. */
+      .noteitem {
+        background: var(--side); border: 1px solid var(--line);
+        border-radius: 9px; padding: 10px 12px; margin-bottom: 8px;
+      }
+      .notebody { white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
+      .notemeta {
+        display: flex; align-items: center; justify-content: space-between;
+        margin-top: 6px; color: var(--dim); font-size: 11px;
+      }
+      .notemeta button { font-size: 11px; padding: 2px 6px; }
       .frow {
         display: flex; align-items: center; gap: 11px; padding: 9px 8px;
         border-radius: 8px; cursor: pointer; border-top: 1px solid transparent;
@@ -830,6 +831,13 @@
       </div>
 
       <div id="main">
+        <div id="callOverlay">
+          <div id="callFaces"></div>
+          <div id="callTitle"></div>
+          <div id="callSub"></div>
+          <div id="callNotice"></div>
+          <div id="callBtns"></div>
+        </div>
         <div id="topbar">
           <b id="chanName">Home</b>
           <div id="stats"></div>
@@ -861,14 +869,6 @@
       <div id="members" class="hide"></div>
     </div>
 
-    <div id="callOverlay">
-      <div id="callFaces"></div>
-      <div id="callTitle"></div>
-      <div id="callSub"></div>
-      <div id="callNotice"></div>
-      <div id="callBtns"></div>
-    </div>
-
     <!--
       Another of your devices is answering at your address.
 
@@ -888,22 +888,16 @@
     </div>
 
     <!--
-      "Your other device does not know about this yet."
+      The account's other devices are brought up to date on their own in the
+      background, so there is no in-session "your other devices do not know
+      about this yet" strip any more — mid-session changes simply sync.
 
-      A strip rather than a dialog, and one per session rather than one per
-      change. Adding six friends in a row is one act; six notifications about
-      it carry no information after the first and teach people to dismiss the
-      thing without reading it.
-
-      Only ever shown to accounts that have actually linked a second device —
-      decided in the core, from the device roster, so this cannot appear for
-      somebody who has only ever used one machine.
+      The one moment worth surfacing is the app *opening* with local changes a
+      sibling has not seen yet. That is a startup sync screen built on the modal
+      below (showSyncStartup), offering to hurry the sync along or skip it.
+      Shown only to accounts that have actually linked a second device, decided
+      in the core from the device roster.
     -->
-    <div id="resync" class="hide">
-      <span id="resyncText"></span>
-      <button class="ghost" id="resyncGo"></button>
-      <button class="ghost" id="resyncNo">&#10005;</button>
-    </div>
 
     <div id="modal"><div id="modalCard"></div></div>
     <div id="ctx"></div>
@@ -1312,6 +1306,19 @@
         es: {
           name: "Español",
           strings: {
+            "Sync your other devices": "Sincroniza tus otros dispositivos",
+            "This device has changes your other devices don't have yet — new friends, group chats or servers you added while a device was off. Sync now so they catch up, or skip and let it happen on its own.": "Este dispositivo tiene cambios que tus otros dispositivos aún no tienen — nuevos amigos, chats de grupo o servidores que añadiste mientras un dispositivo estaba apagado. Sincroniza ahora para que se pongan al día, u omite y deja que ocurra por sí solo.",
+            "Skip": "Omitir",
+            "{place} had lost track of you — telling everyone you are still here": "{place} te había perdido la pista — avisando a todos de que sigues aquí",
+            "Read": "Leído",
+            "Delivered": "Entregado",
+            "Sending": "Enviando",
+            "Send read receipts": "Enviar confirmaciones de lectura",
+            "Notes": "Notas",
+            "No notes yet.": "Aún no hay notas.",
+            "Write a note to yourself…": "Escribe una nota para ti…",
+            "A private scratchpad only you can see. Notes sync to your other devices and go nowhere else.": "Un bloc privado que solo tú ves. Las notas se sincronizan con tus otros dispositivos y no van a ningún otro sitio.",
+            "Lets people you message in a direct conversation see when you have read theirs — a single tick when it arrives, a double once you read it. Turn this off and you still see theirs, they no longer see yours.": "Permite que las personas con las que hablas en una conversación directa vean cuándo has leído las suyas — una marca cuando llega, dos cuando la lees. Si lo desactivas, sigues viendo las suyas, pero ellas dejan de ver las tuyas.",
             "Delete {n} file(s) for good?": "¿Eliminar {n} archivo(s) definitivamente?",
             "Nobody who has these is online, so they cannot be downloaded again. This is the only copy — deleting them here loses them. Files you sent yourself are never touched.": "Nadie que los tenga está conectado, así que no se podrán volver a descargar. Esta es la única copia: al eliminarlos aquí se pierden. Los archivos que enviaste tú nunca se tocan.",
             "Delete for good": "Eliminar definitivamente",
@@ -2030,6 +2037,19 @@
         fr: {
           name: "Français",
           strings: {
+            "Sync your other devices": "Synchronisez vos autres appareils",
+            "This device has changes your other devices don't have yet — new friends, group chats or servers you added while a device was off. Sync now so they catch up, or skip and let it happen on its own.": "Cet appareil a des changements que vos autres appareils n'ont pas encore — de nouveaux amis, des groupes ou des serveurs ajoutés pendant qu'un appareil était éteint. Synchronisez maintenant pour qu'ils se mettent à jour, ou passez et laissez cela se faire tout seul.",
+            "Skip": "Passer",
+            "{place} had lost track of you — telling everyone you are still here": "{place} vous avait perdu de vue — on prévient tout le monde que vous êtes toujours là",
+            "Read": "Lu",
+            "Delivered": "Distribué",
+            "Sending": "Envoi en cours",
+            "Send read receipts": "Envoyer des accusés de lecture",
+            "Notes": "Notes",
+            "No notes yet.": "Aucune note pour l'instant.",
+            "Write a note to yourself…": "Écrivez une note pour vous-même…",
+            "A private scratchpad only you can see. Notes sync to your other devices and go nowhere else.": "Un bloc-notes privé que vous seul voyez. Les notes se synchronisent avec vos autres appareils et ne vont nulle part ailleurs.",
+            "Lets people you message in a direct conversation see when you have read theirs — a single tick when it arrives, a double once you read it. Turn this off and you still see theirs, they no longer see yours.": "Permet aux personnes avec qui vous discutez en conversation directe de voir quand vous avez lu les leurs — une coche à l'arrivée, deux une fois lu. Désactivez-le et vous voyez toujours les leurs, mais elles ne voient plus les vôtres.",
             "Delete {n} file(s) for good?": "Supprimer définitivement {n} fichier(s) ?",
             "Nobody who has these is online, so they cannot be downloaded again. This is the only copy — deleting them here loses them. Files you sent yourself are never touched.": "Personne les possédant n'est en ligne, ils ne pourront donc pas être retéléchargés. C'est la seule copie — les supprimer ici les perd. Les fichiers que vous avez envoyés ne sont jamais touchés.",
             "Delete for good": "Supprimer définitivement",
@@ -2748,6 +2768,19 @@
         de: {
           name: "Deutsch",
           strings: {
+            "Sync your other devices": "Andere Geräte synchronisieren",
+            "This device has changes your other devices don't have yet — new friends, group chats or servers you added while a device was off. Sync now so they catch up, or skip and let it happen on its own.": "Dieses Gerät hat Änderungen, die deine anderen Geräte noch nicht kennen — neue Freunde, Gruppenchats oder Server, die du hinzugefügt hast, während ein Gerät aus war. Jetzt synchronisieren, damit sie aufholen, oder überspringen und es von selbst geschehen lassen.",
+            "Skip": "Überspringen",
+            "{place} had lost track of you — telling everyone you are still here": "{place} hatte dich aus den Augen verloren — wir sagen allen, dass du noch dabei bist",
+            "Read": "Gelesen",
+            "Delivered": "Zugestellt",
+            "Sending": "Wird gesendet",
+            "Send read receipts": "Lesebestätigungen senden",
+            "Notes": "Notizen",
+            "No notes yet.": "Noch keine Notizen.",
+            "Write a note to yourself…": "Schreib dir eine Notiz…",
+            "A private scratchpad only you can see. Notes sync to your other devices and go nowhere else.": "Ein privater Notizblock, den nur du siehst. Notizen werden mit deinen anderen Geräten synchronisiert und gehen nirgendwo sonst hin.",
+            "Lets people you message in a direct conversation see when you have read theirs — a single tick when it arrives, a double once you read it. Turn this off and you still see theirs, they no longer see yours.": "Lässt Leute in einer direkten Unterhaltung sehen, wann du ihre gelesen hast — ein Haken beim Ankommen, zwei sobald du sie liest. Schalte es aus, und du siehst ihre weiterhin, sie deine nicht mehr.",
             "Delete {n} file(s) for good?": "{n} Datei(en) endgültig löschen?",
             "Nobody who has these is online, so they cannot be downloaded again. This is the only copy — deleting them here loses them. Files you sent yourself are never touched.": "Niemand, der sie hat, ist online, also können sie nicht erneut geladen werden. Dies ist die einzige Kopie — sie hier zu löschen verliert sie. Selbst gesendete Dateien bleiben unangetastet.",
             "Delete for good": "Endgültig löschen",
@@ -3466,6 +3499,19 @@
         pt: {
           name: "Português",
           strings: {
+            "Sync your other devices": "Sincronize os seus outros dispositivos",
+            "This device has changes your other devices don't have yet — new friends, group chats or servers you added while a device was off. Sync now so they catch up, or skip and let it happen on its own.": "Este dispositivo tem alterações que os seus outros dispositivos ainda não têm — novos amigos, conversas de grupo ou servidores que adicionou enquanto um dispositivo estava desligado. Sincronize agora para que se atualizem, ou ignore e deixe acontecer sozinho.",
+            "Skip": "Ignorar",
+            "{place} had lost track of you — telling everyone you are still here": "{place} tinha-te perdido o rasto — a avisar todos de que ainda estás aqui",
+            "Read": "Lido",
+            "Delivered": "Entregue",
+            "Sending": "A enviar",
+            "Send read receipts": "Enviar confirmações de leitura",
+            "Notes": "Notas",
+            "No notes yet.": "Ainda não há notas.",
+            "Write a note to yourself…": "Escreve uma nota para ti…",
+            "A private scratchpad only you can see. Notes sync to your other devices and go nowhere else.": "Um bloco privado que só tu vês. As notas sincronizam com os teus outros dispositivos e não vão para mais lado nenhum.",
+            "Lets people you message in a direct conversation see when you have read theirs — a single tick when it arrives, a double once you read it. Turn this off and you still see theirs, they no longer see yours.": "Permite que as pessoas com quem falas numa conversa direta vejam quando leste as delas — um visto à chegada, dois assim que a lês. Se desativares, continuas a ver as delas, mas elas deixam de ver as tuas.",
             "Delete {n} file(s) for good?": "Eliminar {n} ficheiro(s) definitivamente?",
             "Nobody who has these is online, so they cannot be downloaded again. This is the only copy — deleting them here loses them. Files you sent yourself are never touched.": "Ninguém que os tenha está online, por isso não poderão ser transferidos de novo. Esta é a única cópia — eliminá-los aqui perde-os. Os ficheiros que enviaste nunca são tocados.",
             "Delete for good": "Eliminar definitivamente",
@@ -4800,6 +4846,9 @@
       function closeModal() {
         var undo = modalCancel;
         modalCancel = null;
+        // Whatever is closing, the startup sync screen is no longer up — so a
+        // later auto-sync's hideResync() cannot mistake another dialog for it.
+        syncPromptOpen = false;
         $("modal").classList.remove("show");
         $("modalCard").innerHTML = "";
         if (undo) undo();
@@ -5222,10 +5271,56 @@
 
         if (voices < Math.max(2, Math.ceil(others / 2))) return;
 
-        netNote(t("Removed from {place} — the others no longer list you", {
+        // Was: leaveGroupLocally(community) — which silently removed this device
+        // from a group it had never left, the moment enough peers were briefly
+        // out of date about it. But a group has no owner and no kick: the only
+        // real way to leave one is departGroup, a deliberate act. A chorus of
+        // peers who do not list us is therefore a sync gap, not an eviction —
+        // and leaving on it is precisely the "removed from a group chat I never
+        // left, no explanation" report. So re-assert membership and let the
+        // logs reconcile, rather than walking out on the strength of stale
+        // rosters. Leaving stays something the person chooses to do.
+        netNote(t("{place} had lost track of you — telling everyone you are still here", {
           place: group.name,
-        }));
-        leaveGroupLocally(community);
+        }), true);
+        reassertGroupMembership(community);
+      }
+
+      /** Groups we have recently re-stated our membership of, to avoid a flood. */
+      var reasserted = {};
+
+      /**
+       * Tell a group we are still in it.
+       *
+       * Called when peers refuse our messages as a non-member, which for a
+       * group only ever means their roster has not caught up with us. We hold
+       * proof we belong — the group is in this device's own list, put there by
+       * accepting an invitation — so the repair is to re-state the membership,
+       * ourselves included, and announce it.
+       *
+       * `group.member.add` is additive for every reader: a departure is the
+       * only thing that removes anyone, so this can teach a stale peer about
+       * members it is missing but can never drop one. Throttled per group, so a
+       * burst of refusals produces one repair rather than a storm of adds.
+       */
+      function reassertGroupMembership(community) {
+        var now = Date.now();
+        if (reasserted[community] && now - reasserted[community] < 300000) return;
+        reasserted[community] = now;
+
+        var group = groups.filter(function (g) { return g.id === community; })[0];
+        if (!group) return;
+
+        var everyone = {};
+        (group.members || []).forEach(function (u) { everyone[u] = 1; });
+        Object.keys(roster[community] || {}).forEach(function (u) { everyone[u] = 1; });
+        everyone[me.userId] = 1;
+
+        window.p2p.append(community, "group.member.add", {
+          members: Object.keys(everyone),
+        }).then(function () {
+          return window.p2p.netAnnounce();
+        }).catch(function () {});
       }
 
       /** Groups already asked about, so one question is not asked per message. */
@@ -5384,6 +5479,10 @@
           if (!held[item.eventId]) return;
           settle(key);
         });
+
+        // A single tick on our own direct messages: the recipient's device is
+        // now holding these ids.
+        markDelivered(community, ids);
       }
 
       var farewells = {};
@@ -5401,6 +5500,39 @@
       var FAREWELL_DAYS = 30;
 
       /**
+       * Who a community's log says is in it, without opening it.
+       *
+       * `membersOf` only answers for the community currently on screen, so
+       * leaving a server from the rail — the common case — used to address the
+       * departure to nobody, and the leave reached other members only if the
+       * loose farewell loop happened to catch them. This reads the same events
+       * openServer replays, applying the same departure rules in causal order,
+       * so a leave can be owed to the exact people whose member list still has
+       * us in it. Everyone who ever spoke, minus anyone the log records as gone.
+       */
+      async function knownMembersOf(communityId) {
+        var evs;
+        try { evs = await window.p2p.events(communityId); }
+        catch (e) { return []; }
+
+        var here = {};
+        var gone = {};
+        evs.forEach(function (e) {
+          var p = e.payload || {};
+          if (e.author && e.author !== me.userId) here[e.author] = 1;
+
+          if (e.type === "member.leave") gone[e.author] = 1;
+          else if (e.type === "member.join") delete gone[e.author];
+          else if ((e.type === "member.kick" || e.type === "member.ban") &&
+                   owners[communityId] === e.author && p.userId) gone[p.userId] = 1;
+          else if (e.type === "member.readmit" &&
+                   owners[communityId] === e.author && p.userId) delete gone[p.userId];
+        });
+
+        return Object.keys(here).filter(function (u) { return !gone[u]; });
+      }
+
+      /**
        * Leave a server, tell everyone, and stop listing it.
        *
        * One function for the two buttons that do this, because they were
@@ -5408,7 +5540,9 @@
        * copy, and only one of them had ever been updated.
        */
       async function departServer(s) {
-        var whoWasThere = (current === s.id ? membersOf() : [])
+        // membersOf only knows the open community; for any other, read the log
+        // so the departure below is owed to the people actually in it.
+        var whoWasThere = (current === s.id ? membersOf() : await knownMembersOf(s.id))
           .filter(function (u) { return u !== me.userId; });
 
 
@@ -5467,6 +5601,14 @@
           var people = tell || [];
           for (var i = 0; i < people.length; i++) {
             await owe(people[i], communityId, left.id, "leave");
+            // Fast path alongside the durable owe: a direct, self-authored
+            // departure so anyone online now drops us from their member list
+            // at once, rather than only when the owed leave event next
+            // reconciles. Offline members still get the owed event later.
+            if (window.p2p.netSignal) {
+              window.p2p.netSignal(people[i], { t: "departed", community: communityId })
+                .catch(function () {});
+            }
           }
         }
 
@@ -5514,6 +5656,18 @@
             if (heard) {
               note.tries++;
               window.p2p.netAnnounce().catch(function () {});
+              // Alongside the reconciliation: a direct departure to everyone
+              // connected. A peer not in this community no-ops it (the handler
+              // only drops the sender from a community it already lists them
+              // in), and a member drops us immediately instead of waiting for
+              // the owed leave to sync. Cheap and safe, so it is not gated on
+              // knowing who the members are.
+              if (window.p2p.netSignal) {
+                Object.keys(live).forEach(function (uid) {
+                  window.p2p.netSignal(uid, { t: "departed", community: id })
+                    .catch(function () {});
+                });
+              }
               if (note.tries >= 3) await forgetFarewell(id);
             } else {
               reachFor(id);
@@ -8497,6 +8651,26 @@
             col.appendChild(attachmentEl(f));
           });
 
+          // A delivery/read tick on your own direct messages. Only in a DM —
+          // "delivered" and "read" are unambiguous with one recipient.
+          if (m.author === me.userId && currentDM && !m.payload.undecryptable) {
+            var receipt = document.createElement("span");
+            receipt.className = "receipt";
+            if ((readByPeer[current] || 0) >= m.timestamp) {
+              receipt.className += " read";
+              receipt.textContent = "✓✓";
+              receipt.title = t("Read");
+            } else if (receiptDelivered[m.id]) {
+              receipt.textContent = "✓";
+              receipt.title = t("Delivered");
+            } else {
+              receipt.className += " sending";
+              receipt.textContent = "✓";
+              receipt.title = t("Sending");
+            }
+            col.appendChild(receipt);
+          }
+
           row.appendChild(col);
 
           if (m.author === me.userId) {
@@ -8892,6 +9066,92 @@
 
       var homeTab = "friends";
 
+      // Notes to self. Kept as events in @index — the one log that is this
+      // device's own and that syncs to the account's other devices — so a note
+      // written on the desktop is there on the phone, and nobody else ever sees
+      // one. Rebuilt by replayIndex; never leaves the account.
+      var notes = [];
+
+      /** The Notes tab: a private scratchpad that follows you between devices. */
+      function renderNotes(pane) {
+        section2(pane, t("Notes"));
+
+        var intro = document.createElement("div");
+        intro.className = "muted";
+        intro.style.cssText = "font-size:12px;margin-bottom:10px";
+        intro.textContent = t("A private scratchpad only you can see. Notes sync to your other devices and go nowhere else.");
+        pane.appendChild(intro);
+
+        var box = document.createElement("div");
+        box.style.cssText = "display:flex;gap:8px;margin-bottom:14px";
+        var input = document.createElement("input");
+        input.type = "text";
+        input.placeholder = t("Write a note to yourself…");
+        input.style.cssText = "flex:1;min-width:0;background:var(--side);border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px 12px";
+        var add = document.createElement("button");
+        add.className = "primary";
+        add.textContent = t("Save");
+
+        var submit = function () {
+          var text = input.value.trim();
+          if (!text) return;
+          input.value = "";
+          // Optimistic: show it at once, then persist and let the index rebuild
+          // reconcile (the id makes the replay idempotent).
+          var note = { id: newId("n"), content: text, at: Date.now() };
+          notes.push(note);
+          renderFriendsPane();
+          window.p2p.append(INDEX, "note.add", note)
+            .then(function () { refreshIndexSoon(); })
+            .catch(function () {});
+        };
+        add.onclick = submit;
+        input.onkeydown = function (ev) {
+          if (ev.key === "Enter") { ev.preventDefault(); submit(); }
+        };
+        box.appendChild(input); box.appendChild(add);
+        pane.appendChild(box);
+
+        if (!notes.length) {
+          var empty = document.createElement("div");
+          empty.className = "muted";
+          empty.style.fontSize = "13px";
+          empty.textContent = t("No notes yet.");
+          pane.appendChild(empty);
+          return;
+        }
+
+        notes.slice().sort(function (a, b) { return b.at - a.at; }).forEach(function (n) {
+          var row = document.createElement("div");
+          row.className = "noteitem";
+
+          var body = document.createElement("div");
+          body.className = "notebody";
+          renderContent(body, n.content);
+          row.appendChild(body);
+
+          var meta = document.createElement("div");
+          meta.className = "notemeta";
+          var when = document.createElement("span");
+          when.textContent = n.at ? clockOf(n.at) : "";
+          meta.appendChild(when);
+          var del = document.createElement("button");
+          del.className = "ghost";
+          del.textContent = t("Delete");
+          del.onclick = function () {
+            notes = notes.filter(function (x) { return x.id !== n.id; });
+            renderFriendsPane();
+            window.p2p.append(INDEX, "note.del", { id: n.id })
+              .then(function () { refreshIndexSoon(); })
+              .catch(function () {});
+          };
+          meta.appendChild(del);
+          row.appendChild(meta);
+
+          pane.appendChild(row);
+        });
+      }
+
       /** The friends list that fills Home, in place of a conversation. */
       function renderFriendsPane() {
         var pane = $("friendsPane");
@@ -8933,6 +9193,7 @@
         var waitingCount = inactiveServers().length;
 
         tab("friends", t("Friends"), 0);
+        tab("notes", t("Notes"), 0);
         tab("activity", t("Waiting"), outCount + waitingCount);
         tab("sent", t("Sent"), 0);
         tab("received", t("Received"), 0);
@@ -8944,6 +9205,7 @@
           if (keepScroll) pane.scrollTop = keepScroll;
         };
 
+        if (homeTab === "notes") { renderNotes(pane); restore(); return; }
         if (homeTab === "activity") { renderActivity(pane); restore(); return; }
         if (homeTab === "sent" || homeTab === "received") {
           // Async, so it restores itself once the rows exist.
@@ -11691,57 +11953,84 @@
       }
 
       /**
-       * The resync note.
+       * The startup sync screen.
        *
-       * Shown once a session, dismissed for good when dismissed, and never
-       * shown at all to an account that has only ever run on one device — the
-       * core decides that from the device roster rather than the interface
+       * Replaces the old in-session "your other devices do not know about this
+       * yet" strip. The background sync is fast enough that narrating every
+       * mid-session change carried no information, so those no longer prompt —
+       * they simply sync. The one state worth an explicit offer is the app
+       * *opening* with local changes a sibling has never seen: new friends,
+       * group chats or servers joined while a second device was off.
+       *
+       * Shown once a session, and only to an account that has actually linked a
+       * second device — the core decides that from the device roster (the same
+       * `info.recommend` signal the strip used) rather than the interface
        * guessing, so there is one place it can be got wrong instead of two.
        *
-       * It is a suggestion, not a warning. The sync is already scheduled by
-       * the time this appears; all this adds is a way to hurry it along, and a
-       * reason for the other device being behind if it happens to be off.
+       * Gated to the opening of the app. A recommendation that first arrives
+       * well after boot is a change made *this* session, which the background
+       * sync already carries, so no screen appears for it.
        */
-      var resyncDismissed = false;
+      var syncPromptShown = false; // at most one startup offer per session
+      var syncPromptOpen = false;  // the screen is currently up
+      var syncStartupBy = Date.now() + 30000;
 
-      function showResync() {
-        if (resyncDismissed) return;
-
-        var bar = $("resync");
-        if (!bar) return;
-
-        $("resyncText").textContent =
-          t("Your other devices do not know about this yet.");
-
-        var go = $("resyncGo");
-        go.textContent = t("Sync now");
-        go.onclick = async function () {
-          go.disabled = true;
-          go.textContent = t("Syncing…");
-          try {
-            var got = await window.p2p.syncDevices();
-            go.textContent = got.events
-              ? t("Brought over {n} events", { n: got.events })
-              : t("Already up to date");
-            await refreshDevices();
-            refreshIndexSoon();
-          } catch (e) {
-            go.textContent = t("Could not reach the other device — try again later");
-          }
-          setTimeout(function () { hideResync(); }, 2200);
-        };
-
-        $("resyncNo").onclick = function () {
-          resyncDismissed = true;
-          hideResync();
-        };
-
-        bar.className = "";
+      function maybeStartupSync() {
+        if (syncPromptShown) return;
+        syncPromptShown = true;
+        if (Date.now() > syncStartupBy) return; // a mid-session change, not startup
+        showSyncStartup();
       }
 
+      function showSyncStartup() {
+        syncPromptOpen = true;
+        modal("Sync your other devices", function (card) {
+          var text = document.createElement("div");
+          text.className = "muted";
+          text.textContent =
+            t("This device has changes your other devices don't have yet — new friends, group chats or servers you added while a device was off. Sync now so they catch up, or skip and let it happen on its own.");
+          card.appendChild(text);
+
+          var row = document.createElement("div");
+          row.className = "mrow";
+
+          var skip = document.createElement("button");
+          skip.className = "ghost";
+          skip.textContent = t("Skip");
+          skip.onclick = function () { syncPromptOpen = false; closeModal(); };
+
+          var go = document.createElement("button");
+          go.className = "primary";
+          go.textContent = t("Sync now");
+          go.onclick = async function () {
+            go.disabled = true;
+            go.textContent = t("Syncing…");
+            try {
+              var got = await window.p2p.syncDevices();
+              go.textContent = got.events
+                ? t("Brought over {n} events", { n: got.events })
+                : t("Already up to date");
+              await refreshDevices();
+              refreshIndexSoon();
+            } catch (e) {
+              go.textContent = t("Could not reach the other device — try again later");
+            }
+            setTimeout(function () {
+              if (syncPromptOpen) { syncPromptOpen = false; closeModal(); }
+            }, 1600);
+          };
+
+          row.appendChild(skip);
+          row.appendChild(go);
+          card.appendChild(row);
+        });
+      }
+
+      // A sync that ran on its own answers the offer, so the screen goes away
+      // rather than sitting there suggesting something already done. Guarded on
+      // `syncPromptOpen` so it can never close an unrelated dialog.
       function hideResync() {
-        var bar = $("resync");
-        if (bar) bar.className = "hide";
+        if (syncPromptOpen) { syncPromptOpen = false; closeModal(); }
       }
 
       async function refreshDevices() {
@@ -13603,6 +13892,17 @@
           tsn.textContent = t("Shows who wrote and where. The message itself is never included \u2014 Windows keeps notifications in the Action Centre, where anyone at this machine can read them.");
           card.appendChild(tsn);
 
+          var rrw = document.createElement("div");
+          rrw.className = "listitem";
+          rrw.style.marginTop = "10px";
+          var rrc = document.createElement("input");
+          rrc.type = "checkbox"; rrc.checked = userPrefs.readReceipts !== false;
+          var rrl = document.createElement("div");
+          rrl.className = "grow";
+          rrl.innerHTML = "<div>" + t("Send read receipts") + "</div><div class='muted' style='font-size:11px'>" +
+          t("Lets people you message in a direct conversation see when you have read theirs \u2014 a single tick when it arrives, a double once you read it. Turn this off and you still see theirs, they no longer see yours.") + "</div>";
+          rrw.appendChild(rrc); rrw.appendChild(rrl); card.appendChild(rrw);
+
           // ---- startup -----------------------------------------------------
           var stl2 = document.createElement("label");
           stl2.style.marginTop = "14px";
@@ -13919,17 +14219,6 @@
           ldw.appendChild(ldc); ldw.appendChild(ldl);
           card.appendChild(ldw);
 
-          var cfw = document.createElement("div");
-          cfw.className = "listitem";
-          var cfc = document.createElement("input");
-          cfc.type = "checkbox"; cfc.checked = userPrefs.callFocus !== false;
-          var cfl = document.createElement("div");
-          cfl.className = "grow";
-          cfl.innerHTML = "<div>" + t("Pause syncing during calls") + "</div><div class='muted' style='font-size:11px'>" +
-          t("Direct and group calls only. Messages, joins and voice keep flowing; history catches up afterwards.") + "</div>";
-          cfw.appendChild(cfc); cfw.appendChild(cfl);
-          card.appendChild(cfw);
-
           var rw = document.createElement("div");
           var rlab = document.createElement("label");
           var rtext = function (n) {
@@ -14167,9 +14456,9 @@
             userPrefs.autoDownload = dlc.checked;
             userPrefs.autoMaxBytes = num(sz.value, userPrefs.autoMaxBytes || 0);
             userPrefs.toasts = tsc.checked;
+            userPrefs.readReceipts = rrc.checked;
             userPrefs.viewLoad = vlc.checked;
             userPrefs.lowData = ldc.checked;
-            userPrefs.callFocus = cfc.checked;
             userPrefs.lang = lgs.value;
 
             // Only ever forward. Changing this cannot reach back into messages
@@ -14371,6 +14660,10 @@
       var userPrefs = {
         autoImages: true, autoDownload: true, autoMaxBytes: 2000000,
         mutedSounds: false,
+        // Read receipts in direct conversations, on by default. Tell the other
+        // side when their message has been read; turning it off keeps your own
+        // reading private without hiding theirs from you.
+        readReceipts: true,
         // Traffic shaping, in bytes per second. Zero is no limit, which is the
         // default: guessing a ceiling on somebody's behalf makes everything
         // slower for no reason. These throttle the *speed* of transfers; the
@@ -14378,8 +14671,6 @@
         // what gets fetched at all, not how fast.
         rateOut: 0,
         rateIn: 0,
-        // Hold back background work during a direct or group call.
-        callFocus: true,
         // Refuse incoming pictures and files entirely.
         lowData: false,
         // A desktop notification for messages arriving somewhere else. It
@@ -14997,7 +15288,11 @@
 
       function updateCallFocus() {
         var inCall = !!inVoice && String(inVoice.channelId).indexOf("call:") === 0;
-        var wanted = inCall && !!userPrefs.callFocus && !focusOverride;
+        // Call focus was removed: syncing never pauses during a call, so new
+        // messages and history keep flowing exactly as they do outside one.
+        // Kept as a no-op path (rather than deleted) so the call overlay and
+        // its "resume" affordance stay inert instead of needing to be unwound.
+        var wanted = false;
 
         if (!inCall) focusOverride = false;
         if (wanted === callFocus) { renderCallOverlay(); return; }
@@ -16773,7 +17068,7 @@
         show.forEach(function (uid) {
           var f = document.createElement("div");
           f.className = "callface" + (speaking[uid] ? " speaking" : "");
-          var av = avatarEl(76, nameOf(uid), uid,
+          var av = avatarEl(30, nameOf(uid), uid,
             pfp(uid));
           av.setAttribute("data-voice-user", uid);
           f.appendChild(av);
@@ -17281,6 +17576,13 @@
           var state = "none";
           var ended = false;
           var endedBy = null;
+          // Whether each side has an unanswered request standing right now.
+          // Reset by anything that answers or ends the conversation, so they
+          // only ever reflect requests made since the last terminal event —
+          // which is what makes the simultaneous-add check below correct after
+          // a friendship was ended and one side asked again.
+          var mineAsked = false;
+          var theirsAsked = false;
 
           // Invitations that were waiting on disk.
           //
@@ -17334,11 +17636,15 @@
             if (e.type === "friend.request") {
               state = e.author === me.userId ? "outgoing" : "incoming";
               ended = false;
+              if (e.author === me.userId) mineAsked = true;
+              else theirsAsked = true;
             } else if (e.type === "friend.accept") {
               state = "accepted";
               ended = false;
+              mineAsked = false; theirsAsked = false;
             } else if (e.type === "friend.decline") {
               state = e.author === me.userId ? "declined" : "none";
+              mineAsked = false; theirsAsked = false;
             } else if (e.type === "friend.end") {
               // Read in causal order like everything else, so a request sent
               // after an ending revives the conversation and one sent before
@@ -17346,6 +17652,7 @@
               state = "none";
               ended = true;
               endedBy = e.author;
+              mineAsked = false; theirsAsked = false;
             }
           });
 
@@ -17390,6 +17697,21 @@
             state = "accepted";
           }
 
+          // The simultaneous add. Both sides sent a request before either
+          // answered, so this log holds one from each and neither is a reply to
+          // the other — the state above settles on whichever sorted last, and
+          // both sides sit on "pending" forever, each waiting for an acceptance
+          // the other is equally waiting to receive. Resolve it the way Discord
+          // does: become friends. Every device replays the same log and reaches
+          // the same conclusion, so each writes its own acceptance and the
+          // friendship completes on both without either having to click.
+          if ((state === "outgoing" || state === "incoming") &&
+              mineAsked && theirsAsked && !ended &&
+              !friends.some(function (fr) { return fr.userId === uid; })) {
+            state = "accepted";
+            await acceptRequest(uid);
+          }
+
           requests[uid] = state;
 
           // After the state is settled, so the friendship check inside sees
@@ -17410,6 +17732,14 @@
           flash(t("{name} is already a friend", { name: nameOf(uid) }));
           requests[uid] = "accepted";
           renderSide();
+          return;
+        }
+
+        // They already asked us — a request we know about from this session or
+        // one noted in the index at launch. Sending back is just accepting, and
+        // accepting avoids leaving both sides pending on each other.
+        if (requests[uid] === "incoming" || incomingNoted[uid]) {
+          await acceptRequest(uid);
           return;
         }
 
@@ -17581,20 +17911,36 @@
           delete unfriended[other];
         }
 
+        // Did our own request to them go out before this event? `outgoingNoted`
+        // is durable (a friend.outgoing in the index), so this stays true even
+        // if the app restarted between our request and their reply arriving.
+        var weAsked = requests[other] === "outgoing" || !!outgoingNoted[other];
+
         requests[other] =
           e.type === "friend.accept" ? "accepted"
             : e.type === "friend.decline" ? (e.author === me.userId ? "declined" : "none")
               : (e.author === me.userId ? "outgoing" : "incoming");
 
+        // The simultaneous add, live: their request lands while ours is still
+        // outstanding. Rather than leave both sides pending, resolve it the way
+        // Discord does — become friends. (loadRequests handles the same case
+        // for requests already on disk at launch.)
+        var mutual = e.type === "friend.request" && e.author !== me.userId &&
+                     weAsked &&
+                     !friends.some(function (f) { return f.userId === other; });
+
         // `requests` is memory only, and a stranger's conversation is in no
         // list yet — so without a note in the index the request disappears on
-        // the next launch and there is nothing left to accept.
-        if (requests[other] === "incoming") noteIncoming(other);
+        // the next launch and there is nothing left to accept. Skipped when we
+        // are about to accept it outright.
+        if (requests[other] === "incoming" && !mutual) noteIncoming(other);
 
         // An acceptance arriving from the far end completes the friendship on
         // this side too. Previously only the person who clicked Accept added
         // anyone, which is why the sender stayed pending after being accepted.
         if (e.type === "friend.accept" && e.author !== me.userId) addFriendLocal(other);
+
+        if (mutual) acceptRequest(other);
 
         renderSide();
 
@@ -17762,6 +18108,66 @@
         return null;
       }
 
+      /**
+       * Whether *this* device still belongs where a message just landed.
+       *
+       * The mirror of mayReach, which asks about the sender. mayReach stops a
+       * stranger interrupting us; this stops us being interrupted by a room we
+       * have left. A peer that still lists us as a member keeps handing us that
+       * room's traffic — their log has not caught up with our departure — and
+       * without this we chime and badge for a server we walked out of.
+       *
+       * Returns null when we belong, or a short reason when we do not. DMs are
+       * always ours, so they never fail here.
+       */
+      function iBelong(community, channelId) {
+        if (String(community).indexOf("dm") === 0) return null;
+        if (hasLeft(community, me.userId)) return "left";
+
+        if (String(community).indexOf("g") === 0) {
+          if (leftGroups[community]) return "left";
+          if (!groups.some(function (g) { return g.id === community; })) return "not-a-member";
+          return null;
+        }
+
+        // A server. Not in our list at all means not in it.
+        if (!servers.some(function (s) { return s.id === community; })) return "not-a-member";
+
+        // In the server, but perhaps not this channel. Only decided when we
+        // actually hold the permission table — which is when the server is the
+        // one open; elsewhere `permits` has no opinion and returns allowed, so
+        // this never suppresses a channel we simply have not loaded.
+        if (channelId && permits(community, channelId, me.userId, "read") === false) {
+          return "no-channel-access";
+        }
+        return null;
+      }
+
+      /** Communities we have already told a given sender we have left. */
+      var toldDeparted = {};
+
+      /**
+       * Tell a sender we are no longer where they just wrote to us.
+       *
+       * So their member list can drop us without waiting for the log to carry
+       * our departure — which, for a plain leave, it may never do: leaving is
+       * the moment we stop participating in that community, so nothing on our
+       * side is left to feed them the `member.leave` we wrote. Self-describing
+       * and self-authored, exactly like the `leaving` signal — it can only ever
+       * remove the sender of it, never a third party. Once per pair, so a peer
+       * that keeps writing does not draw a reply to every message.
+       */
+      function tellDeparted(community, uid) {
+        if (String(community).indexOf("dm") === 0) return;
+        var key = community + "/" + uid;
+        if (toldDeparted[key]) return;
+        toldDeparted[key] = Date.now();
+        if (window.p2p.netSignal) {
+          window.p2p.netSignal(uid, { t: "departed", community: community })
+            .catch(function () {});
+        }
+      }
+
       // ===================================================================
       // Desktop notifications
       // ===================================================================
@@ -17893,6 +18299,17 @@
         }
 
         var channelId = e.payload && e.payload.channelId;
+
+        // Our own standing, not just the sender's. A room we have left keeps
+        // arriving from peers who have not caught up, and it must not chime,
+        // badge or count. We also tell the sender, so their roster drops us —
+        // a plain leave otherwise never reaches them (see tellDeparted).
+        var mineWhy = iBelong(community, channelId);
+        if (mineWhy) {
+          tellDeparted(community, e.author);
+          return;
+        }
+
         var key = readKey(community, channelId);
 
         // Already looking at it.
@@ -17903,6 +18320,8 @@
         // with nothing on screen to say so.
         if (community === current && channelId === channel && document.hasFocus()) {
           readAt[key] = Date.now();
+          // Read as it arrives, so the sender's tick turns double right away.
+          sendReadReceipt(community);
           return;
         }
 
@@ -17945,8 +18364,7 @@
         }
 
         if (live) {
-          if (mentioned || direct) soundMention();
-          else soundMessage();
+          notifySound(mentioned || direct);
 
           notifyDesktop(community, e, mentioned || direct);
         }
@@ -18063,7 +18481,63 @@
         if (!channelId) clearUnread(community);
 
         window.p2p.append(INDEX, "read.set", { key: key, at: now });
+
+        // Tell the other side we have read up to here, so their own messages
+        // can show a read tick. Direct conversations only — see the receipt
+        // helpers below for why — and only when the whole conversation is what
+        // was read (no channel), which is always true for a DM.
+        if (!channelId) sendReadReceipt(community);
+
         renderRail(); renderSide();
+      }
+
+      // ---- delivery & read receipts (direct messages) ---------------------
+      //
+      // Two ticks on your own messages, the way several chat apps show them: a
+      // single tick once the other device is holding the message, a double
+      // once they have read it. Direct conversations only — a group has many
+      // recipients, so "delivered" and "read" there would each have to mean
+      // "by everyone", a different and much noisier thing to get right.
+      //
+      // Delivery is a fact the transport already reports (`onDelivered`, the
+      // ack a peer sends for everything it now holds). Reading is not something
+      // any device can observe about another, so it is sent deliberately, over
+      // the same advisory signal channel as presence — and only when the
+      // reader has chosen to send read receipts at all.
+
+      var receiptDelivered = {};   // messageId -> the recipient's device holds it
+      var readByPeer = {};         // dm community -> newest message timestamp they have read
+
+      function markDelivered(community, ids) {
+        if (String(community).indexOf("dm") !== 0) return;
+        var any = false;
+        ids.forEach(function (id) {
+          if (!receiptDelivered[id]) { receiptDelivered[id] = true; any = true; }
+        });
+        if (any && community === current) repaint("messages");
+      }
+
+      /** The newest message the partner wrote, so a receipt names a point. */
+      function latestFromPeer(uid) {
+        var at = 0;
+        messages.forEach(function (m) {
+          if (m.author === uid && m.timestamp > at) at = m.timestamp;
+        });
+        return at;
+      }
+
+      function sendReadReceipt(community) {
+        if (userPrefs.readReceipts === false) return;
+        if (String(community).indexOf("dm") !== 0) return;
+        if (community !== current || !currentDM) return;
+        if (dmIdFor(currentDM.userId) !== community) return;
+
+        var at = latestFromPeer(currentDM.userId);
+        if (!at) return;
+        if (window.p2p.netSignal) {
+          window.p2p.netSignal(currentDM.userId, { t: "read", community: community, at: at })
+            .catch(function () {});
+        }
       }
 
       /** Total across a server's channels, for the orb badge. */
@@ -18168,6 +18642,36 @@
 
       function soundMention() { playTones([[880, 0, 0.12], [1174, 0.1, 0.18]]); }
       function soundMessage() { playTones([[660, 0, 0.09]], 0.10); }
+
+      /**
+       * One notification sound per burst, not one per message.
+       *
+       * A sync catching up or a suddenly busy group can deliver a hundred
+       * messages in a moment, and a hundred chimes at once is noise that tells
+       * you nothing the first one did not. Leading-edge: the first ping in a
+       * quiet stretch plays at once, so a single message still feels instant;
+       * the rest of the burst is swallowed. A mention arriving mid-burst is the
+       * one thing worth hearing over a run of plain messages, so it is allowed
+       * through once — but still only once, so it cannot itself become a storm.
+       */
+      var lastNotifyAt = 0;
+      var burstWasProminent = false;
+      var NOTIFY_GAP_MS = 1500;
+
+      function notifySound(prominent) {
+        var now = Date.now();
+        if (now - lastNotifyAt >= NOTIFY_GAP_MS) {
+          lastNotifyAt = now;
+          burstWasProminent = prominent;
+          if (prominent) soundMention(); else soundMessage();
+          return;
+        }
+        if (prominent && !burstWasProminent) {
+          burstWasProminent = true;
+          lastNotifyAt = now;
+          soundMention();
+        }
+      }
 
       // ---- call sounds ----------------------------------------------------
       //
@@ -19117,7 +19621,7 @@
         var serverOrder = [];
         readAt = {};
         listening = {};
-        servers = []; friends = []; dms = []; groups = [];
+        servers = []; friends = []; dms = []; groups = []; notes = [];
         conversations = {}; closedDMs = {};
         peerAddresses = {}; blocked_ = {}; peerEncKeys = {}; communityKeys = {};
         communityKeyHistory = {};
@@ -19157,6 +19661,12 @@
             }
           }
           else if (e.type === "friend.remove") friends = friends.filter(function (f) { return f.userId !== p.userId; });
+          else if (e.type === "note.add") {
+            if (p.id && !notes.some(function (n) { return n.id === p.id; })) {
+              notes.push({ id: p.id, content: p.content || "", at: p.at || e.timestamp || 0 });
+            }
+          }
+          else if (e.type === "note.del") notes = notes.filter(function (n) { return n.id !== p.id; });
           else if (e.type === "group.create") {
             if (!groups.some(function (x) { return x.id === p.id; })) {
               groups.push({ id: p.id, name: p.name, members: p.members || [] });
@@ -19333,6 +19843,10 @@
         // Written at most once a minute per conversation, so this is not the
         // per-keystroke path it might look like.
         "dm.note": 1, "dm.close": 1,
+
+        // Notes to self, so a note written on a sibling device appears here as
+        // soon as it syncs rather than only after a full pass.
+        "note.add": 1, "note.del": 1,
       };
 
       var indexRefreshTimer = null;
@@ -19731,7 +20245,7 @@
             devices = info;
             deviceOverlay();
 
-            if (info.recommend) showResync();
+            if (info.recommend) maybeStartupSync();
 
             // A sync that actually ran answers the note, so it goes away
             // rather than sitting there suggesting something already done.
@@ -19915,6 +20429,49 @@
             if (!cid || owners[cid] !== from) return;
             if (!servers.some(function (x) { return x.id === cid; })) return;
             applyEviction(cid);
+            return;
+          }
+
+          if (data.t === "read") {
+            // The partner has read our direct conversation up to a point in
+            // time. Believed only about the conversation that is actually with
+            // them — their signature is the identity — and only ever moves the
+            // read mark forward, so a stale or reordered signal cannot un-read
+            // anything.
+            var rcid = String(data.community || "");
+            var rat = Number(data.at || 0);
+            if (!rcid || String(rcid).indexOf("dm") !== 0 || !rat) return;
+            if (rcid !== dmIdFor(from)) return;
+            if ((readByPeer[rcid] || 0) < rat) {
+              readByPeer[rcid] = rat;
+              if (rcid === current) repaint("messages");
+            }
+            return;
+          }
+
+          if (data.t === "departed") {
+            // The sender says they have left a community we just wrote in.
+            // Believed only about themselves — nobody needs permission to
+            // leave — so it can only ever drop `from`, never a third party.
+            // The community log stays the source of truth and will confirm it
+            // when it catches up; this only stops us listing or pinging them
+            // in the meantime, which for a plain leave the log may be slow to
+            // do (the person who left is no longer feeding us that community).
+            var gone = String(data.community || "");
+            if (!gone || String(gone).indexOf("dm") === 0) return;
+
+            var changed = false;
+            if (roster[gone] && roster[gone][from]) {
+              delete roster[gone][from];
+              changed = true;
+            }
+            var grp = groups.filter(function (x) { return x.id === gone; })[0];
+            if (grp && grp.members && grp.members.indexOf(from) >= 0) {
+              grp.members = grp.members.filter(function (u) { return u !== from; });
+              changed = true;
+            }
+            if (changed) { renderSide(); renderMembers(); }
+            return;
           }
         });
 
