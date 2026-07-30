@@ -34,6 +34,7 @@ const STREAMS = {
   onDelivered: "p2p:delivered",
   onRefused: "p2p:refused",
   onDevices: "p2p:devices",
+  onPresence: "p2p:presence",
 } as const;
 
 /**
@@ -51,6 +52,7 @@ const METHODS = [
   "exportCommunity", "importCommunity", "communities", "sharedWith", "compact",
   "torStatus",
   "putBlob", "getBlob", "hasBlob", "wantBlob", "sweepBlobs", "forgetBlob",
+  "setPresence",
   "deviceInfo", "deviceName", "deviceTakeOver",
   "pairInvite", "pairRevoke", "pairJoin", "pairSync",
   "linkOpen",

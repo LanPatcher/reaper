@@ -22,6 +22,38 @@ function setMembers(open: boolean): void {
   document.documentElement.classList.toggle("members-open", open);
 }
 
+/**
+ * Close the member list, and tell the interface that it closed.
+ *
+ * ## Why moving the class is not enough
+ *
+ * `members-open` on the root is this stylesheet's business — it drives the
+ * slide-over. Whether the panel is *open* is the shared interface's business:
+ * it owns `showMembers`, it colours the button from it, and `renderMembers`
+ * writes `hide` onto the panel from it.
+ *
+ * Closing by only removing the root class left those two disagreeing. The panel
+ * slid away, and the interface still believed it was open — so the button
+ * stayed lit, and the next time anything called `renderMembers` it wrote the
+ * open state onto the panel again. `followMembers` is watching that class, so
+ * the slide-over came straight back. Changing channel was enough to trigger it,
+ * which is exactly the "it pops back up on its own" being reported.
+ *
+ * The button is the interface's own way of saying this, so it is what gets
+ * used. Guarded, because it is a toggle: clicking it while the panel is already
+ * closed would open it, which is how a dimmer tap could open a panel.
+ */
+function closeMembers(): void {
+  const panel = document.getElementById("members");
+  const open = !!panel && !panel.classList.contains("hide");
+
+  // First, so the slide-over starts moving on the same frame as the tap rather
+  // than waiting for the interface to repaint.
+  setMembers(false);
+
+  if (open) document.getElementById("btnMembers")?.click();
+}
+
 export function installMobileLayout(): void {
   const root = document.documentElement;
   root.classList.add("mobile");
@@ -78,7 +110,7 @@ function closeOnEscape(): void {
     if (!navOpen() && !document.documentElement.classList.contains("members-open")) return;
 
     setNav(false);
-    setMembers(false);
+    closeMembers();
     event.stopPropagation();
   }, true);
 }
@@ -108,7 +140,7 @@ function addScrim(): void {
   scrim.id = "nav-scrim";
   scrim.addEventListener("click", () => {
     setNav(false);
-    setMembers(false);
+    closeMembers();
   });
 
   (document.getElementById("shell") ?? document.body).appendChild(scrim);
@@ -412,12 +444,10 @@ function closeMembersBySwipe(distance: number, flick: number): void {
     const speed = dx / Math.max(1, event.timeStamp - startAt);
     if (dx < distance && speed < flick) return;
 
-    setMembers(false);
-
-    // The interface owns the button's own state, so it is told rather than
-    // left believing the panel is still open — otherwise the next tap on it
-    // closes something already closed and appears to do nothing.
-    document.getElementById("btnMembers")?.click();
+    // Through the one place that keeps the class and the interface in step —
+    // see `closeMembers`. This path already told the interface; the dimmer and
+    // Escape did not, which is what let them disagree.
+    closeMembers();
   }, { passive: true });
 }
 

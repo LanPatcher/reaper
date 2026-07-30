@@ -440,6 +440,35 @@ contextBridge.exposeInMainWorld("p2p", {
     ipcRenderer.on("p2p:devices", listener);
     return () => ipcRenderer.removeListener("p2p:devices", listener);
   },
+
+  /**
+   * Leave this device's view of who is about, for the device link to carry.
+   *
+   * Presence is the interface's to know — whether somebody is looking at the
+   * app, what status they chose, how each connected peer is showing — and the
+   * link runs on its own schedule with no window in front of it. This is where
+   * the two meet.
+   */
+  setPresence: (mine: {
+    active: boolean;
+    status: string;
+    peers: { u: string; s: string }[];
+  }): Promise<void> => ipcRenderer.invoke("p2p:setPresence", mine),
+
+  /** A sibling device reported who *it* can see. */
+  onPresence: (
+    handler: (from: {
+      device: string;
+      active: boolean;
+      status: string;
+      at: number;
+      peers: { u: string; s: string }[];
+    }) => void,
+  ): (() => void) => {
+    const listener = (_: Electron.IpcRendererEvent, from: never) => handler(from);
+    ipcRenderer.on("p2p:presence", listener);
+    return () => ipcRenderer.removeListener("p2p:presence", listener);
+  },
 });
 
 interface Claim {

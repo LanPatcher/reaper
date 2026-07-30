@@ -114,6 +114,7 @@ const CHANNEL = {
   wantBlob: "p2p:wantBlob",
   sweepBlobs: "p2p:sweepBlobs",
   forgetBlob: "p2p:forgetBlob",
+  setPresence: "p2p:setPresence",
 } as const;
 
 /** Events pushed to the renderer when the log changes. */
@@ -196,6 +197,37 @@ let focused: Set<string> | undefined;
 
 /** Recent transport events, so the UI can explain a connection. */
 const netLog: { at: number; line: string }[] = [];
+
+/**
+ * What this device last said about who is about.
+ *
+ * ## Why the core holds this rather than working it out
+ *
+ * Presence is the renderer's to know. Whether somebody is looking at the app,
+ * what status they chose, and how each connected peer is showing are all facts
+ * the interface has and the core does not — the core sees sockets, and a socket
+ * is not a person paying attention.
+ *
+ * But the *link* is down here, and it runs on its own schedule with no window
+ * open in front of it. So the interface leaves its latest answer here and the
+ * pairing session reads it whenever one happens to run. A snapshot rather than
+ * a request, because a sync must never have to wake the interface up to
+ * complete — and because the answer is small and changes rarely enough that
+ * pushing it costs nothing.
+ *
+ * Empty until the interface says otherwise, which reads as "this device has
+ * nothing to report" and is the correct thing for a session that runs before
+ * the window is up.
+ */
+let presence: {
+  active: boolean;
+  status: string;
+  at: number;
+  peers: { u: string; s: string }[];
+} = { active: false, status: "", at: 0, peers: [] };
+
+/** A sibling told us who it can see. */
+export const P2P_PRESENCE = "p2p:presence";
 
 function reconciles(community: string): boolean {
   if (!focused || focused.size === 0) return true;
@@ -970,8 +1002,24 @@ async function syncAllDevices(
 // whenever the timer next fires. It is debounced, because joining a server
 // writes several events in a row and each one should not be its own circuit.
 
-/** How often to catch up with no prompting at all. */
-const SYNC_EVERY_MS = 5 * 60 * 1000;
+/**
+ * How often to catch up with no prompting at all, when a sibling is answering.
+ *
+ * A minute, because at this point the two devices are both online and both
+ * reachable, and the thing being paid for is a message typed on one showing up
+ * on the other. Five minutes of that is long enough that people conclude the
+ * two devices do not really share an account.
+ */
+const SYNC_LIVE_MS = 60 * 1000;
+
+/**
+ * ...and how often when the last pass reached nobody.
+ *
+ * The other device is switched off, or out of signal, and every pass is a Tor
+ * circuit built to something that is not there. Backing off is what keeps the
+ * eager schedule above affordable.
+ */
+const SYNC_IDLE_MS = 5 * 60 * 1000;
 
 /**
  * How many of those passes go by between one that also carries pictures.
@@ -1003,7 +1051,9 @@ const SYNC_SETTLE_MS = 20 * 1000;
  */
 const MESSAGE_SETTLE_MS = 30 * 1000;
 
-let syncTimer: ReturnType<typeof setInterval> | undefined;
+// A timeout rather than an interval: the schedule reschedules itself, because
+// how long to wait depends on what the last pass found. See `startSyncSchedule`.
+let syncTimer: ReturnType<typeof setTimeout> | undefined;
 let syncSoon: ReturnType<typeof setTimeout> | undefined;
 let messageSoon: ReturnType<typeof setTimeout> | undefined;
 let passes = 0;
@@ -1063,8 +1113,35 @@ function wroteSomethingSiblingsWant(): void {
 function startSyncSchedule(): void {
   if (syncTimer) return;
 
-  syncTimer = setInterval(() => {
-    if (!others(syncAddresses(), thisDevice().id).length) return;
+  /**
+   * One pass, then decide when the next one should be.
+   *
+   * ## Why the interval is not fixed
+   *
+   * It was five minutes, always, and five minutes is the wrong answer to two
+   * different questions. When the other device is switched off it is far too
+   * eager — every pass is a Tor circuit built to something that is not there.
+   * When it is sitting on the desk next to this one, it is far too slow: the
+   * two devices are both online, both reachable, and a message typed on one
+   * takes up to five minutes to appear on the other.
+   *
+   * So the answer depends on what the last pass found. Reaching a sibling is
+   * evidence that reaching it again will work, and evidence that there is
+   * somebody to stay level with; reaching nobody is evidence to stop trying so
+   * hard. Self-rescheduling rather than an interval, because an interval cannot
+   * change its mind.
+   */
+  const pass = () => {
+    syncTimer = undefined;
+
+    const siblings = others(syncAddresses(), thisDevice().id);
+
+    if (!siblings.length) {
+      // Nothing to sync with. Checked again on the slow schedule, because a
+      // sibling appears by being paired and that writes to the roster.
+      syncTimer = setTimeout(pass, SYNC_IDLE_MS);
+      return;
+    }
 
     // Messages nearly always; pictures occasionally. See `PICTURES_EVERY`.
     passes += 1;
@@ -1077,8 +1154,20 @@ function startSyncSchedule(): void {
       // any moment, and the account is unreachable from that moment until
       // somebody notices — so this is what notices.
       await repairAddress();
-    }).catch((error: Error) => log("[p2p]", error.message));
-  }, SYNC_EVERY_MS);
+
+      return done.length > 0;
+    }).then(
+      (reached) => {
+        syncTimer ??= setTimeout(pass, reached ? SYNC_LIVE_MS : SYNC_IDLE_MS);
+      },
+      (error: Error) => {
+        log("[p2p]", error.message);
+        syncTimer ??= setTimeout(pass, SYNC_IDLE_MS);
+      },
+    );
+  };
+
+  syncTimer = setTimeout(pass, SYNC_LIVE_MS);
 
   // Left running while the app is, and not unref'd: this is a background task
   // the user is relying on, not a nicety that should let the process exit.
@@ -1491,6 +1580,19 @@ async function openPair(): Promise<number> {
 
     asked: (peer) => {
       try { viewer?.send("p2p:deviceAsked", peer); } catch { /* window gone */ }
+    },
+
+    // Whatever the interface last left here. Never stale in a way that
+    // matters: the receiver carries the timestamp and expires it.
+    presence: () => (presence.at ? presence : undefined),
+
+    learnPresence: (from) => {
+      try {
+        viewer?.send(P2P_PRESENCE, from);
+      } catch {
+        // No window. Nothing to tell, and nothing to keep — presence held for
+        // a window that is not there would be stale by the time one appeared.
+      }
     },
   });
 
@@ -3563,6 +3665,33 @@ export function registerP2PHandlers(): void {
 
       blobsFor(community).forget(blob);
       return { dropped: true };
+    },
+  );
+
+  /**
+   * Leave this device's view of who is about, for the link to carry.
+   *
+   * Called by the interface whenever any of it changes — the app coming to the
+   * foreground, a status being chosen, a peer arriving or leaving. Cheap by
+   * design: it replaces a small object and does not touch the network. What
+   * reads it is the next pairing session, whenever that happens to run.
+   */
+  ipcMain.handle(
+    CHANNEL.setPresence,
+    (
+      event,
+      mine: { active?: boolean; status?: string; peers?: { u: string; s: string }[] },
+    ) => {
+      viewer = event.sender;
+
+      presence = {
+        active: !!mine?.active,
+        status: String(mine?.status ?? ""),
+        at: Date.now(),
+        // Bounded, because it crosses a Tor circuit and a friend list is not
+        // the only thing that can end up in here.
+        peers: Array.isArray(mine?.peers) ? mine.peers.slice(0, 256) : [],
+      };
     },
   );
 

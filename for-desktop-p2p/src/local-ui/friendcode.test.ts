@@ -1,5 +1,8 @@
+import { generateKeyPairSync } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { createEncryptionKeys } from "../p2p/crypto";
 
 /**
  * The compact friend code in `index.html`.
@@ -58,10 +61,22 @@ const build = new Function(
 const b64 = (s: string) => Buffer.from(s, "binary").toString("base64");
 const unb64 = (s: string) => Buffer.from(s, "base64").toString("binary");
 
-/** A real-shaped account: 26-symbol id, 56-character onion, 32-byte key. */
+/**
+ * A real account's key, from the function the app actually uses.
+ *
+ * Not a fabricated 32 bytes, and that distinction is the whole reason this
+ * comment exists. The first version of this test invented a key of the length
+ * the codec expected, so it proved the codec self-consistent and said nothing
+ * about whether it could carry a key this app produces — which it could not.
+ * `encPublicKey` is a SubjectPublicKeyInfo, 44 bytes, and the codec quietly
+ * refused every one of them: the QR simply never appeared, with no error.
+ *
+ * So the input comes from `createEncryptionKeys`. If its encoding ever changes,
+ * this fails here rather than in the interface.
+ */
 const ID = "0123456789ABCDEFGHJKMNPQRS";
 const ONION = "abcdefghijklmnopqrstuvwxyz234567abcdefghijklmnopqrstuvwx";
-const EK = Buffer.alloc(32, 7).toString("base64");
+const EK = createEncryptionKeys().encPublicKey;
 
 const api = build(
   { userId: ID, encPublicKey: EK },
@@ -96,10 +111,54 @@ const code = api.compactFriendCode() as string;
 
   ck("the id survives", read.id === ID, read.id);
   ck("the address survives", read.at === `${ONION}.onion`, read.at);
-  ck("the key survives",
-     Buffer.from(read.ek, "base64").equals(Buffer.from(EK, "base64")),
-     read.ek);
+  ck("the key survives, in the spelling the rest of the app uses",
+     read.ek === EK,
+     `${read.ek} vs ${EK}`);
   ck("the name is deliberately absent", read.n === "");
+
+  // The point of keeping only 32 bytes: what comes back has to still agree with
+  // the other side, and agreement is what a wrong key breaks silently.
+  const theirs = generateKeyPairSync("x25519");
+  const mine = generateKeyPairSync("x25519");
+
+  const fromCode = createEncryptionKeys();
+  const roundTripped = api.readFriendCode(
+    (build({ userId: ID, encPublicKey: fromCode.encPublicKey }, `${ONION}.onion`,
+            b64, unb64, () => null).compactFriendCode()) as string,
+  ) as { ek: string };
+
+  ck("a round-tripped key is byte-identical to the original",
+     Buffer.from(roundTripped.ek, "base64")
+       .equals(Buffer.from(fromCode.encPublicKey, "base64")));
+
+  // ...and it is still a key Node will agree with, which is the property that
+  // actually matters and the one a length check alone does not establish.
+  ck("and it still derives the same shared secret", (() => {
+    const { createPublicKey, createPrivateKey, diffieHellman } = require("node:crypto");
+    const direct = diffieHellman({
+      privateKey: mine.privateKey,
+      publicKey: theirs.publicKey,
+    });
+
+    const viaCode = api.readFriendCode(
+      (build({ userId: ID,
+               encPublicKey: theirs.publicKey.export({ type: "spki", format: "der" })
+                 .toString("base64") },
+             `${ONION}.onion`, b64, unb64, () => null).compactFriendCode()) as string,
+    ) as { ek: string };
+
+    const rebuilt = diffieHellman({
+      privateKey: mine.privateKey,
+      publicKey: createPublicKey({
+        key: Buffer.from(viaCode.ek, "base64"),
+        format: "der",
+        type: "spki",
+      }),
+    });
+
+    void createPrivateKey;
+    return direct.equals(rebuilt);
+  })());
 }
 
 // ---- a scanner may wrap it -----------------------------------------------
