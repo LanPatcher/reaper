@@ -32,7 +32,43 @@
         background: var(--bg); color: var(--text);
         height: 100vh; overflow: hidden; display: flex; flex-direction: column;
       }
-      button { font: inherit; color: inherit; cursor: pointer; border: none; background: none; }
+      button {
+        font: inherit; color: inherit; cursor: pointer; border: none; background: none;
+
+        /* No grey box on tap.
+           iOS paints one over every button by default, and it is the single
+           thing that makes a control feel like a web page rather than an app —
+           it appears on touch-down, ignores the button's own shape on anything
+           rounded, and lingers after the finger has gone. */
+        -webkit-tap-highlight-color: transparent;
+
+        /* No waiting to see whether a second tap is coming.
+           Without this a touch device holds every tap for ~300ms in case it is
+           the start of a double-tap-to-zoom, which reads as the whole interface
+           being slightly behind. */
+        touch-action: manipulation;
+
+        /* A press held for a moment should not start selecting the label. */
+        user-select: none; -webkit-user-select: none;
+      }
+
+      /* Something happens on press, everywhere.
+         Only three button styles had an `:active` state, and hover does not
+         exist on a phone — so most controls answered a tap with nothing at all
+         until whatever they triggered finished, which for anything over Tor is
+         long enough to press again. */
+      button:active { transform: translateY(1px); }
+
+      /* ...and a disabled one says so rather than pretending to depress. */
+      button:disabled { cursor: default; opacity: .55; transform: none; }
+
+      /* The icon buttons, which had hover and nothing else. Backgrounds fade
+         rather than snap, and the press is quick enough to feel connected to
+         the finger. */
+      .vbtn, #meBtns button, #winbtns button, #callBtns button, #attachBtn {
+        transition: background-color .12s ease, color .12s ease, transform .06s ease;
+      }
+
       input, textarea { font: inherit; color: inherit; }
 
       /* titlebar: window is frameless, so this provides drag + controls */
@@ -45,6 +81,9 @@
       #winbtns button { width: 46px; height: 30px; display: flex; align-items: center; justify-content: center; color: var(--dim); }
       #winbtns button:hover { background: var(--hover); color: var(--text); }
       #winbtns button.close:hover { background: #d3373f; color: #fff; }
+      /* No frame to drag and no controls to press — see the `noframe` class in
+         the startup wiring. Set only for the browser build. */
+      html.noframe #titlebar { display: none; }
       #shell { flex: 1; display: flex; min-height: 0; }
 
       /* appearance
@@ -507,6 +546,16 @@
         background: rgba(9,9,9,.78); backdrop-filter: blur(3px);
       }
       #deviceOverlay.hide { display: none; }
+
+      /* Backdrop blur, off on a phone.
+         `backdrop-filter` is not a one-off cost: everything behind the layer is
+         re-blurred on every frame in which any of it moves, over the whole
+         screen. Both places it is used sit above content that is animating —
+         the call overlay pulses while ringing, and the device overlay sits over
+         a live message list — so on a phone it turns a smooth overlay into a
+         juddering one for an effect nobody is looking at. The dimming underneath
+         it reads the same either way. */
+      html.mobile #deviceOverlay, html.mobile #callOverlay { backdrop-filter: none; }
       #deviceCard {
         background: var(--side); border: 1px solid var(--line); border-radius: 12px;
         padding: 26px 28px; max-width: 460px; text-align: center;
@@ -1121,6 +1170,22 @@
       var wallpaperData = null;
 
       /**
+       * Which id `wallpaperData` was read for.
+       *
+       * `loadWallpaper` used to run exactly once, in `boot`, so nothing in a
+       * running session ever turned a `wallpaperId` into pixels — only the
+       * picker did, by holding on to the bytes it had just been handed. Any
+       * other way the preference could change left the app showing the old
+       * picture until it was launched again, which is precisely "it only saves
+       * after re-opening the app fully".
+       *
+       * Recording what is loaded is what makes the function callable whenever
+       * the preferences might have moved: it re-reads when the id is different
+       * and does nothing when it is not.
+       */
+      var wallpaperLoadedFor = null;
+
+      /**
        * Paint the current theme, accent and wallpaper.
        *
        * Everything is a CSS variable write, so this is cheap enough to call on
@@ -1189,14 +1254,30 @@
        * change would never be reclaimed.
        */
       async function loadWallpaper() {
-        if (!userPrefs.wallpaperId) { wallpaperData = null; return; }
+        if (!userPrefs.wallpaperId) {
+          wallpaperData = null;
+          wallpaperLoadedFor = null;
+          applyAppearance();
+          return;
+        }
+
+        // Already holding the right picture. This is what makes the function
+        // safe to call whenever the preferences might have moved — which is the
+        // whole point of it now being callable more than once.
+        if (wallpaperLoadedFor === userPrefs.wallpaperId && wallpaperData) {
+          applyAppearance();
+          return;
+        }
+
         try {
           var b64 = await window.p2p.getBlob(WALLPAPERS, userPrefs.wallpaperId);
           wallpaperData = b64
             ? "data:" + (userPrefs.wallpaperType || "image/jpeg") + ";base64," + b64
             : null;
+          wallpaperLoadedFor = wallpaperData ? userPrefs.wallpaperId : null;
         } catch (e) {
           wallpaperData = null;
+          wallpaperLoadedFor = null;
         }
         applyAppearance();
       }
@@ -1348,6 +1429,7 @@
             "Appearance": "Apariencia",
             "Change wallpaper": "Cambiar fondo",
             "Could not read that image": "No se pudo leer esa imagen",
+            "Moved this account's address here for the call": "Se movió la dirección de esta cuenta aquí para la llamada",
             "Have them scan this to add you.": "Que escaneen esto para añadirte.",
             "Scan their code": "Escanear su código",
             "Could not save your settings — {why}": "No se pudieron guardar tus ajustes — {why}",
@@ -2055,6 +2137,7 @@
             "Appearance": "Apparence",
             "Change wallpaper": "Changer de fond d'écran",
             "Could not read that image": "Impossible de lire cette image",
+            "Moved this account's address here for the call": "L'adresse de ce compte a été déplacée ici pour l'appel",
             "Have them scan this to add you.": "Faites-leur scanner ceci pour vous ajouter.",
             "Scan their code": "Scanner leur code",
             "Could not save your settings — {why}": "Impossible d'enregistrer vos réglages — {why}",
@@ -2762,6 +2845,7 @@
             "Appearance": "Erscheinungsbild",
             "Change wallpaper": "Hintergrundbild ändern",
             "Could not read that image": "Dieses Bild konnte nicht gelesen werden",
+            "Moved this account's address here for the call": "Die Adresse dieses Kontos wurde für den Anruf hierher verschoben",
             "Have them scan this to add you.": "Lass sie das scannen, um dich hinzuzufügen.",
             "Scan their code": "Ihren Code scannen",
             "Could not save your settings — {why}": "Deine Einstellungen konnten nicht gespeichert werden — {why}",
@@ -3469,6 +3553,7 @@
             "Appearance": "Aparência",
             "Change wallpaper": "Alterar fundo",
             "Could not read that image": "Não foi possível ler essa imagem",
+            "Moved this account's address here for the call": "O endereço desta conta foi movido para aqui para a chamada",
             "Have them scan this to add you.": "Pede-lhes para digitalizar isto para te adicionarem.",
             "Scan their code": "Digitalizar o código deles",
             "Could not save your settings — {why}": "Não foi possível guardar as tuas definições — {why}",
@@ -10691,6 +10776,64 @@
       var CODE_ID_BYTES = 17, CODE_AT_BYTES = 35, CODE_EK_BYTES = 32;
 
       /**
+       * The fixed header an X25519 public key is wrapped in.
+       *
+       * `encPublicKey` is not the key — it is the key inside a SubjectPublicKeyInfo,
+       * which is what `export({ type: "spki" })` produces: 44 bytes, of which the
+       * first twelve say "this is X25519" and never vary. RFC 8410 fixes them, and
+       * they are the same across every key this app will ever generate.
+       *
+       * Twelve bytes is a tenth of the QR budget spent saying something already
+       * known, so the code carries the 32 that matter and this is put back on the
+       * way out. Checked rather than assumed on the way in: a key wrapped in
+       * something else is one this cannot round-trip, and quietly truncating it
+       * would produce a code that scans cleanly and derives a shared secret the
+       * other side does not have — which fails as a conversation neither party
+       * can read, with nothing to point at.
+       */
+      var X25519_SPKI_PREFIX = [
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00,
+      ];
+
+      /** The raw 32 bytes of an encryption public key, however it was wrapped. */
+      function rawEncKey(encoded) {
+        var bytes;
+        try {
+          bytes = base64ToBytes(String(encoded || ""));
+        } catch (e) {
+          return null;
+        }
+
+        if (bytes.length === CODE_EK_BYTES) return bytes;
+
+        if (bytes.length === X25519_SPKI_PREFIX.length + CODE_EK_BYTES) {
+          for (var i = 0; i < X25519_SPKI_PREFIX.length; i++) {
+            if (bytes[i] !== X25519_SPKI_PREFIX[i]) return null;
+          }
+          return bytes.slice(X25519_SPKI_PREFIX.length);
+        }
+
+        return null;
+      }
+
+      /**
+       * ...and the wrapped form the rest of the app expects back.
+       *
+       * Padded, unlike `bytesToBase64`. The padding is not decoration here: this
+       * string is stored in the index as `peer.enckey` and compared with `===`
+       * by `rememberEncKey` to decide whether anything changed. An unpadded copy
+       * of a key already known decodes to the same bytes and reads as a
+       * different key, so scanning somebody's code after they were already added
+       * would rewrite the entry and re-derive for no reason.
+       */
+      function wrapEncKey(raw) {
+        var bytes = X25519_SPKI_PREFIX.concat(raw);
+        var s = "";
+        for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        return btoa(s);
+      }
+
+      /**
        * The compact form of this account's friend code, or null.
        *
        * Null when there is no address to put in it yet, which is the honest
@@ -10707,8 +10850,15 @@
           return null;
         }
 
-        var ek = base64ToBytes(me.encPublicKey);
-        if (ek.length !== CODE_EK_BYTES) return null;
+        var ek = rawEncKey(me.encPublicKey);
+        if (!ek) {
+          // Said out loud, because the only symptom otherwise is a QR code that
+          // is simply not there — which is exactly how this shipped the first
+          // time, on an assumption about the key's shape that was never checked
+          // against a real one.
+          console.warn("[friend] this account's encryption key is not one a compact code can carry");
+          return null;
+        }
 
         return "R3" + bytesToBase64([1].concat(id, at, ek));
       }
@@ -10751,7 +10901,10 @@
             id: id,
             n: "",
             at: at + ".onion",
-            ek: bytesToBase64(bytes.slice(ekAt)),
+            // Wrapped back into the form everything else here hands around —
+            // `rememberEncKey`, `dmKey` and the index all expect the SPKI
+            // spelling, not the bare key.
+            ek: wrapEncKey(bytes.slice(ekAt)),
           };
         }
 
@@ -12673,9 +12826,56 @@
 
       // ---- actions: voice ---------------------------------------------------
 
+      /**
+       * Bring the account address here, if another of your devices has it.
+       *
+       * ## Why a call in particular
+       *
+       * A displaced device is not crippled — it dials out, and everything it
+       * reaches works. What it cannot do is *be* reached, because exactly one
+       * device answers at the account address and this is not the one.
+       *
+       * For messages that is survivable: they arrive at whichever device is
+       * holding and reach this one on the next sibling sync. A call cannot wait
+       * for a sync. Signalling is an exchange, not a delivery — an offer needs
+       * an answer within seconds, and the person calling has no way to know
+       * that the device they reached is not the device somebody is sitting in
+       * front of. That is the whole of "the call rings on the desktop while I
+       * am holding the phone".
+       *
+       * So joining a call asks for the address. It is a request, not a seizure:
+       * the holder yields during the exchange, and if it is switched off
+       * nothing happens and the call goes ahead outbound-only, which is what it
+       * would have done anyway.
+       *
+       * Deliberately not awaited beyond the request itself — a Tor round trip
+       * to a sibling must not sit between pressing call and the microphone
+       * opening.
+       */
+      async function claimAddressForCall() {
+        if (!window.p2p.deviceTakeOver) return;
+        if (!devices || !devices.standing || devices.standing.state !== "displaced") return;
+
+        try {
+          devices = await window.p2p.deviceTakeOver();
+          deviceOverlay();
+
+          if (devices && devices.standing && devices.standing.state === "holding") {
+            netNote(t("Moved this account's address here for the call"), true);
+          }
+        } catch (e) {
+          // The other device is off, or did not answer in time. The call still
+          // works for everyone this device can dial.
+        }
+      }
+
       async function joinVoice(c) {
         if (inVoice && inVoice.channelId === c.id) { leaveVoice(); return; }
         if (inVoice) await leaveVoice(true);
+
+        // Before anything else, so the address has the length of the join to
+        // move rather than being asked for after the ringing has started.
+        void claimAddressForCall();
 
         await window.p2p.append(current, "voice.join", { channelId: c.id });
         inVoice = { community: current, channelId: c.id, name: c.name };
@@ -13501,6 +13701,7 @@
                 userPrefs.wallpaperId = id;
                 userPrefs.wallpaperType = type || "image/jpeg";
                 wallpaperData = data;
+                wallpaperLoadedFor = id;
                 wpPick.textContent = t("Change wallpaper");
                 applyAppearance();
               } catch (e) {
@@ -13516,6 +13717,7 @@
           wpClear.onclick = function () {
             userPrefs.wallpaperId = null;
             wallpaperData = null;
+            wallpaperLoadedFor = null;
             wpPick.textContent = t("Set wallpaper");
             applyAppearance();
           };
@@ -13997,7 +14199,19 @@
       var autoPresence = "online";
 
       function presenceNow() {
-        return manualPresence || autoPresence;
+        // A chosen status is the person speaking for themselves and wins
+        // everywhere. It already reaches the other device through the index, so
+        // both agree without any of this.
+        if (manualPresence) return manualPresence;
+
+        // Otherwise the account is as present as its most present device.
+        //
+        // This is the half that could not be worked out locally: a phone in
+        // your hand should show you as online even while it is the desktop that
+        // holds the address and does the announcing, and the desktop has no
+        // other way to find out that anybody is looking at the phone.
+        if (autoPresence === "online") return "online";
+        return siblingActive() ? "online" : autoPresence;
       }
 
       var onlineUsers = {};
@@ -14095,7 +14309,23 @@
        */
       function statusOf(uid) {
         if (uid === me.userId) return inVoice ? "call" : presenceNow();
-        if (!onlineUsers[uid]) return "offline";
+
+        if (!onlineUsers[uid]) {
+          // Not connected *here*. On a device that does not hold the account
+          // address that is the ordinary state for everybody, because nobody
+          // dials it — so without this the second device shows an empty room
+          // and no way to tell that from everyone having gone to bed.
+          //
+          // Additive only: a sibling can say somebody is online, never that
+          // they are not. It has a different set of connections, not a better
+          // one, and letting it mark people offline would make two devices
+          // disagree about somebody they can both see.
+          var elsewhere = siblingSees(uid);
+          if (!elsewhere || elsewhere === "offline" || elsewhere === "invisible") {
+            return "offline";
+          }
+          return inCallSince[uid] ? "call" : elsewhere;
+        }
 
         var said = peerPresence[uid] || (profiles[uid] || {}).status;
         if (said === "offline" || said === "invisible") return "offline";
@@ -14156,6 +14386,112 @@
             window.p2p.netSignal(pr.userId, { t: "presence", status: mine });
           } catch (e) { /* that peer went away mid-loop */ }
         });
+
+        publishPresence();
+      }
+
+      // ---- presence across your own devices ---------------------------------
+      //
+      // Exactly one device answers at the account address, so exactly one device
+      // has connections to look at. That leaves the other one blind in both
+      // directions: it can see nobody, and nobody can see it.
+      //
+      // Neither half is fixable locally, and each is the thing the *other*
+      // device cannot work out for itself. The holder knows who is online and
+      // how they are showing; the displaced device knows whether anybody is
+      // actually looking at it. So both cross the link, and each side uses what
+      // it was given rather than guessing.
+
+      /**
+       * How long a sibling's report is believed.
+       *
+       * Presence is true for seconds and the link runs at best every minute, so
+       * this is a compromise with a clear failure direction: too long and the
+       * second device shows people who left, which is the fault this exists to
+       * fix, inverted. Two and a half minutes covers a missed pass without
+       * covering a missed evening.
+       */
+      var SIBLING_PRESENCE_MS = 150000;
+
+      /** What a sibling last told us, and when. */
+      var siblingPresence = { at: 0, active: false, status: "", peers: {} };
+
+      /** Whether another of your devices is currently being looked at. */
+      function siblingActive() {
+        if (!siblingPresence.at) return false;
+        if (Date.now() - siblingPresence.at > SIBLING_PRESENCE_MS) return false;
+        return !!siblingPresence.active;
+      }
+
+      /**
+       * Leave this device's view where the link can pick it up.
+       *
+       * A snapshot rather than a request, because a sync runs on its own
+       * schedule and must never have to wake the interface to complete.
+       */
+      function publishPresence() {
+        if (!window.p2p || !window.p2p.setPresence || !me) return;
+
+        var seen = [];
+        Object.keys(onlineUsers).forEach(function (uid) {
+          if (uid === me.userId) return;
+          seen.push({ u: uid, s: statusOf(uid) });
+        });
+
+        try {
+          window.p2p.setPresence({
+            // Whether somebody is looking at *this* device — not the account's
+            // effective status, which is a question about the person and is
+            // answered by combining both devices' answers.
+            active: autoPresence === "online",
+            status: manualPresence || "",
+            peers: seen,
+          }).catch(function () {});
+        } catch (e) { /* an older core */ }
+      }
+
+      /**
+       * Take on what the other device reported.
+       *
+       * Second-hand and treated as such: it fills gaps rather than overriding
+       * anything this device can see for itself. Somebody this device is
+       * connected to is known first-hand, and a report from elsewhere must not
+       * be able to mark them offline — the sibling simply has a different set
+       * of connections, not a better one.
+       */
+      function learnSiblingPresence(from) {
+        if (!from || !me) return;
+
+        var peers = {};
+        (from.peers || []).forEach(function (p) {
+          if (p && p.u && p.u !== me.userId) peers[p.u] = String(p.s || "online");
+        });
+
+        siblingPresence = {
+          at: Number(from.at) || Date.now(),
+          active: !!from.active,
+          status: String(from.status || ""),
+          peers: peers,
+        };
+
+        // The account's own status. A chosen one already travels in the index,
+        // so this is only the automatic half — and the account is as present as
+        // its most present device, which is what makes a phone in your hand
+        // count while the desktop is asleep.
+        if (!manualPresence) announcePresence();
+
+        repaint("side"); repaint("members");
+      }
+
+      /**
+       * Anyone a sibling can see that this device cannot.
+       *
+       * Only ever additive. See `learnSiblingPresence`.
+       */
+      function siblingSees(uid) {
+        if (!siblingPresence.at) return null;
+        if (Date.now() - siblingPresence.at > SIBLING_PRESENCE_MS) return null;
+        return siblingPresence.peers[uid] || null;
       }
 
       /**
@@ -14219,6 +14555,15 @@
 
           autoPresence = next;
 
+          // Told to the other device whatever happens next.
+          //
+          // Below this, a chosen status stops the announcement — correctly,
+          // because the person said what they wanted shown. But whether anybody
+          // is *looking* at this device is a different fact, and it is the one
+          // the other device cannot observe. Withholding it would leave a
+          // desktop unable to tell that the phone is in somebody's hand.
+          publishPresence();
+
           // Nothing to announce if a chosen status is in force — it has not
           // changed, and this is exactly the case where the user asked not to
           // be second-guessed.
@@ -14267,6 +14612,11 @@
         });
 
         onlineUsers = next;
+
+        // Who this device can see has changed, and on the device holding the
+        // address that is the half the other one has no way to learn.
+        publishPresence();
+
         renderSide(); renderMembers(); updateVoiceWho();
       }
 
@@ -16866,7 +17216,7 @@
         // seen our code, so this is the only way they can derive the shared
         // key — and without it nothing either side writes is readable by the
         // other.
-        await window.p2p.append(id, "friend.request", {
+        var asked = await window.p2p.append(id, "friend.request", {
           to: uid,
           from: username,
           ek: me.encPublicKey || "",
@@ -16876,6 +17226,28 @@
           // wait for the sender to come looking.
           at: myOnion || "",
         });
+
+        // Owed until their client says it holds it.
+        //
+        // Every other thing that has to arrive exactly once and cannot be
+        // inferred from anything else is owed — an invitation, a removal, a
+        // departure — and a friend request is the clearest case of the lot: the
+        // recipient has never heard of the conversation it lives in, so there
+        // is nothing on their side that would ever think to ask for it.
+        //
+        // Without this the only delivery mechanism was being connected at the
+        // moment it was written. Send a request to somebody who is offline and
+        // the announce below reaches nobody; when they finally come online,
+        // nothing on either side has a reason to mention it. It arrived
+        // eventually on a desktop only because something else — a periodic
+        // re-offer, another conversation — happened to prompt a reconciliation
+        // of that community first.
+        //
+        // Being in the outbox also means `reasonToStayConnected` counts them as
+        // owed, so the connection is kept and retried rather than dropped as
+        // somebody with nothing in common.
+        if (asked && asked.id) await owe(uid, id, asked.id, "invite");
+
         await publishProfile(id);
         await window.p2p.netAnnounce();
         requests[uid] = "outgoing";
@@ -16895,12 +17267,28 @@
         }
         var id = dmIdFor(uid);
         // Ours goes back the same way, so the sender can encrypt to us too.
-        await window.p2p.append(id, "friend.accept", {
+        var accepted = await window.p2p.append(id, "friend.accept", {
           to: uid,
           from: username,
           ek: me.encPublicKey || "",
           at: myOnion || "",
         });
+
+        // Owed, for exactly the reasons the request is.
+        //
+        // The sender is the one waiting on this, and accepting is very often
+        // done hours after asking — which is precisely when they are least
+        // likely to still be online. Unowed, the acceptance reached them only
+        // if they happened to be connected at the moment the button was
+        // pressed; otherwise they sat on "pending" against somebody who had
+        // already said yes, and nothing on either side would ever raise it
+        // again.
+        //
+        // It also carries this device's encryption key, so an acceptance that
+        // never lands is a conversation the other side cannot read even after
+        // they work out that it happened.
+        if (accepted && accepted.id) await owe(uid, id, accepted.id, "invite");
+
         await publishProfile(id);
         // Same reason the request announces: a peer told our community list at
         // connect time has not heard of this conversation, so the acceptance
@@ -18816,6 +19204,20 @@
           await installKeys();
 
           paintMe();
+
+          // The appearance, including the part that lives outside the index.
+          //
+          // `applyAppearance` runs during the replay above and is a pure
+          // variable write — it can only draw the wallpaper it already has in
+          // hand. Turning a `wallpaperId` into bytes is a read from the blob
+          // store, and that only ever happened once, at startup. So a change
+          // made anywhere other than the picker — saved settings, or a sibling
+          // device — was applied to everything except the picture, and the app
+          // had to be relaunched to catch up.
+          //
+          // A no-op when the id has not moved.
+          void loadWallpaper();
+
           repaint("rail"); repaint("side"); repaint("members");
 
           updateSyncFocus();
@@ -19027,6 +19429,14 @@
         // link with another one hands it over — so it arrives rather than
         // being asked for. Guarded because an older core does not send it, and
         // the app worked before any of this existed.
+        // Who your other device can see, and who is looking at it.
+        //
+        // Guarded, because a core without it never sends one and everything
+        // below has to keep working against that.
+        if (window.p2p.onPresence) {
+          window.p2p.onPresence(function (from) { learnSiblingPresence(from); });
+        }
+
         if (window.p2p.onDevices) {
           window.p2p.onDevices(function (info) {
             devices = info;
@@ -19073,6 +19483,26 @@
           // Somebody arriving is the one thing that can turn "nobody online
           // has a copy" into a file that is safe to let go of.
           viewKept = {};
+
+          // Say what this device holds, immediately.
+          //
+          // Reconciliation only starts when somebody offers, and the offers
+          // were made at connect time and then on a timer. That is fine for a
+          // pair who have been talking, and wrong for the case that actually
+          // matters: something written while the other person was offline. It
+          // sits in a log that nobody has been offered, and the first thing
+          // that would prompt an offer is the periodic re-offer minutes later.
+          //
+          // A friend request is the sharpest version of it — the recipient has
+          // never heard of the conversation it lives in, so there is nothing
+          // on their side that would ever ask. Announcing on arrival is the
+          // proactive half: the moment somebody is reachable, they are told
+          // what there is, and they answer with what they are missing.
+          //
+          // Cheap by construction. `announce` goes through the same
+          // "has this changed" check as every other offer, so a pair that is
+          // already level exchanges a community list and nothing else.
+          window.p2p.netAnnounce().catch(function () {});
         });
 
         // Direct, out-of-band nudges. Everything here is advisory — the log
@@ -19664,6 +20094,18 @@
         $("winClose").onclick = function () { window.native.close(); };
       } else {
         $("winbtns").style.display = "none";
+
+        // In a browser the bar itself goes too.
+        //
+        // It exists because the desktop window is frameless: it supplies the
+        // drag region and the three controls. A tab has neither, so what is
+        // left is thirty pixels of nothing above the app.
+        //
+        // Only the browser. A phone has no window chrome either, but the same
+        // bar is doing a different job there — `mobile.css` grows it to cover
+        // the status bar inset so the app reads as one surface — and hiding it
+        // would put the message list under the clock.
+        if (throughRelay()) document.documentElement.classList.add("noframe");
       }
 
       $("setupGo").onclick = chooseUsername;

@@ -743,6 +743,45 @@ type Wire =
   | { t: "end"; community: string }
   /** Who is currently answering at the account address, and who wants to. */
   | { t: "claim"; holding: boolean; wants: boolean; n: number }
+  /**
+   * Who is about, as far as this device can tell.
+   *
+   * ## Why presence needs its own message
+   *
+   * Everything else here is history — signed, ordered, durable, and worth
+   * exactly as much an hour later. Presence is the opposite of all four. It is
+   * true for seconds, it is nobody's signed statement, and writing it into a log
+   * that replicates forever is the mistake `voice.here` was already withdrawn
+   * for.
+   *
+   * It still has to cross, because exactly one device answers at the account
+   * address and that is the only one with connections to look at. A phone that
+   * is not holding sees an empty room: no friends online, no statuses, and no
+   * way to tell a quiet evening from being cut off. Meanwhile its own presence
+   * reaches nobody, because the device that could announce it does not know
+   * whether anyone is looking at the phone.
+   *
+   * So both halves travel, and each is the thing the other end cannot work out
+   * for itself:
+   *
+   *   - `active` — whether somebody is actually looking at *this* device. The
+   *     holder needs it to say whether the account is present at all, which is
+   *     a question about the person and not about any one machine.
+   *   - `peers` — who the sender can currently see, and how each of them is
+   *     showing. Only the holder has this, and only it can pass it on.
+   *
+   * `at` is the sender's clock, carried so the receiver can let it go stale
+   * rather than believing it until the next pass. Second-hand presence that
+   * never expires is worse than none: it shows people as online long after they
+   * have gone, which is the failure this is meant to fix, inverted.
+   */
+  | {
+      t: "presence";
+      active: boolean;
+      status: string;
+      at: number;
+      peers: { u: string; s: string }[];
+    }
   /** Everything this side meant to send has been sent. */
   | { t: "done" };
 
@@ -957,6 +996,28 @@ export interface PairHooks {
 
   /** The peer asked for the address and this device holds it. */
   asked(peer: { device: string; name: string }): void;
+
+  /**
+   * What this device can say about who is about — see the `presence` message.
+   *
+   * Optional, so a build without it simply never sends one and a peer that
+   * never receives one carries on exactly as before.
+   */
+  presence?(): {
+    active: boolean;
+    status: string;
+    at: number;
+    peers: { u: string; s: string }[];
+  } | undefined;
+
+  /** ...and what the other device said about the same. */
+  learnPresence?(from: {
+    device: string;
+    active: boolean;
+    status: string;
+    at: number;
+    peers: { u: string; s: string }[];
+  }): void;
 }
 
 /** An account, as it travels between two of your devices. */
@@ -1428,6 +1489,28 @@ class Session {
           n: this.#hooks.claimN(),
         });
 
+        // Who is about, in both directions.
+        //
+        // Sent unconditionally rather than only by the holder: the answer is
+        // different on each device and each needs the other's. The holder has
+        // the peer list; the displaced device has the person. Neither can
+        // produce the other's half.
+        //
+        // Nothing waits on it — it is not added to `#open`, and `#maybeDone`
+        // does not care whether one ever arrives. Presence that held a sync
+        // open would be a way for a stale phone to stall a history transfer,
+        // which is a poor trade for a green dot.
+        const myPresence = this.#hooks.presence?.();
+        if (myPresence) {
+          this.#send({
+            t: "presence",
+            active: myPresence.active,
+            status: myPresence.status,
+            at: myPresence.at,
+            peers: myPresence.peers,
+          });
+        }
+
         // What this session is actually for. Both sides compute this from the
         // same scope and the same hooks, so they offer the same set — which is
         // the property that makes a small sync small rather than lopsided.
@@ -1747,6 +1830,21 @@ class Session {
           },
         );
 
+        return;
+      }
+
+      case "presence": {
+        // Advisory, and treated as such. Nothing here is signed and nothing is
+        // written to a log — it is handed straight up to be believed for as
+        // long as it is fresh and then forgotten. A sibling that lies about it
+        // achieves nothing it could not achieve by simply being online.
+        this.#hooks.learnPresence?.({
+          device: this.#result.device,
+          active: !!msg.active,
+          status: String(msg.status || ""),
+          at: Number(msg.at) || Date.now(),
+          peers: Array.isArray(msg.peers) ? msg.peers : [],
+        });
         return;
       }
 
