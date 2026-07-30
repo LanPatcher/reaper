@@ -77,7 +77,15 @@
         background: var(--rail); -webkit-app-region: drag; user-select: none;
       }
       #titlebar .brand { padding: 0 12px; font-size: 12px; font-weight: 700; color: var(--dim); }
-      #winbtns { margin-left: auto; display: flex; -webkit-app-region: no-drag; }
+      /* Hidden until something proves there is a window to control.
+         The wrong way round is what kept shipping these into a browser tab:
+         the markup showed them and a line of JavaScript was expected to take
+         them away, so a stale bundle, a script that threw earlier in the same
+         block, or a build that never reran left three dead controls in the
+         corner. Default to absent, and let `chrome` — set only where Electron
+         is proved, see `hasWindowChrome` — put them back. */
+      #winbtns { margin-left: auto; display: none; -webkit-app-region: no-drag; }
+      html.chrome #winbtns { display: flex; }
       #winbtns button { width: 46px; height: 30px; display: flex; align-items: center; justify-content: center; color: var(--dim); }
       #winbtns button:hover { background: var(--hover); color: var(--text); }
       #winbtns button.close:hover { background: #d3373f; color: #fff; }
@@ -20369,13 +20377,17 @@
       //
       // Asking what the build *is* rather than whether the object exists is the
       // question that was meant all along.
+      // Window controls are hidden in the stylesheet and *revealed* here, which
+      // is the opposite of how this worked and the reason it kept coming back.
+      // Nothing has to run for a browser tab to be correct; something has to
+      // run for a desktop window to be.
       if (hasWindowChrome()) {
+        document.documentElement.classList.add("chrome");
+
         $("winMin").onclick = function () { window.native.minimise(); };
         $("winMax").onclick = function () { window.native.maximise(); };
         $("winClose").onclick = function () { window.native.close(); };
       } else {
-        $("winbtns").style.display = "none";
-
         // ...and the bar itself, which only exists to hold them.
         //
         // It is here because the desktop window is frameless: it supplies the
