@@ -227,7 +227,110 @@ type Payload = {
   messageId?: string;
   channelId?: string;
   userId?: string;
+
+  /**
+   * How long this message is meant to survive, in milliseconds.
+   *
+   * ## Why it lives in the payload
+   *
+   * Retention has to travel. A message that the author wanted gone in a day
+   * should be gone in a day on every device that holds it, and the only thing
+   * that reaches every device is the event itself. Putting it here means it is
+   * inside the signature — so it cannot be edited in flight — and inside the
+   * encryption, so a relay carrying the event cannot read how long anyone keeps
+   * anything.
+   *
+   * It also means no coordination is needed. Every device computes
+   * `timestamp + ttl` from the same signed bytes and reaches the same answer at
+   * the same moment, so they expire together without exchanging a word about
+   * it. A peer that has been offline for a month simply finds the message
+   * already past its time and prunes it on the first pass.
+   *
+   * Absent or zero means forever, which is what every event written before this
+   * existed says by omission — and is the right default for a log that has
+   * always kept everything.
+   */
+  ttl?: number;
 };
+
+/** What a caller can say about time and its own retention preference. */
+export interface CompactOptions {
+  /** Overridable so a test can be at a particular moment. */
+  now?: number;
+
+  /**
+   * The longest this device keeps *anything*, in milliseconds.
+   *
+   * Applied on top of whatever each message asks for, never instead of it. The
+   * two are a floor and a ceiling on the same value: the author says how long
+   * their message should live, the reader says how long they are willing to
+   * store anything, and the message goes when the *first* of those runs out.
+   *
+   * So "keep mine for a year" cannot make somebody else's one-hour message
+   * linger on this disk, and "keep nothing over a week" cannot be overridden by
+   * a sender who wanted their message kept forever. Neither party can force the
+   * other to store something, which is the only arrangement that works when
+   * there is no server and the disk belongs to whoever is reading.
+   *
+   * Zero or absent means no limit of this device's own.
+   */
+  keepFor?: number;
+}
+
+/**
+ * When a message is due to go, or undefined if it is not.
+ *
+ * Read from the author's own clock, which is advisory — it is not used for
+ * ordering anywhere, and it is not trusted here either. That is a deliberate
+ * limit worth stating: an author who lies about the time can make their own
+ * message expire sooner or later than it should on other people's devices. It
+ * cannot affect anybody else's messages, it cannot make a device keep something
+ * it has decided not to (`keepFor` is applied by the reader, from the reader's
+ * clock), and the worst case is a message of theirs that lingers or vanishes.
+ *
+ * That is a storage policy behaving oddly, not a security control failing, and
+ * pretending otherwise would mean inventing a clock nobody has.
+ */
+function dueAt(
+  event: SignedEvent,
+  payload: Payload,
+  keepFor: number,
+): number | undefined {
+  const asked = typeof payload.ttl === "number" && payload.ttl > 0
+    ? payload.ttl
+    : Infinity;
+
+  const allowed = keepFor > 0 ? keepFor : Infinity;
+  const life = Math.min(asked, allowed);
+
+  if (!Number.isFinite(life)) return undefined;
+
+  const written = typeof event.timestamp === "number" && event.timestamp > 0
+    ? event.timestamp
+    : undefined;
+
+  // Nothing to count from. Kept, because the alternative is deleting a message
+  // on the strength of a field it does not have.
+  if (written === undefined) return undefined;
+
+  return written + life;
+}
+
+/**
+ * Whether a message has outlived what it or this device asked for.
+ *
+ * Exported so the interface can show the same answer it is about to act on —
+ * a countdown beside a message has to agree with the sweep, and two
+ * implementations of "when does this go" would eventually disagree.
+ */
+export function expiresAt(
+  event: SignedEvent,
+  payload: unknown,
+  keepFor = 0,
+): number | undefined {
+  if (event.type !== "message.send") return undefined;
+  return dueAt(event, (payload ?? {}) as Payload, keepFor);
+}
 
 /**
  * Decide what a log can forget.
@@ -242,11 +345,15 @@ export function compact(
   events: readonly SignedEvent[],
   capacity: number = 10,
   read: (payload: unknown) => unknown = (payload) => payload,
+  options: CompactOptions = {},
 ): Compaction {
   // Undefined rather than omitted is what a caller with nothing to say looks
   // like once this is reached through an optional field.
   capacity = capacity ?? 10;
   read = read ?? ((payload) => payload);
+
+  const now = options.now ?? Date.now();
+  const keepFor = options.keepFor ?? 0;
 
   const keep: SignedEvent[] = [];
   const pruned: string[] = [];
@@ -334,6 +441,25 @@ export function compact(
     if (event.type === "message.send" && deleted.has(event.id)) {
       pruned.push(event.id);
       continue;
+    }
+
+    // Outlived what it asked for, or what this device is willing to keep.
+    //
+    // Only `message.send`. Everything else in the log is either a fact about
+    // who is where — which does not stop being true — or a tombstone, which is
+    // the smallest thing here and the one whose absence resurrects something.
+    //
+    // No tombstone is written for this and none is needed: the id goes into
+    // `pruned`, which is what reconciliation reports as held, so a peer that
+    // still has the message is told we have it rather than sent it back. Every
+    // device reaches the same conclusion from the same signed bytes at the same
+    // moment, so nobody has to be told anything.
+    if (event.type === "message.send") {
+      const due = dueAt(event, payloads.get(event.id) ?? {}, keepFor);
+      if (due !== undefined && due <= now) {
+        pruned.push(event.id);
+        continue;
+      }
     }
 
     keep.push(event);

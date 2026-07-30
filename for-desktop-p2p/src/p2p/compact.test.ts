@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { compact, worthCompacting } from "./compact";
+import { compact, expiresAt, worthCompacting } from "./compact";
 import { createEvent, findHeads, type SignedEvent } from "./events";
 import { createIdentity } from "./identity";
 import { CommunityStore } from "./store";
@@ -354,6 +354,111 @@ try {
      String(seeing.pruned.length));
   ck("and the latest one survives",
      seeing.keep.filter((e) => e.type === "community.rename").length === 1);
+}
+
+// ---- messages that expire -------------------------------------------------
+//
+// The most destructive rule in the file, so the boundaries are pinned rather
+// than trusted: what goes, what stays, and — the one that matters most — what
+// happens when the information needed to decide is missing.
+{
+  const HOUR = 3600000;
+  const now = 1_000_000_000_000;
+
+  /** A message written `age` ago, asking to live for `ttl`. */
+  const said = (age: number, ttl?: number) =>
+    ({
+      id: `m${age}-${ttl ?? "forever"}`,
+      type: "message.send",
+      author: "a",
+      timestamp: now - age,
+      payload: ttl === undefined ? { content: "hi" } : { content: "hi", ttl },
+    }) as unknown as SignedEvent;
+
+  const run = (events: SignedEvent[], keepFor = 0) =>
+    compact(events, 10, (p) => p, { now, keepFor });
+
+  // The basic rule, from both directions.
+  {
+    const events = [said(2 * HOUR, HOUR), said(HOUR / 2, HOUR)];
+    const { keep, pruned } = run(events);
+
+    ck("a message past its time is dropped", pruned.length === 1, pruned.join(","));
+    ck("...and one still inside it is kept",
+       keep.length === 1 && keep[0].id === events[1].id);
+  }
+
+  // Forever is the default, and it is what silence means.
+  {
+    const old = [said(1000 * HOUR)];
+    ck("a message with no ttl never expires", run(old).pruned.length === 0);
+
+    const zero = [said(1000 * HOUR, 0)];
+    ck("...and a ttl of zero means the same", run(zero).pruned.length === 0);
+  }
+
+  // The reader's own limit, which applies on top rather than instead.
+  {
+    const forever = [said(2 * HOUR)];
+    ck("this device's limit expires somebody else's forever",
+       run(forever, HOUR).pruned.length === 1);
+
+    const short = [said(2 * HOUR, HOUR)];
+    ck("...and a generous limit does not rescue a short message",
+       run(short, 1000 * HOUR).pruned.length === 1);
+
+    const young = [said(HOUR / 2, 1000 * HOUR)];
+    ck("neither expires something inside both", run(young, 1000 * HOUR).pruned.length === 0);
+  }
+
+  // What must never be swept, however old.
+  {
+    const ancient = now - 1000 * HOUR;
+    const others = [
+      { id: "j", type: "member.join", author: "a", timestamp: ancient, payload: {} },
+      { id: "k", type: "community.key", author: "a", timestamp: ancient, payload: {} },
+      { id: "t", type: "message.delete", author: "a", timestamp: ancient,
+        payload: { messageId: "gone" } },
+    ] as unknown as SignedEvent[];
+
+    ck("nothing but a message is ever expired",
+       run(others, HOUR).pruned.length === 0);
+  }
+
+  // The case where the rule cannot be applied. Keeping is the only safe answer:
+  // deleting on the strength of a field an event does not have is how a bug
+  // here becomes lost conversation.
+  {
+    const undated = [{
+      id: "u", type: "message.send", author: "a", payload: { content: "hi", ttl: 1 },
+    }] as unknown as SignedEvent[];
+
+    ck("a message with no timestamp is kept, not guessed at",
+       run(undated, HOUR).pruned.length === 0);
+  }
+
+  // And the sealed case, which is every real community: without a reader the
+  // ttl is inside an envelope and nothing should be dropped.
+  {
+    const sealed = [{
+      id: "s", type: "message.send", author: "a", timestamp: now - 2 * HOUR,
+      payload: { e: 1, n: "n", c: "c", t: "t" },
+    }] as unknown as SignedEvent[];
+
+    ck("a sealed message is not expired by a reader that cannot open it",
+       compact(sealed, 10, (p) => p, { now }).pruned.length === 0);
+  }
+
+  // The interface has to be able to show the same answer the sweep will act on.
+  {
+    const one = said(0, HOUR);
+    ck("the due time is offered to whatever draws the countdown",
+       expiresAt(one, one.payload, 0) === now + HOUR);
+    ck("...including this device's own limit",
+       expiresAt(one, one.payload, HOUR / 2) === now + HOUR / 2);
+    ck("...and says nothing for something that never expires",
+       expiresAt(said(0), { content: "hi" }, 0) === undefined);
+  }
 }
 
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");
