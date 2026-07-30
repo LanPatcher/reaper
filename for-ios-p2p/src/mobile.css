@@ -58,6 +58,13 @@ body {
    Height is left to the content and the inset is added to it, and the bar is
    painted the same colour as the page so the status bar area reads as part of
    the app rather than as a strip of something else. */
+/* The bar stays on a phone, whatever the shared interface decided.
+   It hides it wherever there is no window to drag or close — correct for a
+   browser tab, wrong here, because this is not holding window controls: it is
+   holding the status-bar inset, and without it the message list runs under the
+   clock. Stated here so it does not depend on which class lands first. */
+html.noframe #titlebar { display: flex; }
+
 #titlebar {
   height: auto;
   min-height: calc(30px + env(safe-area-inset-top));

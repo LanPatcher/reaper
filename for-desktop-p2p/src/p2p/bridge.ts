@@ -1110,6 +1110,60 @@ function wroteSomethingSiblingsWant(): void {
   }, MESSAGE_SETTLE_MS);
 }
 
+/**
+ * How often to look for messages that have outlived their `ttl`.
+ *
+ * Hourly. The shortest lifetime anybody can choose is a week, so an hour is
+ * already far finer than the thing being measured — and each pass reads and
+ * decrypts a community's log to decide, which is a cost worth paying once an
+ * hour and not once a minute.
+ */
+const EXPIRY_EVERY_MS = 60 * 60 * 1000;
+
+let expiryTimer: ReturnType<typeof setInterval> | undefined;
+
+/**
+ * Drop what has expired, and rewrite the logs that lost something.
+ *
+ * ## Why this is the compaction path rather than a delete
+ *
+ * A message cannot simply be removed. Reconciliation compares sets of ids, so
+ * an event that is merely absent reads as one never received, and the next peer
+ * to connect sends it straight back. `compact` is the only thing here that
+ * knows how to forget something *and stay forgotten*: it records the id in the
+ * pruned ledger, which is what this device reports as held.
+ *
+ * It is also the careful path. A fresh log is built beside the old one, read
+ * back, and checked against what it was meant to contain before anything is
+ * swapped — which matters more here than anywhere else, because this is the one
+ * caller that runs without anybody asking it to.
+ */
+function startExpirySchedule(): void {
+  if (expiryTimer) return;
+
+  const sweep = () => {
+    for (const community of [...knownCommunities(), INDEX]) {
+      try {
+        const store = storeFor(community);
+        const result = store.compact();
+        if (!result) continue;
+
+        log("[p2p]", `${community}: dropped ${result.removed} expired or dead event(s)`);
+      } catch (error) {
+        // One community failing must not stop the rest. A log that cannot be
+        // rewritten keeps everything, which is the safe direction.
+        log("[p2p]", `${community}: could not sweep — ${(error as Error).message}`);
+      }
+    }
+  };
+
+  // Not immediately. Startup already has a sync, a Tor bootstrap and a full
+  // replay competing for the same thread, and nothing here is urgent — the
+  // shortest lifetime anybody can set is a week.
+  expiryTimer = setInterval(sweep, EXPIRY_EVERY_MS);
+  expiryTimer.unref?.();
+}
+
 function startSyncSchedule(): void {
   if (syncTimer) return;
 
@@ -1137,8 +1191,22 @@ function startSyncSchedule(): void {
     const siblings = others(syncAddresses(), thisDevice().id);
 
     if (!siblings.length) {
-      // Nothing to sync with. Checked again on the slow schedule, because a
-      // sibling appears by being paired and that writes to the roster.
+      // Nothing to sync *with*, which is not the same as nothing to do.
+      //
+      // This returned here, and `repairAddress` was only reached further down —
+      // so a device that is displaced but has no sibling in its roster never
+      // checked whether it should take the address back. That is not a rare
+      // corner: it is what a device looks like after a claim arrived from a
+      // machine whose sync address never did, and after this it stays
+      // unreachable for ever, waiting for a device it cannot name to come back.
+      //
+      // `repairAddress` is exactly the code for that case — it takes the
+      // address when the holder is not in the roster — and it was the one thing
+      // this path skipped.
+      void repairAddress().catch((error: Error) => log("[p2p]", error.message));
+
+      // Checked again on the slow schedule, because a sibling appears by being
+      // paired and that writes to the roster.
       syncTimer = setTimeout(pass, SYNC_IDLE_MS);
       return;
     }
@@ -1778,10 +1846,47 @@ const PLAINTEXT_TYPES = new Set([
   "friend.decline",
 ]);
 
+/**
+ * A payload the caller can no longer change.
+ *
+ * ## Why this is not paranoia
+ *
+ * On the desktop a payload crosses a process boundary and is structured-cloned
+ * on the way, so the core gets its own copy for free. On iOS and on the web the
+ * interface and the core are the *same JavaScript context* and the object
+ * arrives by reference — the core stores the caller's live object.
+ *
+ * That is fine for the payloads built fresh at each call site, and wrong for
+ * the ones that are not. `userPrefs` is a single long-lived object appended
+ * over and over: every later edit to it silently rewrote the payload of every
+ * `user.prefs` event already in memory.
+ *
+ * An event's id is the hash of its contents and its signature covers that hash,
+ * so an event whose payload changes after signing is an event that no longer
+ * verifies. It is written to disk correctly — the log stringifies at append
+ * time — and then fails on the way out: a sibling or a peer receiving it
+ * recomputes the digest, gets a different answer, and drops it. Settings that
+ * refused to travel between devices are exactly that.
+ *
+ * Sealed payloads never had the problem, because `seal` builds a new object out
+ * of the JSON. This is the same guarantee for the ones that are not sealed.
+ */
+function snapshot(payload: unknown): unknown {
+  if (payload === null || typeof payload !== "object") return payload;
+
+  try {
+    return JSON.parse(JSON.stringify(payload));
+  } catch {
+    // Not serialisable. `canonicalise` is about to refuse it anyway, and with a
+    // far better message than anything that could be said here.
+    return payload;
+  }
+}
+
 function encryptPayload(community: string, type: string, payload: unknown): unknown {
-  if (PLAINTEXT_TYPES.has(type)) return payload;
+  if (PLAINTEXT_TYPES.has(type)) return snapshot(payload);
   const key = payloadKeys.get(community);
-  return key ? seal(payload, key) : payload;
+  return key ? seal(payload, key) : snapshot(payload);
 }
 
 /**
@@ -2584,6 +2689,7 @@ export function registerP2PHandlers(): void {
 
       // And from here on, without being asked.
       startSyncSchedule();
+      startExpirySchedule();
     })().catch((error: Error) => log("[link]", error.message));
 
     return { port: listening, peers: [], onion };
