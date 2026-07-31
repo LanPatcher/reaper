@@ -298,7 +298,7 @@ export function createMainWindow() {
   session.defaultSession.setDisplayMediaRequestHandler(
     (request, callback) => {
       desktopCapturer
-        .getSources({ types: ["screen", "window"], fetchWindowIcons: true })
+        .getSources({ types: ["screen"] })
         .then((sources) => {
           // Shortcut for linux wayland.
           if (sources.length == 1) {
@@ -314,66 +314,24 @@ export function createMainWindow() {
                 });
             return;
           }
-          // Drop any listener left over from a picker that was dismissed
-          // without a selection. Without this they accumulate, and a later
-          // share fires every stale handler — each trying to satisfy a
-          // request that has already been answered.
-          ipcMain.removeAllListeners("screenPickerCallback");
-
-          ipcMain.once(
-            "screenPickerCallback",
-            (_, idx: number, audio: boolean) => {
-              // Bounds check is `>=`: sources[sources.length] is undefined,
-              // which would be handed to Electron as the video source and
-              // fail in a much more confusing way.
-              const cancelled = idx < 0 || idx >= sources.length;
-
-              try {
-                if (cancelled) {
-                  // Cancelling is awkward. Electron validates that a video
-                  // stream was supplied when one was requested, and throws
-                  // "Video was requested, but no video stream was provided"
-                  // — as an *uncaught* exception in the main process, which
-                  // Electron surfaces as a modal error dialog. There is no
-                  // callback shape that means "the user changed their mind",
-                  // so the throw is caught and discarded here.
-                  callback({});
-                } else if (audio) {
-                  callback({ video: sources[idx], audio: "loopback" });
-                } else {
-                  callback({ video: sources[idx] });
-                }
-              } catch (error) {
-                // Expected on cancel. The renderer's getDisplayMedia promise
-                // rejects on its own, which is the correct outcome.
-                if (!cancelled) {
-                  log("[screenshare] failed to start capture:", String(error));
-                }
-              }
-            },
-          );
-          mainWindow.webContents.send(
-            "screenPicker",
-            sources.map((source, idx) => {
-              const image = source.appIcon;
-              if (image) {
-                if (image.getAspectRatio() > 1) {
-                  image.resize({ width: 256 });
-                } else {
-                  image.resize({ height: 256 });
-                }
-              }
-              return {
-                idx: idx,
-                name: source.name,
-                isFullScreen: source.id.startsWith("screen"),
-                image: image?.toDataURL(),
-              };
-            }),
-          );
+          // No renderer-side picker exists to answer a choice, so rather than
+          // block on a selection that can never arrive — which is why sharing
+          // "did nothing" on the desktop — grant the primary screen. That is
+          // what sharing a screen means by default.
+          if (!sources[0]) { callback({}); return; }
+          request.audioRequested
+            ? callback({ video: sources[0], audio: "loopback" })
+            : callback({ video: sources[0] });
+        })
+        .catch((error) => {
+          log("[screenshare] could not enumerate screens:", String(error));
+          callback({});
         });
     },
-    { useSystemPicker: true },
+    // Deterministically use the callback above (the primary screen) rather than
+    // a system picker that was not engaging on Windows and left the share doing
+    // nothing. A source picker can be added later; working comes first.
+    { useSystemPicker: false },
   );
 
   // save a file to disk, showing the OS save dialog

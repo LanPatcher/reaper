@@ -627,6 +627,8 @@
       #screenView.hide { display: none; }
       .screenImg { max-width: 100%; max-height: 38vh; object-fit: contain;
         image-rendering: auto; display: block; }
+      .screenImg:fullscreen { max-width: 100vw; max-height: 100vh;
+        width: 100vw; height: 100vh; background: #000; cursor: zoom-out; }
       .screenLabel {
         width: 100%; padding: 4px 10px; font-size: 11px; color: var(--dim);
         background: var(--side); text-align: center;
@@ -1333,13 +1335,14 @@
             "Share your screen": "Compartir tu pantalla",
             "Stop sharing your screen": "Dejar de compartir tu pantalla",
             "Share your screen?": "¿Compartir tu pantalla?",
-            "This sends a low-quality picture — about ten frames a second at 160p, with no sound — to keep the data down. Over Tor it still uses a lot, and it will look rough. It is for showing something quickly, not for watching video.": "Esto envía una imagen de baja calidad — unos diez fotogramas por segundo a 160p, sin sonido — para reducir los datos. Aun así, por Tor consume mucho y se verá tosca. Es para enseñar algo rápido, no para ver vídeo.",
+            "This sends a low-quality picture with no sound, to keep the data down. Over Tor it still uses a lot, and it will look rough — it is for showing something quickly, not for watching video.": "Esto envía una imagen de baja calidad sin sonido, para reducir los datos. Aun así, por Tor consume mucho y se verá tosca — es para enseñar algo rápido, no para ver vídeo.",
             "Share": "Compartir",
             "Sharing your screen — everyone in the call can see it": "Compartiendo tu pantalla — todos en la llamada pueden verla",
             "Screen sharing is not available here": "Compartir pantalla no está disponible aquí",
             "{name} is sharing their screen": "{name} está compartiendo su pantalla",
             "{name} and {n} more are sharing their screen": "{name} y {n} más están compartiendo su pantalla",
             "You are sharing your screen": "Estás compartiendo tu pantalla",
+            "Click for fullscreen": "Haz clic para pantalla completa",
             "Notes": "Notas",
             "No notes yet.": "Aún no hay notas.",
             "Write a note to yourself…": "Escribe una nota para ti…",
@@ -2075,13 +2078,14 @@
             "Share your screen": "Partager votre écran",
             "Stop sharing your screen": "Arrêter de partager votre écran",
             "Share your screen?": "Partager votre écran ?",
-            "This sends a low-quality picture — about ten frames a second at 160p, with no sound — to keep the data down. Over Tor it still uses a lot, and it will look rough. It is for showing something quickly, not for watching video.": "Cela envoie une image de basse qualité — environ dix images par seconde en 160p, sans son — pour limiter les données. Sur Tor, cela consomme quand même beaucoup et ce sera grossier. C'est pour montrer quelque chose rapidement, pas pour regarder une vidéo.",
+            "This sends a low-quality picture with no sound, to keep the data down. Over Tor it still uses a lot, and it will look rough — it is for showing something quickly, not for watching video.": "Cela envoie une image de basse qualité sans son, pour limiter les données. Sur Tor, cela consomme quand même beaucoup et ce sera grossier — c'est pour montrer quelque chose rapidement, pas pour regarder une vidéo.",
             "Share": "Partager",
             "Sharing your screen — everyone in the call can see it": "Partage de votre écran — tout le monde dans l'appel peut le voir",
             "Screen sharing is not available here": "Le partage d'écran n'est pas disponible ici",
             "{name} is sharing their screen": "{name} partage son écran",
             "{name} and {n} more are sharing their screen": "{name} et {n} autres partagent leur écran",
             "You are sharing your screen": "Vous partagez votre écran",
+            "Click for fullscreen": "Cliquez pour le plein écran",
             "Notes": "Notes",
             "No notes yet.": "Aucune note pour l'instant.",
             "Write a note to yourself…": "Écrivez une note pour vous-même…",
@@ -2817,13 +2821,14 @@
             "Share your screen": "Deinen Bildschirm teilen",
             "Stop sharing your screen": "Bildschirmfreigabe beenden",
             "Share your screen?": "Deinen Bildschirm teilen?",
-            "This sends a low-quality picture — about ten frames a second at 160p, with no sound — to keep the data down. Over Tor it still uses a lot, and it will look rough. It is for showing something quickly, not for watching video.": "Das sendet ein Bild in niedriger Qualität — etwa zehn Bilder pro Sekunde bei 160p, ohne Ton — um die Daten gering zu halten. Über Tor verbraucht es trotzdem viel und sieht grob aus. Es ist dafür da, schnell etwas zu zeigen, nicht um Videos anzusehen.",
+            "This sends a low-quality picture with no sound, to keep the data down. Over Tor it still uses a lot, and it will look rough — it is for showing something quickly, not for watching video.": "Das sendet ein Bild in niedriger Qualität ohne Ton, um die Daten gering zu halten. Über Tor verbraucht es trotzdem viel und sieht grob aus — es ist dafür da, schnell etwas zu zeigen, nicht um Videos anzusehen.",
             "Share": "Teilen",
             "Sharing your screen — everyone in the call can see it": "Bildschirm wird geteilt — alle im Anruf können ihn sehen",
             "Screen sharing is not available here": "Bildschirmfreigabe ist hier nicht verfügbar",
             "{name} is sharing their screen": "{name} teilt den Bildschirm",
             "{name} and {n} more are sharing their screen": "{name} und {n} weitere teilen ihren Bildschirm",
             "You are sharing your screen": "Du teilst deinen Bildschirm",
+            "Click for fullscreen": "Zum Vollbild klicken",
             "Notes": "Notizen",
             "No notes yet.": "Noch keine Notizen.",
             "Write a note to yourself…": "Schreib dir eine Notiz…",
@@ -3559,13 +3564,14 @@
             "Share your screen": "Partilhar o teu ecrã",
             "Stop sharing your screen": "Parar de partilhar o teu ecrã",
             "Share your screen?": "Partilhar o teu ecrã?",
-            "This sends a low-quality picture — about ten frames a second at 160p, with no sound — to keep the data down. Over Tor it still uses a lot, and it will look rough. It is for showing something quickly, not for watching video.": "Isto envia uma imagem de baixa qualidade — cerca de dez imagens por segundo a 160p, sem som — para reduzir os dados. Pelo Tor ainda usa muito e vai ficar grosseira. É para mostrar algo rápido, não para ver vídeo.",
+            "This sends a low-quality picture with no sound, to keep the data down. Over Tor it still uses a lot, and it will look rough — it is for showing something quickly, not for watching video.": "Isto envia uma imagem de baixa qualidade sem som, para reduzir os dados. Pelo Tor ainda usa muito e vai ficar grosseira — é para mostrar algo rápido, não para ver vídeo.",
             "Share": "Partilhar",
             "Sharing your screen — everyone in the call can see it": "A partilhar o teu ecrã — todos na chamada podem vê-lo",
             "Screen sharing is not available here": "A partilha de ecrã não está disponível aqui",
             "{name} is sharing their screen": "{name} está a partilhar o ecrã",
             "{name} and {n} more are sharing their screen": "{name} e mais {n} estão a partilhar o ecrã",
             "You are sharing your screen": "Estás a partilhar o teu ecrã",
+            "Click for fullscreen": "Clica para ecrã inteiro",
             "Notes": "Notas",
             "No notes yet.": "Ainda não há notas.",
             "Write a note to yourself…": "Escreve uma nota para ti…",
@@ -15974,7 +15980,7 @@
       // of data for what it is, which is why it asks before it starts.
       // ===================================================================
 
-      var SCREEN_H = 160, SCREEN_FPS = 10, SCREEN_Q = 0.42;
+      var SCREEN_H = 460, SCREEN_FPS = 5, SCREEN_Q = 0.5;
       var screenStream = null, screenTimer = null, screenSeq = 0;
       var screenSharing = false;
       var screenShares = {};   // userId -> { url, at, seq } of whoever is sharing
@@ -15988,7 +15994,7 @@
 
         var ok = await confirmDialog(
           t("Share your screen?"),
-          t("This sends a low-quality picture — about ten frames a second at 160p, with no sound — to keep the data down. Over Tor it still uses a lot, and it will look rough. It is for showing something quickly, not for watching video."),
+          t("This sends a low-quality picture with no sound, to keep the data down. Over Tor it still uses a lot, and it will look rough — it is for showing something quickly, not for watching video."),
           t("Share")
         );
         if (!ok) return;
@@ -16021,8 +16027,9 @@
 
           var vw = video.videoWidth, vh = video.videoHeight;
           var h = SCREEN_H, w = Math.max(1, Math.round(h * vw / vh));
-          // A cap for very wide displays, so the frame stays small either way.
-          if (w > 320) { w = 320; h = Math.max(1, Math.round(w * vh / vw)); }
+          // A cap for very wide/ultrawide displays, so a frame never balloons
+          // past what 460p is meant to be even on a 32:9 monitor.
+          if (w > 900) { w = 900; h = Math.max(1, Math.round(w * vh / vw)); }
           canvas.width = w; canvas.height = h;
 
           try { ctx.drawImage(video, 0, 0, w, h); } catch (e) { return; }
@@ -16116,6 +16123,17 @@
           var img = document.createElement("img");
           img.className = "screenImg";
           img.src = screenShares[who].url;
+          img.style.cursor = "zoom-in";
+          img.title = t("Click for fullscreen");
+          // Fullscreen the shared picture. The <img> src keeps updating with
+          // each new frame while it is fullscreen, so it stays live.
+          img.onclick = function () {
+            if (document.fullscreenElement) {
+              if (document.exitFullscreen) document.exitFullscreen();
+            } else if (img.requestFullscreen) {
+              img.requestFullscreen().catch(function () {});
+            }
+          };
           box.appendChild(img);
 
           var label = document.createElement("div");
