@@ -618,6 +618,20 @@
       @keyframes ringpulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
       #callOverlay.ringing #callFaces { animation: ringpulse 1.4s ease-in-out infinite; }
 
+      /* A shared screen, shown at the top of the conversation. */
+      #screenView {
+        position: relative; background: #000; border-bottom: 1px solid var(--line);
+        display: flex; flex-direction: column; align-items: center;
+        max-height: 42vh; overflow: hidden;
+      }
+      #screenView.hide { display: none; }
+      .screenImg { max-width: 100%; max-height: 38vh; object-fit: contain;
+        image-rendering: auto; display: block; }
+      .screenLabel {
+        width: 100%; padding: 4px 10px; font-size: 11px; color: var(--dim);
+        background: var(--side); text-align: center;
+      }
+
       /* A mention is announced rather than merely counted: the badge says how
          many, the mark says "this one is about you". */
       .pingmark { color: #e0424a; flex: 0 0 auto; }
@@ -838,6 +852,7 @@
           <div id="callNotice"></div>
           <div id="callBtns"></div>
         </div>
+        <div id="screenView" class="hide"></div>
         <div id="topbar">
           <b id="chanName">Home</b>
           <div id="stats"></div>
@@ -1314,6 +1329,17 @@
             "Delivered": "Entregado",
             "Sending": "Enviando",
             "Send read receipts": "Enviar confirmaciones de lectura",
+            "Cancelled the friend request to {name}": "Se canceló la solicitud de amistad a {name}",
+            "Share your screen": "Compartir tu pantalla",
+            "Stop sharing your screen": "Dejar de compartir tu pantalla",
+            "Share your screen?": "¿Compartir tu pantalla?",
+            "This sends a low-quality picture — about ten frames a second at 160p, with no sound — to keep the data down. Over Tor it still uses a lot, and it will look rough. It is for showing something quickly, not for watching video.": "Esto envía una imagen de baja calidad — unos diez fotogramas por segundo a 160p, sin sonido — para reducir los datos. Aun así, por Tor consume mucho y se verá tosca. Es para enseñar algo rápido, no para ver vídeo.",
+            "Share": "Compartir",
+            "Sharing your screen — everyone in the call can see it": "Compartiendo tu pantalla — todos en la llamada pueden verla",
+            "Screen sharing is not available here": "Compartir pantalla no está disponible aquí",
+            "{name} is sharing their screen": "{name} está compartiendo su pantalla",
+            "{name} and {n} more are sharing their screen": "{name} y {n} más están compartiendo su pantalla",
+            "You are sharing your screen": "Estás compartiendo tu pantalla",
             "Notes": "Notas",
             "No notes yet.": "Aún no hay notas.",
             "Write a note to yourself…": "Escribe una nota para ti…",
@@ -2045,6 +2071,17 @@
             "Delivered": "Distribué",
             "Sending": "Envoi en cours",
             "Send read receipts": "Envoyer des accusés de lecture",
+            "Cancelled the friend request to {name}": "Demande d'ami à {name} annulée",
+            "Share your screen": "Partager votre écran",
+            "Stop sharing your screen": "Arrêter de partager votre écran",
+            "Share your screen?": "Partager votre écran ?",
+            "This sends a low-quality picture — about ten frames a second at 160p, with no sound — to keep the data down. Over Tor it still uses a lot, and it will look rough. It is for showing something quickly, not for watching video.": "Cela envoie une image de basse qualité — environ dix images par seconde en 160p, sans son — pour limiter les données. Sur Tor, cela consomme quand même beaucoup et ce sera grossier. C'est pour montrer quelque chose rapidement, pas pour regarder une vidéo.",
+            "Share": "Partager",
+            "Sharing your screen — everyone in the call can see it": "Partage de votre écran — tout le monde dans l'appel peut le voir",
+            "Screen sharing is not available here": "Le partage d'écran n'est pas disponible ici",
+            "{name} is sharing their screen": "{name} partage son écran",
+            "{name} and {n} more are sharing their screen": "{name} et {n} autres partagent leur écran",
+            "You are sharing your screen": "Vous partagez votre écran",
             "Notes": "Notes",
             "No notes yet.": "Aucune note pour l'instant.",
             "Write a note to yourself…": "Écrivez une note pour vous-même…",
@@ -2776,6 +2813,17 @@
             "Delivered": "Zugestellt",
             "Sending": "Wird gesendet",
             "Send read receipts": "Lesebestätigungen senden",
+            "Cancelled the friend request to {name}": "Freundschaftsanfrage an {name} zurückgezogen",
+            "Share your screen": "Deinen Bildschirm teilen",
+            "Stop sharing your screen": "Bildschirmfreigabe beenden",
+            "Share your screen?": "Deinen Bildschirm teilen?",
+            "This sends a low-quality picture — about ten frames a second at 160p, with no sound — to keep the data down. Over Tor it still uses a lot, and it will look rough. It is for showing something quickly, not for watching video.": "Das sendet ein Bild in niedriger Qualität — etwa zehn Bilder pro Sekunde bei 160p, ohne Ton — um die Daten gering zu halten. Über Tor verbraucht es trotzdem viel und sieht grob aus. Es ist dafür da, schnell etwas zu zeigen, nicht um Videos anzusehen.",
+            "Share": "Teilen",
+            "Sharing your screen — everyone in the call can see it": "Bildschirm wird geteilt — alle im Anruf können ihn sehen",
+            "Screen sharing is not available here": "Bildschirmfreigabe ist hier nicht verfügbar",
+            "{name} is sharing their screen": "{name} teilt den Bildschirm",
+            "{name} and {n} more are sharing their screen": "{name} und {n} weitere teilen ihren Bildschirm",
+            "You are sharing your screen": "Du teilst deinen Bildschirm",
             "Notes": "Notizen",
             "No notes yet.": "Noch keine Notizen.",
             "Write a note to yourself…": "Schreib dir eine Notiz…",
@@ -3507,6 +3555,17 @@
             "Delivered": "Entregue",
             "Sending": "A enviar",
             "Send read receipts": "Enviar confirmações de leitura",
+            "Cancelled the friend request to {name}": "Pedido de amizade a {name} cancelado",
+            "Share your screen": "Partilhar o teu ecrã",
+            "Stop sharing your screen": "Parar de partilhar o teu ecrã",
+            "Share your screen?": "Partilhar o teu ecrã?",
+            "This sends a low-quality picture — about ten frames a second at 160p, with no sound — to keep the data down. Over Tor it still uses a lot, and it will look rough. It is for showing something quickly, not for watching video.": "Isto envia uma imagem de baixa qualidade — cerca de dez imagens por segundo a 160p, sem som — para reduzir os dados. Pelo Tor ainda usa muito e vai ficar grosseira. É para mostrar algo rápido, não para ver vídeo.",
+            "Share": "Partilhar",
+            "Sharing your screen — everyone in the call can see it": "A partilhar o teu ecrã — todos na chamada podem vê-lo",
+            "Screen sharing is not available here": "A partilha de ecrã não está disponível aqui",
+            "{name} is sharing their screen": "{name} está a partilhar o ecrã",
+            "{name} and {n} more are sharing their screen": "{name} e mais {n} estão a partilhar o ecrã",
+            "You are sharing your screen": "Estás a partilhar o teu ecrã",
             "Notes": "Notas",
             "No notes yet.": "Ainda não há notas.",
             "Write a note to yourself…": "Escreve uma nota para ti…",
@@ -4381,6 +4440,7 @@
         image: "M4.8 4.8h14.4a1.2 1.2 0 0 1 1.2 1.2v12a1.2 1.2 0 0 1-1.2 1.2H4.8a1.2 1.2 0 0 1-1.2-1.2V6a1.2 1.2 0 0 1 1.2-1.2M9 10.2a1.2 1.2 0 1 0 0-2.4 1.2 1.2 0 0 0 0 2.4M20.4 15l-4.8-4.8L4.8 19.2",
         film: "M4.2 4.8h15.6a.6.6 0 0 1 .6.6v13.2a.6.6 0 0 1-.6.6H4.2a.6.6 0 0 1-.6-.6V5.4a.6.6 0 0 1 .6-.6M7.8 4.8v14.4M16.2 4.8v14.4M3.6 12h16.8M3.6 8.4h4.2M3.6 15.6h4.2M16.2 8.4h4.2M16.2 15.6h4.2",
         music: "M9 18V6l10.2-1.8v12M9 18a2.4 2.4 0 1 1-4.8 0A2.4 2.4 0 0 1 9 18M19.2 16.2a2.4 2.4 0 1 1-4.8 0 2.4 2.4 0 0 1 4.8 0",
+        screen: "M2.4 4.8h19.2v11.4H2.4z M9 20.4h6 M12 16.2v4.2",
         file: "M13.8 3.6H7.2A1.8 1.8 0 0 0 5.4 5.4v13.2a1.8 1.8 0 0 0 1.8 1.8h9.6a1.8 1.8 0 0 0 1.8-1.8V8.4zM13.8 3.6v4.8h4.8",
         invite: "M4.2 12h12M12 6.6 17.4 12 12 17.4M18.6 4.8v14.4",
         sync: "M20.4 12a8.4 8.4 0 1 1-2.5-6M20.4 4.2V10h-5.8",
@@ -5479,10 +5539,6 @@
           if (!held[item.eventId]) return;
           settle(key);
         });
-
-        // A single tick on our own direct messages: the recipient's device is
-        // now holding these ids.
-        markDelivered(community, ids);
       }
 
       var farewells = {};
@@ -8651,8 +8707,8 @@
             col.appendChild(attachmentEl(f));
           });
 
-          // A delivery/read tick on your own direct messages. Only in a DM —
-          // "delivered" and "read" are unambiguous with one recipient.
+          // A sent/read tick on your own direct messages. Only in a DM — "read"
+          // is unambiguous with one recipient. One tick sent, two once read.
           if (m.author === me.userId && currentDM && !m.payload.undecryptable) {
             var receipt = document.createElement("span");
             receipt.className = "receipt";
@@ -8660,13 +8716,9 @@
               receipt.className += " read";
               receipt.textContent = "✓✓";
               receipt.title = t("Read");
-            } else if (receiptDelivered[m.id]) {
-              receipt.textContent = "✓";
-              receipt.title = t("Delivered");
             } else {
-              receipt.className += " sending";
               receipt.textContent = "✓";
-              receipt.title = t("Sending");
+              receipt.title = t("Sent");
             }
             col.appendChild(receipt);
           }
@@ -9230,7 +9282,9 @@
         if (outgoing.length) {
           section2(pane, t("Sent — {n}", { n: outgoing.length }));
           outgoing.forEach(function (uid) {
-            pane.appendChild(friendPaneRow(uid, t("request pending"), []));
+            pane.appendChild(friendPaneRow(uid, t("request pending"), [
+              { icon: "close", title: "Cancel", run: function () { cancelFriendRequest(uid); } },
+            ]));
           });
         }
 
@@ -13244,6 +13298,10 @@
 
         await window.p2p.append(current, "voice.join", { channelId: c.id });
         inVoice = { community: current, channelId: c.id, name: c.name };
+        // Fresh call: nobody has answered yet. renderCallOverlay flips this the
+        // moment somebody else is present (including right now, if we joined one
+        // that was already in progress).
+        callAnswered = false;
 
         markVoicePresent(c.id, me.userId);
         markVoiceSeen(c.id, me.userId);
@@ -13444,6 +13502,9 @@
         voiceState[inVoice.channelId] = (voiceState[inVoice.channelId] || []).filter(function (u) { return u !== me.userId; });
         inVoice = null;
         updateCallFocus();
+        stopScreenShare();
+        screenShares = {};
+        renderScreenView();
         hideCallOverlay();
         stopMic();
         stopLocalVad();
@@ -15902,6 +15963,175 @@
         recorder = null;
       }
 
+      // ===================================================================
+      // Screen sharing
+      //
+      // Low quality on purpose: about ten frames a second at 160p, no sound,
+      // as WebP stills. Each frame is a whole self-contained image, sent over
+      // the very same channel voice uses — tagged "screen:" so the receiver can
+      // tell them apart — which means a lost frame simply skips, the same
+      // turn-taking, Tor-tolerant shape the audio path already has. It is a lot
+      // of data for what it is, which is why it asks before it starts.
+      // ===================================================================
+
+      var SCREEN_H = 160, SCREEN_FPS = 10, SCREEN_Q = 0.42;
+      var screenStream = null, screenTimer = null, screenSeq = 0;
+      var screenSharing = false;
+      var screenShares = {};   // userId -> { url, at, seq } of whoever is sharing
+
+      async function startScreenShare() {
+        if (screenSharing) return;
+        if (!inVoice || String(inVoice.channelId).indexOf("call:") !== 0) return;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+          flash(t("Screen sharing is not available here")); return;
+        }
+
+        var ok = await confirmDialog(
+          t("Share your screen?"),
+          t("This sends a low-quality picture — about ten frames a second at 160p, with no sound — to keep the data down. Over Tor it still uses a lot, and it will look rough. It is for showing something quickly, not for watching video."),
+          t("Share")
+        );
+        if (!ok) return;
+
+        var stream;
+        try {
+          stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { frameRate: SCREEN_FPS, height: SCREEN_H },
+            audio: false,
+          });
+        } catch (e) { return; }   // the picker was dismissed — not an error
+
+        screenStream = stream;
+        screenSharing = true;
+        var channel = inVoice.channelId;
+
+        var track = stream.getVideoTracks()[0];
+        // The browser's own "Stop sharing" control ends the track.
+        if (track) track.addEventListener("ended", function () { stopScreenShare(); });
+
+        var video = document.createElement("video");
+        video.srcObject = stream; video.muted = true; video.playsInline = true;
+        video.play().catch(function () {});
+
+        var canvas = document.createElement("canvas");
+        var ctx = canvas.getContext("2d");
+
+        screenTimer = setInterval(function () {
+          if (!screenSharing || !video.videoWidth) return;
+
+          var vw = video.videoWidth, vh = video.videoHeight;
+          var h = SCREEN_H, w = Math.max(1, Math.round(h * vw / vh));
+          // A cap for very wide displays, so the frame stays small either way.
+          if (w > 320) { w = 320; h = Math.max(1, Math.round(w * vh / vw)); }
+          canvas.width = w; canvas.height = h;
+
+          try { ctx.drawImage(video, 0, 0, w, h); } catch (e) { return; }
+
+          canvas.toBlob(function (blob) {
+            if (!blob || !screenSharing) return;
+            var reader = new FileReader();
+            reader.onload = function () {
+              if (!screenSharing) return;
+              window.p2p.netAudio(
+                "screen:" + channel, ++screenSeq,
+                String(reader.result).split(",")[1]
+              );
+            };
+            reader.readAsDataURL(blob);
+          }, "image/webp", SCREEN_Q);
+        }, Math.round(1000 / SCREEN_FPS));
+
+        renderCallOverlay(); renderScreenView();
+        flash(t("Sharing your screen — everyone in the call can see it"));
+      }
+
+      function stopScreenShare() {
+        if (!screenSharing && !screenStream) return;
+        screenSharing = false;
+        if (screenTimer) { clearInterval(screenTimer); screenTimer = null; }
+        if (screenStream) {
+          screenStream.getTracks().forEach(function (tr) {
+            try { tr.stop(); } catch (e) { /* already stopped */ }
+          });
+          screenStream = null;
+        }
+        // An empty frame is the "stopped" sentinel, so the others hide it now
+        // rather than waiting for the staleness timeout below.
+        if (inVoice) {
+          try {
+            window.p2p.netAudio("screen:" + inVoice.channelId, ++screenSeq, "");
+          } catch (e) { /* not connected — the timeout covers it */ }
+        }
+        renderCallOverlay(); renderScreenView();
+      }
+
+      function toggleScreenShare() {
+        if (screenSharing) stopScreenShare(); else startScreenShare();
+      }
+
+      /** A screen frame from a peer, or an empty sentinel that they stopped. */
+      function onScreenFrame(channel, from, seq, frame) {
+        if (!inVoice || channel !== inVoice.channelId) return;
+        if (from === me.userId) return;
+
+        if (!frame) { delete screenShares[from]; renderScreenView(); return; }
+
+        var cur = screenShares[from];
+        // Tor reorders; a frame older than the one already shown is dropped.
+        if (cur && cur.seq > seq) return;
+        screenShares[from] = {
+          url: "data:image/webp;base64," + frame, at: Date.now(), seq: seq,
+        };
+        renderScreenView();
+      }
+
+      // A sharer who vanished without sending the sentinel is forgotten once
+      // their frames stop arriving.
+      setInterval(function () {
+        var now = Date.now(), changed = false;
+        Object.keys(screenShares).forEach(function (u) {
+          if (now - screenShares[u].at > 6000) { delete screenShares[u]; changed = true; }
+        });
+        if (changed) renderScreenView();
+      }, 2000);
+
+      /** Draw whatever screen is being shared into the conversation. */
+      function renderScreenView() {
+        var box = $("screenView");
+        if (!box) return;
+
+        var sharers = Object.keys(screenShares);
+        var active = inVoice && String(inVoice.channelId).indexOf("call:") === 0;
+
+        if (!active || (!sharers.length && !screenSharing)) {
+          box.className = "hide"; box.innerHTML = ""; return;
+        }
+
+        box.className = ""; box.innerHTML = "";
+
+        if (sharers.length) {
+          sharers.sort(function (a, b) { return screenShares[b].at - screenShares[a].at; });
+          var who = sharers[0];
+
+          var img = document.createElement("img");
+          img.className = "screenImg";
+          img.src = screenShares[who].url;
+          box.appendChild(img);
+
+          var label = document.createElement("div");
+          label.className = "screenLabel";
+          label.textContent = sharers.length > 1
+            ? t("{name} and {n} more are sharing their screen", { name: nameOf(who), n: sharers.length - 1 })
+            : t("{name} is sharing their screen", { name: nameOf(who) });
+          box.appendChild(label);
+        } else {
+          var mine = document.createElement("div");
+          mine.className = "screenLabel";
+          mine.textContent = t("You are sharing your screen");
+          box.appendChild(mine);
+        }
+      }
+
       // ---- playback ----------------------------------------------------
       //
       // One AudioContext for everyone, feeding a MediaStreamDestination that
@@ -16891,6 +17121,16 @@
       var ringTimer = null;
       var incoming = null;   // { community, channelId, name, from }
 
+      // Calls this device has declined, by channel id -> when. A call has no
+      // "no" event — the caller just keeps nudging — so a decline is remembered
+      // here and repeat rings for it are ignored until the caller gives up.
+      var declinedCalls = {};
+
+      // Whether anyone other than us has been in the current call. Once true, a
+      // moment alone is "they stepped out", not "still ringing" — so the overlay
+      // stops saying Ringing… the instant the call has actually been answered.
+      var callAnswered = false;
+
       // ===================================================================
       // Reaching somebody now
       //
@@ -17033,6 +17273,7 @@
         reportCallAudio(false);
         stopRinging();
         incoming = null;
+        callAnswered = false;
         $("callOverlay").className = "";
       }
 
@@ -17058,7 +17299,10 @@
         var channelId = ringingIn ? incoming.channelId : inVoice.channelId;
         var here = (voiceState[channelId] || []);
         var others = here.filter(function (u) { return u !== me.userId; });
-        var waiting = active && others.length === 0;
+        // Once somebody else has been here, the call has been answered — so a
+        // moment alone afterwards is not "still calling" and must not say so.
+        if (active && others.length > 0) callAnswered = true;
+        var waiting = active && others.length === 0 && !callAnswered;
 
         box.className = "show" + ((ringingIn || waiting) ? " ringing" : "");
 
@@ -17130,6 +17374,13 @@
           if (playGain) playGain.gain.value = isDeafened ? 0 : outVolume();
           applyMute(); renderCallOverlay();
         });
+        // Only where the platform can actually capture a screen. iOS cannot
+        // (that needs a native recorder), but it can still watch a share.
+        if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
+          btn("screen", screenSharing ? "act" : "",
+            screenSharing ? "Stop sharing your screen" : "Share your screen",
+            toggleScreenShare);
+        }
         btn("gear", "", "Voice settings", voiceSettings);
         btn("phoneOff", "hang", "Leave call", function () { leaveVoice(); });
       }
@@ -17160,6 +17411,12 @@
         // sitting in a voice channel, and declining simply means not joining
         // it. Announcing a refusal would be a new event type that exists only
         // to say "no", and it would replicate forever.
+        //
+        // But the caller keeps nudging for the length of a ring, and each nudge
+        // used to pop this straight back up. So the decision is remembered and
+        // repeat rings for the same call are ignored (see maybeRing) until the
+        // caller gives up, at which point ring.cancel clears it.
+        if (incoming) declinedCalls[incoming.channelId] = Date.now();
         hideCallOverlay();
       }
 
@@ -17174,6 +17431,18 @@
         if (!e.payload || String(e.payload.channelId || "").indexOf("call:") !== 0) return;
         if (inVoice && inVoice.channelId === e.payload.channelId) return;
         if (incoming) return;
+
+        // One of our own devices is already in this call — it was answered on
+        // another screen — so this one must not also start ringing. Devices
+        // share a user id, so our presence shows up in the same voice roster.
+        if ((voiceState[e.payload.channelId] || []).indexOf(me.userId) >= 0) return;
+
+        // Already declined this exact call. The caller keeps nudging for the
+        // length of a ring; without this each nudge popped the overlay straight
+        // back up. Cleared when the caller gives up — see the ring.cancel
+        // handler — so a genuinely new call later still rings.
+        var declinedAt = declinedCalls[e.payload.channelId];
+        if (declinedAt && Date.now() - declinedAt < 45000) return;
 
         // Something happening, not something being copied across.
         //
@@ -17848,6 +18117,25 @@
         renderSide();
       }
 
+      /**
+       * Withdraw a friend request we sent, the way Discord lets you.
+       *
+       * A `friend.decline` authored by us is the same event a decline is, and it
+       * does the right thing on the other side — their state falls to "none" and
+       * the request disappears. Owed, so somebody who was offline when we asked
+       * still learns it was pulled rather than being left with a request that no
+       * longer stands. Either of us can ask again afterwards and it revives.
+       */
+      async function cancelFriendRequest(uid) {
+        var id = dmIdFor(uid);
+        var pulled = await window.p2p.append(id, "friend.decline", { to: uid });
+        if (pulled && pulled.id) await owe(uid, id, pulled.id, "invite");
+        await window.p2p.netAnnounce();
+        requests[uid] = "declined";
+        renderSide(); renderFriendsPane();
+        flash(t("Cancelled the friend request to {name}", { name: nameOf(uid) }));
+      }
+
       function pendingIncoming() {
         return Object.keys(requests).filter(function (u) {
           if (friends.some(function (f) { return f.userId === u; })) return false;
@@ -18491,30 +18779,26 @@
         renderRail(); renderSide();
       }
 
-      // ---- delivery & read receipts (direct messages) ---------------------
+      // ---- read receipts (direct messages) --------------------------------
       //
-      // Two ticks on your own messages, the way several chat apps show them: a
-      // single tick once the other device is holding the message, a double
-      // once they have read it. Direct conversations only — a group has many
-      // recipients, so "delivered" and "read" there would each have to mean
-      // "by everyone", a different and much noisier thing to get right.
+      // One tick on your own messages the moment they are sent, a second once
+      // the other side has read them — the two-state form the request asked
+      // for. Direct conversations only: a group has many recipients, so "read"
+      // there would have to mean "by everyone", a different and noisier thing.
       //
-      // Delivery is a fact the transport already reports (`onDelivered`, the
-      // ack a peer sends for everything it now holds). Reading is not something
-      // any device can observe about another, so it is sent deliberately, over
-      // the same advisory signal channel as presence — and only when the
-      // reader has chosen to send read receipts at all.
+      // Reading is not something any device can observe about another, so it is
+      // sent deliberately over the advisory signal channel (only when the
+      // reader has read receipts on). What arrives is recorded in @index rather
+      // than only in memory, so a read tick shown on the desktop is the same
+      // tick shown on the phone — the state follows the account across devices
+      // like everything else in the index does.
 
-      var receiptDelivered = {};   // messageId -> the recipient's device holds it
       var readByPeer = {};         // dm community -> newest message timestamp they have read
 
-      function markDelivered(community, ids) {
-        if (String(community).indexOf("dm") !== 0) return;
-        var any = false;
-        ids.forEach(function (id) {
-          if (!receiptDelivered[id]) { receiptDelivered[id] = true; any = true; }
-        });
-        if (any && community === current) repaint("messages");
+      /** Persist the partner's read point so this device's siblings agree. */
+      function recordReadBy(community, at) {
+        window.p2p.append(INDEX, "read.by", { community: community, at: at })
+          .catch(function () {});
       }
 
       /** The newest message the partner wrote, so a receipt names a point. */
@@ -19622,7 +19906,7 @@
         readAt = {};
         listening = {};
         servers = []; friends = []; dms = []; groups = []; notes = [];
-        conversations = {}; closedDMs = {};
+        conversations = {}; closedDMs = {}; readByPeer = {};
         peerAddresses = {}; blocked_ = {}; peerEncKeys = {}; communityKeys = {};
         communityKeyHistory = {};
         var icons = {}, renames = {};
@@ -19770,6 +20054,11 @@
             listening[p.id] = !!p.listening;
           }
           else if (e.type === "read.set") readAt[p.key] = p.at;
+          else if (e.type === "read.by") {
+            if (p.community && (readByPeer[p.community] || 0) < (p.at || 0)) {
+              readByPeer[p.community] = p.at || 0;
+            }
+          }
           // Someone who has asked to be friends but is not one yet. They are
           // in no other list, so without this note their request would be
           // forgotten on restart.
@@ -19847,6 +20136,10 @@
         // Notes to self, so a note written on a sibling device appears here as
         // soon as it syncs rather than only after a full pass.
         "note.add": 1, "note.del": 1,
+
+        // A read receipt the other side sent us, so every one of our devices
+        // shows the same read tick rather than only the one that was connected.
+        "read.by": 1,
       };
 
       var indexRefreshTimer = null;
@@ -20338,6 +20631,9 @@
           }
 
           if (data.t === "ring.cancel") {
+            // The caller has given up. A later call to the same channel should
+            // ring again, so forget any decline recorded against it.
+            delete declinedCalls[String(data.channelId || "")];
             if (incoming && incoming.from === from &&
                 incoming.channelId === String(data.channelId || "")) {
               hideCallOverlay();
@@ -20444,6 +20740,8 @@
             if (rcid !== dmIdFor(from)) return;
             if ((readByPeer[rcid] || 0) < rat) {
               readByPeer[rcid] = rat;
+              // Written to the index so this device's siblings show it too.
+              recordReadBy(rcid, rat);
               if (rcid === current) repaint("messages");
             }
             return;
@@ -20476,6 +20774,11 @@
         });
 
         window.p2p.onAudio(function (channel, from, seq, frame) {
+          // Screen frames ride the same transport as voice, tagged apart.
+          if (String(channel).indexOf("screen:") === 0) {
+            onScreenFrame(String(channel).slice(7), from, seq, frame);
+            return;
+          }
           if (!inVoice || channel !== inVoice.channelId) return;
           if (from === me.userId) return;
           playFrame(from, seq, frame);
@@ -20848,7 +21151,15 @@
             }
             else if (e.type === "voice.join" || e.type === "voice.here" ||
                      e.type === "voice.leave") {
-              if (e.type === "voice.join") maybeRing(community, e);
+              if (e.type === "voice.join") {
+                // A join by one of our own devices means the call was answered
+                // on another screen — clear any ring still showing here for it.
+                if (e.author === me.userId && incoming &&
+                    incoming.channelId === e.payload.channelId) {
+                  hideCallOverlay();
+                }
+                maybeRing(community, e);
+              }
               if (e.type !== "voice.leave") {
                 // Only a real join makes a sound. `voice.here` is a heartbeat
                 // from people already in the room, and announcing it would be

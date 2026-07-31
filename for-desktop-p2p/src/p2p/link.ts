@@ -108,6 +108,9 @@ export const WORTH_SYNCING = new Set([
   // friend added rather than waiting for the periodic pass.
   "note.add",
   "note.del",
+  // A read receipt from the other side, so every one of this account's devices
+  // shows the same read tick rather than only whichever one caught the signal.
+  "read.by",
 ]);
 
 /**
