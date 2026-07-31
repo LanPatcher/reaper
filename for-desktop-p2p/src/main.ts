@@ -1,5 +1,7 @@
 import { BrowserWindow, app, shell } from "electron";
-import started from "electron-squirrel-startup";
+
+import { rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import {
   registerClientProtocol,
@@ -25,12 +27,75 @@ import { registerP2PHandlers, shutdownP2P } from "./p2p/bridge";
 // runs at module scope rather than inside the ready handler below.
 registerClientScheme();
 
-// Squirrel-specific logic
-// create/remove shortcuts on Windows when installing / uninstalling
-// we just need to close out of the app immediately
-if (started) {
+/**
+ * Squirrel install / update / uninstall.
+ *
+ * Handled here rather than by electron-squirrel-startup, because that package
+ * creates shortcuts that point at the Squirrel *stub* launcher at the install
+ * root — and launching Reaper through that stub stops the bundled Tor from
+ * ever starting. A direct launch of the versioned executable works; the stub
+ * does not. That is exactly the "Tor never initialises from the installer,
+ * torRunning stays false" symptom.
+ *
+ * So the shortcuts are written to point straight at the real versioned exe,
+ * with its own folder as the working directory — the same thing double-clicking
+ * the exe does. They are rewritten on every update, so they always follow the
+ * current version rather than pinning to the one that installed them.
+ */
+function handleSquirrelEvent(): boolean {
+  if (process.platform !== "win32") return false;
+
+  const event = process.argv[1];
+  if (!event || !event.startsWith("--squirrel")) return false;
+
+  const target = process.execPath; // ...\app-<version>\reaper.exe
+  const home = dirname(target);
+  const links = [
+    join(
+      app.getPath("appData"),
+      "Microsoft",
+      "Windows",
+      "Start Menu",
+      "Programs",
+      "Reaper.lnk",
+    ),
+    join(app.getPath("desktop"), "Reaper.lnk"),
+  ];
+
+  if (event === "--squirrel-install" || event === "--squirrel-updated") {
+    for (const link of links) {
+      try {
+        shell.writeShortcutLink(link, "create", {
+          target,
+          cwd: home,
+          icon: target,
+          iconIndex: 0,
+          appUserModelId: "chat.reaper.notifications",
+          description: "Serverless, end-to-end encrypted chat over Tor.",
+        });
+      } catch {
+        // Best effort. A missing shortcut is recoverable; letting a throw here
+        // take the whole installer down is not.
+      }
+    }
+  } else if (event === "--squirrel-uninstall") {
+    for (const link of links) {
+      try {
+        rmSync(link, { force: true });
+      } catch {
+        // Already gone.
+      }
+    }
+  }
+
+  // --squirrel-obsolete, --squirrel-firstrun and anything else: just leave.
   app.quit();
+  return true;
 }
+
+// Windows install/update/uninstall hooks. This is what makes the installed
+// app's shortcut launch the real exe (and therefore Tor) correctly.
+handleSquirrelEvent();
 
 // disable hw-accel if so requested
 if (!config.hardwareAcceleration) {
