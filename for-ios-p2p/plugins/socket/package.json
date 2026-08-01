@@ -1,18 +1,22 @@
 {
   "name": "@reaper/socket",
   "version": "0.1.0",
-  "description": "TCP over Network.framework, dialled through a local SOCKS5 proxy.",
+  "description": "Raw TCP, dialled through a local SOCKS5 proxy.",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "files": [
     "dist/",
     "ios/Sources/",
+    "android/",
     "ReaperSocket.podspec"
   ],
   "capacitor": {
     "ios": {
       "src": "ios"
+    },
+    "android": {
+      "src": "android"
     }
   },
   "scripts": {

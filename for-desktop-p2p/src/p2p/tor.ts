@@ -34,6 +34,18 @@ export const SOCKS_PORT = 9250;
 const CONTROL_PORT = 9251;
 
 /**
+ * How long to wait for a hidden-service descriptor to actually be accepted
+ * by the network, once its address is known.
+ *
+ * Generous, and deliberately much longer than `SOCKS_BOOT_MS`: publishing a
+ * descriptor needs a *bootstrapped* client with working circuits, which is
+ * usually tens of seconds behind the SOCKS port opening and can be worse on
+ * a slow network. This is the number that decides how long "still
+ * publishing" is allowed to mean before it is reported as a real failure.
+ */
+const PUBLISH_TIMEOUT_MS = 120000;
+
+/**
  * How long to wait for a peer before giving up on this attempt.
  *
  * Generous, because a Tor circuit to an onion service legitimately takes
@@ -112,6 +124,33 @@ export class TorService extends EventEmitter {
   #options: TorOptions;
   #onionAddress: string | undefined;
   #syncAddress: string | undefined;
+
+  /**
+   * The control connection used only to learn when a descriptor has
+   * genuinely been accepted by the network — see `#confirmPublication`.
+   * Nothing about carrying traffic depends on it; a device that never
+   * manages to open it still works, it just never resolves the "confirmed"
+   * side of the wait and eventually reports that honestly instead of lying
+   * about it sooner.
+   */
+  #control: Socket | undefined;
+
+  /**
+   * Addresses tor has told us, over the control port, that it actually
+   * uploaded a descriptor for — as opposed to `#onionAddress`/`#syncAddress`,
+   * which only mean the *key* exists and says what the address would be.
+   * Bare, without the `.onion` suffix, matching the control protocol's own
+   * `HSAddress` field.
+   */
+  #uploaded = new Set<string>();
+
+  /** Whether the *account* address specifically has been confirmed reachable. */
+  #accountConfirmed = false;
+
+  /** Whether the account address has been confirmed genuinely published. */
+  get published(): boolean {
+    return this.#accountConfirmed;
+  }
 
   /**
    * Publish the account address, or stop publishing it.
@@ -223,6 +262,14 @@ export class TorService extends EventEmitter {
       `SocksPort ${SOCKS_PORT}`,
       `ControlPort ${CONTROL_PORT}`,
       `DataDirectory ${join(dataDir, "state")}`,
+      // The control port exists so this process can find out when a
+      // descriptor actually publishes — see `#confirmPublication` below —
+      // and without this line tor opens it with no authentication at all,
+      // which it warns about for good reason: any other local process could
+      // connect and reconfigure it. `CookieAuthentication` makes the only
+      // thing that can authenticate the thing that can already read this
+      // device's own Tor state directory.
+      "CookieAuthentication 1",
     ];
 
     // Whether the *account* service is offered at all.
@@ -277,8 +324,28 @@ export class TorService extends EventEmitter {
       if (line) this.emit("log", line);
     });
 
-    this.#process.on("exit", (code) => {
-      this.emit("log", `tor exited with code ${code}`);
+    // Tor itself writes its own log to the file below, via `Log ... file`,
+    // so stdout is normally near-empty — but a dynamic linker failure (a
+    // missing shared library the binary was built against, which the
+    // packaged app's own dependency list does not necessarily cover; see
+    // forge.config.ts) prints straight to stderr and exits before tor's
+    // logging even starts. Unread until now, which meant that exact
+    // failure — the binary existing but refusing to run — was invisible:
+    // `waitForSocks` just timed out after 30 seconds with no clue why.
+    this.#process.stderr?.on("data", (chunk: Buffer) => {
+      const line = chunk.toString("utf8").trim();
+      if (line) this.emit("log", `[stderr] ${line}`);
+    });
+
+    this.#process.on("error", (error) => {
+      this.emit("log", `tor could not be started: ${error.message}`);
+    });
+
+    this.#process.on("exit", (code, signal) => {
+      this.emit(
+        "log",
+        `tor exited with code ${code}${signal ? ` (signal ${signal})` : ""}`,
+      );
       this.#process = undefined;
       this.#onionAddress = undefined;
     });
@@ -289,6 +356,11 @@ export class TorService extends EventEmitter {
     // being waited for.
     await waitForSocks(SOCKS_BOOT_MS);
     this.emit("log", `socks is accepting connections on ${SOCKS_PORT}`);
+
+    // Best-effort and backgrounded: nothing that carries traffic depends on
+    // this connection existing, only on knowing when a descriptor has
+    // actually gone out — see `#confirmPublication`.
+    void this.#connectControl();
 
     // The sync service publishes on its own schedule, usually a few seconds
     // behind. Watched in the background rather than waited for, so nothing
@@ -301,19 +373,50 @@ export class TorService extends EventEmitter {
     if (!this.#options.account) return undefined;
 
     const hostnameFile = join(serviceDir, "hostname");
-    const address = await waitForFile(hostnameFile, 60000);
+    const address = (await waitForFile(hostnameFile, 60000)).trim();
 
-    this.#onionAddress = address.trim();
-    this.emit("ready", this.#onionAddress);
+    this.#onionAddress = address;
+    this.emit("ready", address);
 
-    return this.#onionAddress;
+    // The file above only proves the address was *derived* from the key —
+    // tor writes it the moment the service directory is read, which needs
+    // no network at all. Whether anyone can actually reach it is a separate
+    // question, answered only once the control port reports the descriptor
+    // was genuinely accepted somewhere. Confirmed in the background so
+    // `start()` keeps resolving as soon as the address is known, same as
+    // before; callers that need to know reachability watch `"published"` or
+    // poll `.published` instead of trusting `"ready"` to mean it.
+    void this.#confirmPublication(address).then((confirmed) => {
+      if (confirmed) {
+        this.#accountConfirmed = true;
+        this.emit("published", address);
+        this.emit("log", `onion service confirmed reachable: ${address}`);
+      } else {
+        this.emit(
+          "log",
+          `onion service address is ${address}, but publication was not ` +
+            `confirmed within ${Math.round(PUBLISH_TIMEOUT_MS / 1000)}s`,
+        );
+      }
+    });
+
+    return address;
   }
 
   async #watchSync(hostnameFile: string): Promise<void> {
     try {
-      const found = await waitForFile(hostnameFile, 120000);
-      this.#syncAddress = found.trim();
-      this.emit("sync", this.#syncAddress);
+      const found = (await waitForFile(hostnameFile, 120000)).trim();
+      this.#syncAddress = found;
+      this.emit("sync", found);
+
+      const confirmed = await this.#confirmPublication(found);
+      this.emit(
+        "log",
+        confirmed
+          ? `sync service confirmed reachable: ${found}`
+          : `sync service address is ${found}, but publication was not ` +
+              `confirmed within ${Math.round(PUBLISH_TIMEOUT_MS / 1000)}s`,
+      );
     } catch {
       // Given up on quietly. A device with no sync address still works — it
       // simply has to be the one that dials rather than the one that answers.
@@ -321,11 +424,173 @@ export class TorService extends EventEmitter {
     }
   }
 
+  // ---- confirming publication, over the control port -----------------------
+  //
+  // A hidden-service directory produces a `hostname` file the instant tor
+  // reads the key — no network involved, since the address is just the
+  // public key spelled out in base32. Treating that file as "published" (the
+  // .onion equivalent of "online") was the mistake here for a long time: it
+  // reported an address as reachable up to a minute before the network
+  // actually had a route to it, so anything that tried to connect based on
+  // that message failed, and looked from the outside like publishing simply
+  // never happened. This is only real evidence: tor's own `HS_DESC UPLOADED`
+  // control event, which it emits once a descriptor has actually been
+  // accepted by an HSDir.
+
+  /**
+   * Open the control connection and start watching for descriptor uploads.
+   *
+   * Idempotent. Best-effort: a failure here is reported through the normal
+   * log, and every `#confirmPublication` wait still resolves — honestly, to
+   * "not confirmed" — via its own timeout rather than hanging on a
+   * connection that is never coming.
+   */
+  async #connectControl(): Promise<void> {
+    if (this.#control) return;
+
+    const socket = new Socket();
+    this.#control = socket;
+
+    const lines: string[] = [];
+    let notifyLine: (() => void) | undefined;
+    let buffer = "";
+
+    socket.on("data", (chunk: Buffer) => {
+      buffer += chunk.toString("utf8");
+
+      let index: number;
+      while ((index = buffer.indexOf("\r\n")) >= 0) {
+        const line = buffer.slice(0, index);
+        buffer = buffer.slice(index + 2);
+
+        // An asynchronous event, not a reply to something sent below.
+        if (line.startsWith("650")) {
+          this.#handleControlEvent(line);
+          continue;
+        }
+
+        lines.push(line);
+        notifyLine?.();
+      }
+    });
+
+    socket.on("close", () => {
+      if (this.#control === socket) this.#control = undefined;
+    });
+    // Swallowed deliberately: the connect attempt below has its own
+    // listener, and every later write on a socket that has already errored
+    // is a no-op, not a second failure to report.
+    socket.on("error", () => {});
+
+    const nextLine = (): Promise<string> => {
+      const existing = lines.shift();
+      if (existing !== undefined) return Promise.resolve(existing);
+      return new Promise((resolve) => {
+        notifyLine = () => {
+          const line = lines.shift();
+          if (line !== undefined) {
+            notifyLine = undefined;
+            resolve(line);
+          }
+        };
+      });
+    };
+
+    try {
+      // Written by tor at startup because `CookieAuthentication 1` is in the
+      // torrc above. 32 arbitrary bytes, not text — read as a buffer, not
+      // through `waitForFile`, which would corrupt it at the first byte that
+      // is not valid UTF-8.
+      const cookiePath = join(this.#options.dataDir, "state", "control_auth_cookie");
+      const cookie = await waitForFileBuffer(cookiePath, 10000);
+
+      await new Promise<void>((resolve, reject) => {
+        socket.once("error", reject);
+        socket.connect(CONTROL_PORT, "127.0.0.1", () => {
+          socket.removeListener("error", reject);
+          resolve();
+        });
+      });
+
+      socket.write(`AUTHENTICATE ${cookie.toString("hex")}\r\n`);
+      const authReply = await nextLine();
+      if (!authReply.startsWith("250")) {
+        throw new Error(`authentication refused: ${authReply}`);
+      }
+
+      socket.write("SETEVENTS HS_DESC\r\n");
+      const eventsReply = await nextLine();
+      if (!eventsReply.startsWith("250")) {
+        throw new Error(`could not subscribe to HS_DESC events: ${eventsReply}`);
+      }
+    } catch (error) {
+      this.emit(
+        "log",
+        `control port unavailable, publication will not be confirmed: ${(error as Error).message}`,
+      );
+      socket.destroy();
+      if (this.#control === socket) this.#control = undefined;
+    }
+  }
+
+  /**
+   * `650 HS_DESC UPLOADED <address> <AuthType> <HsDir> ...` is the one line
+   * this is watching for. `<address>` arrives without the `.onion` suffix,
+   * matching the control protocol's own `HSAddress` field — everything this
+   * is compared against is normalised the same way, in `#confirmPublication`.
+   */
+  #handleControlEvent(line: string): void {
+    const parts = line.split(" ");
+    if (parts[1] !== "HS_DESC" || parts[2] !== "UPLOADED") return;
+
+    const address = (parts[3] ?? "").toLowerCase().replace(/\.onion$/, "");
+    if (!address) return;
+
+    this.#uploaded.add(address);
+    this.emit("_uploaded", address);
+  }
+
+  /**
+   * Wait until the control port reports this specific address was actually
+   * uploaded, or give up after `PUBLISH_TIMEOUT_MS`.
+   *
+   * `"_uploaded"` is internal — emitted on this same `EventEmitter` rather
+   * than a separate one because the class already is one, and a second
+   * pub/sub mechanism next to the first would be one more thing to keep in
+   * step for no benefit here.
+   */
+  async #confirmPublication(fullAddress: string): Promise<boolean> {
+    await this.#connectControl();
+
+    const bare = fullAddress.toLowerCase().replace(/\.onion$/, "");
+    if (this.#uploaded.has(bare)) return true;
+
+    return new Promise((resolve) => {
+      const onUploaded = (address: string) => {
+        if (address !== bare) return;
+        clearTimeout(timer);
+        this.removeListener("_uploaded", onUploaded);
+        resolve(true);
+      };
+
+      const timer = setTimeout(() => {
+        this.removeListener("_uploaded", onUploaded);
+        resolve(false);
+      }, PUBLISH_TIMEOUT_MS);
+
+      this.on("_uploaded", onUploaded);
+    });
+  }
+
   stop(): void {
     this.#process?.kill();
     this.#process = undefined;
     this.#onionAddress = undefined;
     this.#syncAddress = undefined;
+    this.#control?.destroy();
+    this.#control = undefined;
+    this.#uploaded.clear();
+    this.#accountConfirmed = false;
   }
 }
 
@@ -649,6 +914,30 @@ async function waitForFile(path: string, timeoutMs: number): Promise<string> {
     }
 
     await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+/**
+ * Poll for a file to exist and be non-empty, returning its raw bytes.
+ *
+ * Used for the control auth cookie, which is 32 arbitrary bytes — reading it
+ * as text the way `waitForFile` does would corrupt any byte that is not
+ * valid UTF-8, silently, rather than fail loudly.
+ */
+async function waitForFileBuffer(path: string, timeoutMs: number): Promise<Buffer> {
+  const deadline = Date.now() + timeoutMs;
+
+  for (;;) {
+    if (existsSync(path)) {
+      const contents = readFileSync(path);
+      if (contents.length > 0) return contents;
+    }
+
+    if (Date.now() > deadline) {
+      throw new Error(`the control auth cookie did not appear within ${timeoutMs}ms`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
 }
 

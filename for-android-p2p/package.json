@@ -1,0 +1,35 @@
+{
+  "name": "reaper-android",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reaper for Android — serverless, end-to-end encrypted chat over Tor.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "sync": "npm run build && cap sync android",
+    "shim:test": "cd ../for-ios-p2p && node scripts/shim.mjs",
+    "android:build": "build-android.bat"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.5.0",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.4.2",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/preferences": "^8.0.1",
+    "@noble/ciphers": "^2.2.0",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0",
+    "@reaper/notify": "file:../for-ios-p2p/plugins/notify",
+    "@reaper/socket": "file:../for-ios-p2p/plugins/socket",
+    "@reaper/tor": "file:../for-ios-p2p/plugins/tor",
+    "brotli-wasm": "^3.0.1",
+    "buffer": "^6.0.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.4.2",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0",
+    "vite": "^6.0.0"
+  }
+}

@@ -2,7 +2,7 @@
   "name": "reaper-ios",
   "version": "0.1.0",
   "private": true,
-  "description": "Reaper for iOS \u2014 serverless, end-to-end encrypted chat over Tor.",
+  "description": "Reaper for iOS — serverless, end-to-end encrypted chat over Tor.",
   "type": "module",
   "scripts": {
     "dev": "vite",

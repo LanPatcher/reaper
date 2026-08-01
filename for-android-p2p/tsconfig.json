@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "paths": {
+      "node:crypto": ["../for-ios-p2p/src/shim/crypto.ts"],
+      "node:zlib": ["../for-ios-p2p/src/shim/zlib.ts"],
+      "node:fs": ["../for-ios-p2p/src/shim/fs.ts"],
+      "node:path": ["../for-ios-p2p/src/shim/path.ts"],
+      "node:net": ["../for-ios-p2p/src/shim/net.ts"],
+      "node:events": ["../for-ios-p2p/src/shim/events.ts"]
+    }
+  },
+  "include": ["*.ts", "../for-ios-p2p/src/**/*.ts"]
+}

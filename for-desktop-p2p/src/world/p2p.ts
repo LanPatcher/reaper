@@ -307,6 +307,8 @@ contextBridge.exposeInMainWorld("p2p", {
   /** This device's onion address and Tor status. */
   netInfo: (): Promise<{
     onion?: string;
+    /** Whether `onion` has been confirmed reachable, not just derived from the key. */
+    onionPublished: boolean;
     torRunning: boolean;
     peers: { userId?: string; address: string; inbound: boolean }[];
   }> => ipcRenderer.invoke("p2p:netInfo"),
