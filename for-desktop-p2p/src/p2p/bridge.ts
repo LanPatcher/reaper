@@ -708,8 +708,17 @@ async function publishIfHolding(): Promise<string | undefined> {
     // is always there. On a phone Tor is a library that publishes on its own
     // schedule, so this returns before there is one — and the log said "onion
     // service published: undefined", which reads as a failure and is not one.
+    //
+    // "published" is deliberately not said here even when `onion` is set:
+    // `tor.start()` resolves as soon as the address is *known* — the hostname
+    // file tor writes the instant it reads the service key, no network
+    // involved — not once anyone can actually reach it. Saying "published"
+    // at this point was the earlier bug: the log claimed success up to a
+    // minute before the descriptor had actually gone anywhere. `tor.ts` logs
+    // the real thing itself, over the control port, once it has genuine
+    // confirmation — see its `"published"` event.
     log("[tor]", onion
-      ? `onion service published: ${onion}`
+      ? `tor is up; this device's address is ${onion} (confirming it can be reached...)`
       : "tor is up; the account address will be published shortly");
 
     return onion;
@@ -1742,7 +1751,10 @@ async function ensureTorClient(): Promise<void> {
     tor.on("log", (line: string) => log("[tor]", line));
 
     tor.on("sync", (address: string) => {
-      log("[pair]", `this device can be reached for sync at ${address}`);
+      // "can be reached" deliberately not said here — the address is known
+      // (tor wrote its hostname file), not yet confirmed reachable. `tor.ts`
+      // logs that itself, over the control port, once it genuinely is.
+      log("[pair]", `this device's sync address is ${address} (confirming it can be reached...)`);
 
       // Only once there is an account to write it into. On a device still
       // waiting to be linked there is no identity to sign an index event with,
@@ -2102,12 +2114,26 @@ function torExecutable(): string {
   const name = process.platform === "win32" ? "tor.exe" : "tor";
 
   // One location per build type, populated by `npm run vendor:tor`. Probing
-  // for a Tor Browser install was tempting and wrong: it works on the machine
-  // that happens to have one and silently produces an unreachable app
-  // everywhere else, which is the worst kind of build difference.
-  return app.isPackaged
+  // for a Tor Browser install was tempting and wrong on Windows/Mac: it works
+  // on the machine that happens to have one and silently produces an
+  // unreachable app everywhere else, which is the worst kind of build
+  // difference.
+  const bundled = app.isPackaged
     ? join(process.resourcesPath, "tor", name)
     : join(app.getAppPath(), "vendor", "tor", name);
+
+  // Linux is different: the `.deb` declares `tor` as a hard `Depends`, so
+  // `apt install` guarantees a real, ABI-correct binary for that exact OS —
+  // a stronger guarantee than a copy vendored on whatever machine happened to
+  // build the package. If the bundle is missing or fails to exec (mismatched
+  // libc, a build that skipped `vendor:tor`), fall back to the one apt just
+  // put on the system rather than leaving the app unreachable when a working
+  // Tor is sitting right there.
+  if (process.platform === "linux" && !existsSync(bundled) && existsSync("/usr/bin/tor")) {
+    return "/usr/bin/tor";
+  }
+
+  return bundled;
 }
 
 /**
@@ -2628,7 +2654,10 @@ export function registerP2PHandlers(): void {
 
     // The sync address arrives a few seconds after the first one.
     tor.on("sync", (address: string) => {
-      log("[link]", `this device can be reached for sync at ${address}`);
+      // "can be reached" deliberately not said here — the address is known
+      // (tor wrote its hostname file), not yet confirmed reachable. `tor.ts`
+      // logs that itself, over the control port, once it genuinely is.
+      log("[link]", `this device's sync address is ${address} (confirming it can be reached...)`);
       recordSyncAddress(address);
       announceDevices();
     });
@@ -3803,6 +3832,11 @@ export function registerP2PHandlers(): void {
 
   ipcMain.handle(CHANNEL.netInfo, () => ({
     onion: tor?.address,
+    // Whether the address above has actually been confirmed reachable (a
+    // real `HS_DESC UPLOADED` from the control port), not merely derived
+    // from the key — the two used to be conflated, which is what let this
+    // report an address as live up to a minute before it genuinely was.
+    onionPublished: tor?.published ?? false,
     torRunning: tor?.running ?? false,
     peers: transport?.peers() ?? [],
   }));

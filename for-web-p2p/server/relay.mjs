@@ -54,6 +54,35 @@ import { control } from "./control.mjs";
  * different hat.
  */
 
+/**
+ * Keep the process running through anything that would otherwise kill it.
+ *
+ * `systemd`'s `Restart=always` (see deploy/reaper-web.service) recovers a
+ * process that has actually exited, but that is not the same failure as this
+ * one. Node's default reaction to a synchronous throw that escapes every
+ * handler, or a rejected promise nobody awaited, is to exit anyway — and
+ * because one relay process carries every visitor's session in the same
+ * event loop, one malformed message from one tab would otherwise take down
+ * everybody else's open sockets along with it. Logged and swallowed instead:
+ * whatever threw has already failed on its own request, and the rest of the
+ * process has nothing to do with it.
+ *
+ * Registered first, before anything below can throw. Nothing about the
+ * visitor is in these logs, matching the rest of this file — an error is
+ * code, not content.
+ */
+function surviveCrashes() {
+  process.on("uncaughtException", (error) => {
+    console.error(`  [recovered] uncaught exception: ${error?.stack ?? error}`);
+  });
+
+  process.on("unhandledRejection", (reason) => {
+    console.error(`  [recovered] unhandled rejection: ${reason?.stack ?? reason}`);
+  });
+}
+
+surviveCrashes();
+
 /** Where Tor's SOCKS proxy is, on the machine running this. */
 const SOCKS_HOST = process.env.REAPER_SOCKS_HOST ?? "127.0.0.1";
 const SOCKS_PORT = Number(process.env.REAPER_SOCKS_PORT ?? 9050);
@@ -410,6 +439,18 @@ function unframe(data) {
 
 const sockets = new WebSocketServer({ server: http, path: "/relay" });
 
+// `ws` forwards the underlying server's own `'error'` event by re-emitting
+// it here rather than leaving it on `http` — so without a listener on this
+// object specifically, that re-emit finds none and throws, since Node's
+// EventEmitter treats an unheard `'error'` as fatal. That throw happens
+// synchronously inside the same emit that `listenWithRetry`'s own handler
+// is registered for below, and it runs first (registered first, and
+// EventEmitter calls listeners in registration order) — so it was pre-empting
+// the retry logic entirely rather than a bind failure ever reaching it.
+sockets.on("error", (error) => {
+  console.error(`  [recovered] websocket server error: ${error.message}`);
+});
+
 sockets.on("connection", (ws, request) => {
   /** Everything this tab has open, by the id it gave. */
   const open = new Map();
@@ -689,7 +730,42 @@ if (secure && process.env.REAPER_NO_REDIRECT !== "1") {
   });
 }
 
-http.listen(PORT, HOST, () => {
+/**
+ * Bind, retrying with backoff instead of giving up on the first failure.
+ *
+ * The one case worth surviving in-process rather than leaving to `systemd`:
+ * a fast restart racing the previous process for the same port, which fails
+ * with `EADDRINUSE` for a moment while the OS finishes releasing it — not a
+ * real conflict, just a race that resolves itself if given a few seconds.
+ * Retried indefinitely with a capped backoff rather than a fixed attempt
+ * count, since there is nothing better for this process to do than keep
+ * trying to be the webserver it was started to be.
+ */
+function listenWithRetry(server, port, host, onListening) {
+  let attempt = 0;
+
+  const bind = () => {
+    server.listen(port, host);
+  };
+
+  server.on("listening", () => {
+    attempt = 0;
+    onListening();
+  });
+
+  server.on("error", (error) => {
+    attempt += 1;
+    const delay = Math.min(1000 * 2 ** attempt, 30_000);
+    console.error(
+      `  [recovered] could not bind ${host}:${port} (${error.message}), retrying in ${delay}ms`,
+    );
+    setTimeout(bind, delay);
+  });
+
+  bind();
+}
+
+listenWithRetry(http, PORT, HOST, () => {
   console.log(`reaper web relay on ${HOST}:${PORT} (${secure ? "https" : "http"})`);
   console.log(`  serving   ${STATIC}`);
   console.log(`  tor socks ${SOCKS_HOST}:${SOCKS_PORT}`);

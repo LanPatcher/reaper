@@ -634,6 +634,22 @@
         background: var(--side); text-align: center;
       }
 
+      /* Picking which screen to share, when the OS has more than one. */
+      .screenPickGrid {
+        display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;
+      }
+      .screenPickItem {
+        background: var(--main); border: 2px solid transparent; border-radius: 8px;
+        padding: 8px; cursor: pointer; display: flex; flex-direction: column;
+        align-items: center; gap: 6px; text-align: center;
+      }
+      .screenPickItem:hover { border-color: var(--accent); }
+      .screenPickItem img {
+        width: 100%; aspect-ratio: 16 / 9; object-fit: contain;
+        background: #000; border-radius: 4px;
+      }
+      .screenPickItem span { font-size: 12px; color: var(--text); word-break: break-word; }
+
       /* A mention is announced rather than merely counted: the badge says how
          many, the mark says "this one is about you". */
       .pingmark { color: #e0424a; flex: 0 0 auto; }
@@ -1343,6 +1359,7 @@
             "{name} and {n} more are sharing their screen": "{name} y {n} más están compartiendo su pantalla",
             "You are sharing your screen": "Estás compartiendo tu pantalla",
             "Click for fullscreen": "Haz clic para pantalla completa",
+            "Choose a screen to share": "Elige una pantalla para compartir",
             "Notes": "Notas",
             "No notes yet.": "Aún no hay notas.",
             "Write a note to yourself…": "Escribe una nota para ti…",
@@ -2086,6 +2103,7 @@
             "{name} and {n} more are sharing their screen": "{name} et {n} autres partagent leur écran",
             "You are sharing your screen": "Vous partagez votre écran",
             "Click for fullscreen": "Cliquez pour le plein écran",
+            "Choose a screen to share": "Choisissez un écran à partager",
             "Notes": "Notes",
             "No notes yet.": "Aucune note pour l'instant.",
             "Write a note to yourself…": "Écrivez une note pour vous-même…",
@@ -2829,6 +2847,7 @@
             "{name} and {n} more are sharing their screen": "{name} und {n} weitere teilen ihren Bildschirm",
             "You are sharing your screen": "Du teilst deinen Bildschirm",
             "Click for fullscreen": "Zum Vollbild klicken",
+            "Choose a screen to share": "Wähle einen Bildschirm zum Teilen aus",
             "Notes": "Notizen",
             "No notes yet.": "Noch keine Notizen.",
             "Write a note to yourself…": "Schreib dir eine Notiz…",
@@ -3572,6 +3591,7 @@
             "{name} and {n} more are sharing their screen": "{name} e mais {n} estão a partilhar o ecrã",
             "You are sharing your screen": "Estás a partilhar o teu ecrã",
             "Click for fullscreen": "Clica para ecrã inteiro",
+            "Choose a screen to share": "Escolhe um ecrã para partilhar",
             "Notes": "Notas",
             "No notes yet.": "Ainda não há notas.",
             "Write a note to yourself…": "Escreve uma nota para ti…",
@@ -8584,6 +8604,11 @@
         // deleted, or hidden.
         Object.keys(keep).forEach(function (id) { keep[id].remove(); });
 
+        // Ticks are not part of the row signature (a read change must not
+        // rebuild a row and reload its media), so reused rows keep whatever
+        // tick they were built with — patch them here after the reconcile.
+        updateReceipts();
+
         if (follow) scrollToNewest();
       }
 
@@ -8715,17 +8740,12 @@
 
           // A sent/read tick on your own direct messages. Only in a DM — "read"
           // is unambiguous with one recipient. One tick sent, two once read.
+          // The tick is patched in place by updateReceipts when a read receipt
+          // arrives, because renderMessages reuses an unchanged row and would
+          // otherwise leave the tick frozen until the next full rebuild.
           if (m.author === me.userId && currentDM && !m.payload.undecryptable) {
             var receipt = document.createElement("span");
-            receipt.className = "receipt";
-            if ((readByPeer[current] || 0) >= m.timestamp) {
-              receipt.className += " read";
-              receipt.textContent = "✓✓";
-              receipt.title = t("Read");
-            } else {
-              receipt.textContent = "✓";
-              receipt.title = t("Sent");
-            }
+            applyReceipt(receipt, m);
             col.appendChild(receipt);
           }
 
@@ -9568,7 +9588,7 @@
             var sub = document.createElement("div");
             sub.className = "muted";
             sub.style.fontSize = "11px";
-            sub.textContent = isOnline(item.to)
+            sub.textContent = directlyReachable(item.to)
               ? t("Delivering now…")
               : t("Waiting for {name} to come online · since {when}", {
                   name: nameOf(item.to), when: ago(item.at),
@@ -9607,26 +9627,14 @@
         }
 
         outgoing.forEach(function (uid) {
-          var row = document.createElement("div");
-          row.className = "frow";
-          row.appendChild(avatarEl(30, nameOf(uid), uid, pfp(uid)));
-
-          var col = document.createElement("div");
-          col.className = "fgrow";
-          var nm = document.createElement("div");
-          nm.className = "fname"; nm.textContent = nameOf(uid);
-          col.appendChild(nm);
-
-          var sub = document.createElement("div");
-          sub.className = "fsub";
-          sub.textContent = isOnline(uid)
+          var subtitle = directlyReachable(uid)
           ? t("Online now — delivering")
           : (peerAddresses[uid]
           ? t("Waiting for them to come online. Retrying every 45 seconds.")
           : t("No address known yet — they must add you first."));
-          col.appendChild(sub);
-          row.appendChild(col);
-          pane.appendChild(row);
+          pane.appendChild(friendPaneRow(uid, subtitle, [
+            { icon: "close", title: "Cancel", run: function () { cancelFriendRequest(uid); } },
+          ]));
         });
 
         var waiting = inactiveServers();
@@ -14932,6 +14940,23 @@
       }
 
       /**
+       * Whether this device itself has a socket open to them right now.
+       *
+       * Deliberately narrower than `isOnline`: that one also believes a
+       * sibling device's connection, which is correct for presence — the
+       * account is reachable somewhere — but wrong for delivery, since this
+       * device can only push a queued event over a connection *it* holds.
+       * Labeling an outbox item "Delivering now…" from `isOnline` alone made
+       * requests look stuck on someone who "seems online" when what was
+       * actually missing was a direct connection from this device to them;
+       * `reachFor` was still working on dialing them via Tor in the
+       * background, same as if they looked offline.
+       */
+      function directlyReachable(uid) {
+        return netPeers.some(function (pr) { return pr.userId === uid; });
+      }
+
+      /**
        * Tell everyone connected what to show for this device.
        *
        * A signal rather than an event, because presence is true for about as
@@ -16076,6 +16101,57 @@
         if (screenSharing) stopScreenShare(); else startScreenShare();
       }
 
+      /**
+       * Answer the main process when it has more than one screen to offer.
+       *
+       * It cannot show its own UI mid-request — Chromium's picker never
+       * engaged on this build, which is why sharing used to just grab the
+       * primary screen — so it asks here instead and waits for
+       * `screenPickerCallback`. Re-arms itself after every request, since the
+       * preload side only ever listens once.
+       */
+      function watchScreenPicker() {
+        if (!window.native || !window.native.onceScreenPicker) return;
+
+        window.native.onceScreenPicker(function (sources) {
+          showScreenPicker(sources);
+          watchScreenPicker();
+        });
+      }
+
+      function showScreenPicker(sources) {
+        var answered = false;
+        var pick = function (idx) {
+          if (answered) return;
+          answered = true;
+          window.native.screenPickerCallback(idx, false);
+        };
+
+        modal(t("Choose a screen to share"), function (card) {
+          var grid = document.createElement("div");
+          grid.className = "screenPickGrid";
+          sources.forEach(function (s) {
+            var item = document.createElement("div");
+            item.className = "screenPickItem";
+            if (s.image) {
+              var img = document.createElement("img");
+              img.src = s.image;
+              item.appendChild(img);
+            }
+            var label = document.createElement("span");
+            label.textContent = s.name || ("Screen " + (s.idx + 1));
+            item.appendChild(label);
+            item.onclick = function () { pick(s.idx); closeModal(); };
+            grid.appendChild(item);
+          });
+          card.appendChild(grid);
+        });
+
+        // Dismissing the picker (Escape or click-away) is a decision not to
+        // share, same as dismissing an OS picker would be.
+        modalCancel = function () { pick(-1); };
+      }
+
       /** A screen frame from a peer, or an empty sentinel that they stopped. */
       function onScreenFrame(channel, from, seq, frame) {
         if (!inVoice || channel !== inVoice.channelId) return;
@@ -16102,7 +16178,15 @@
         if (changed) renderScreenView();
       }, 2000);
 
-      /** Draw whatever screen is being shared into the conversation. */
+      /**
+       * Draw whatever screen is being shared into the conversation.
+       *
+       * The <img> is built once and then only has its `src` swapped as frames
+       * arrive — never rebuilt. Rebuilding it (which this used to do every
+       * frame) replaces the element that is in fullscreen, and the browser
+       * drops fullscreen the instant its element leaves the document, which is
+       * why "go fullscreen" flashed and closed straight away.
+       */
       function renderScreenView() {
         var box = $("screenView");
         if (!box) return;
@@ -16114,35 +16198,43 @@
           box.className = "hide"; box.innerHTML = ""; return;
         }
 
-        box.className = ""; box.innerHTML = "";
+        box.className = "";
 
         if (sharers.length) {
           sharers.sort(function (a, b) { return screenShares[b].at - screenShares[a].at; });
           var who = sharers[0];
 
-          var img = document.createElement("img");
-          img.className = "screenImg";
-          img.src = screenShares[who].url;
-          img.style.cursor = "zoom-in";
-          img.title = t("Click for fullscreen");
-          // Fullscreen the shared picture. The <img> src keeps updating with
-          // each new frame while it is fullscreen, so it stays live.
-          img.onclick = function () {
-            if (document.fullscreenElement) {
-              if (document.exitFullscreen) document.exitFullscreen();
-            } else if (img.requestFullscreen) {
-              img.requestFullscreen().catch(function () {});
-            }
-          };
-          box.appendChild(img);
+          var img = box.querySelector(".screenImg");
+          var label = box.querySelector(".screenLabel");
+          if (!img) {
+            box.innerHTML = "";
+            img = document.createElement("img");
+            img.className = "screenImg";
+            img.style.cursor = "zoom-in";
+            img.title = t("Click for fullscreen");
+            img.onclick = function () {
+              if (document.fullscreenElement) {
+                if (document.exitFullscreen) document.exitFullscreen();
+              } else if (img.requestFullscreen) {
+                img.requestFullscreen().catch(function () {});
+              }
+            };
+            box.appendChild(img);
 
-          var label = document.createElement("div");
-          label.className = "screenLabel";
+            label = document.createElement("div");
+            label.className = "screenLabel";
+            box.appendChild(label);
+          }
+
+          // Only the src changes per frame, so the element in fullscreen stays.
+          if (img.src !== screenShares[who].url) img.src = screenShares[who].url;
           label.textContent = sharers.length > 1
             ? t("{name} and {n} more are sharing their screen", { name: nameOf(who), n: sharers.length - 1 })
             : t("{name} is sharing their screen", { name: nameOf(who) });
-          box.appendChild(label);
         } else {
+          // Only us sharing, nobody else's picture to show — a plain label, and
+          // no reused <img> to preserve.
+          box.innerHTML = "";
           var mine = document.createElement("div");
           mine.className = "screenLabel";
           mine.textContent = t("You are sharing your screen");
@@ -18819,6 +18911,36 @@
           .catch(function () {});
       }
 
+      /** Set one message's tick to sent or read, from the current watermark. */
+      function applyReceipt(el, m) {
+        var read = (readByPeer[current] || 0) >= m.timestamp;
+        el.className = "receipt" + (read ? " read" : "");
+        el.textContent = read ? "✓✓" : "✓";
+        el.title = read ? t("Read") : t("Sent");
+      }
+
+      /**
+       * Repaint the ticks in place, without rebuilding rows.
+       *
+       * A read receipt changes only the tick, and renderMessages reuses a row
+       * whose content is unchanged — so a plain repaint would leave every tick
+       * frozen until the next full rebuild (which is why they only appeared
+       * after a reload). This patches the tick span on each of our own messages
+       * directly, so a double-tick shows the instant the receipt lands.
+       */
+      function updateReceipts() {
+        if (!currentDM || !current) return;
+        var box = $("messages");
+        if (!box) return;
+        messages.forEach(function (m) {
+          if (m.author !== me.userId || !m.payload || m.payload.undecryptable) return;
+          var row = box.querySelector("[data-msg='" + m.id + "']");
+          if (!row) return;
+          var receipt = row.querySelector(".receipt");
+          if (receipt) applyReceipt(receipt, m);
+        });
+      }
+
       /** The newest message the partner wrote, so a receipt names a point. */
       function latestFromPeer(uid) {
         var at = 0;
@@ -20395,6 +20517,7 @@
         // enough that a slow circuit is not mistaken for a lost request, and
         // short enough that nobody sits looking at initials.
         watchNotificationClicks();
+        watchScreenPicker();
 
         setInterval(chaseStalledImages, 30000);
 
@@ -20760,7 +20883,9 @@
               readByPeer[rcid] = rat;
               // Written to the index so this device's siblings show it too.
               recordReadBy(rcid, rat);
-              if (rcid === current) repaint("messages");
+              // Patch the ticks in place — a full repaint reuses the rows and
+              // would leave them frozen (see updateReceipts).
+              if (rcid === current) updateReceipts();
             }
             return;
           }
@@ -20856,6 +20981,22 @@
           // dozen bytes, and working out which of them already knows is a way
           // to get it wrong.
           if (arrived.length) announcePresence();
+
+          // A read receipt is sent once, live, over the advisory signal
+          // channel — see the comment above `sendReadReceipt`. If the other
+          // side was not connected at that exact moment the signal simply
+          // never arrives: unlike a chat message it is not owed, so nothing
+          // ever retries it, and their checkmark for something read minutes
+          // ago sits on a single tick until this device happens to send them
+          // something else in the same conversation. Resending on arrival
+          // costs one small frame and closes that gap without needing a
+          // durable-delivery mechanism for something this disposable — a
+          // stale resend is harmless, since the far end only ever moves its
+          // watermark forward.
+          if (arrived.length && currentDM && current &&
+            arrived.indexOf(currentDM.userId) >= 0) {
+            sendReadReceipt(current);
+          }
 
           // Chased only when somebody genuinely went away. Circuits over Tor
           // fail often and for no lasting reason, so this is worth doing
@@ -21440,6 +21581,22 @@
           startBroadcast(inVoice.channelId);
         }
       });
+
+      // A message that arrives while the window is visible but not
+      // *focused* — the app sitting behind another window rather than
+      // minimised — is not marked read on arrival (see the
+      // `document.hasFocus()` guard in noteIncoming_message), so the sender's
+      // tick stays single until something re-marks it. Nothing did: the
+      // visibilitychange handler above only fires on minimise/restore, not on
+      // focus, so alt-tabbing back into an already-open DM left the receipt
+      // stuck until the conversation was clicked again. Catching up here
+      // makes it prompt instead.
+      window.addEventListener("focus", function () {
+        if (currentDM && current && String(current).indexOf("dm") === 0) {
+          markRead(current, null);
+        }
+      });
+
       $("meAvatar").style.cursor = "pointer";
       $("meAvatar").onclick = function () { profilePopup(me.userId); };
 

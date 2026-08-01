@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Already declared by the app shell too, but the library's own
+         androidTest APK builds standalone and needs it independently to
+         even create a socket. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

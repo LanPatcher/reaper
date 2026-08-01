@@ -1,5 +1,6 @@
 import { MakerAppX } from "@electron-forge/maker-appx";
 import { MakerDeb } from "@electron-forge/maker-deb";
+import { MakerDebConfigOptions } from "@electron-forge/maker-deb/dist/Config";
 import { MakerFlatpak } from "@electron-forge/maker-flatpak";
 import { MakerFlatpakOptionsConfig } from "@electron-forge/maker-flatpak/dist/Config";
 import { MakerSquirrel } from "@electron-forge/maker-squirrel";
@@ -173,8 +174,79 @@ if (!process.env.PLATFORM) {
         productName: STRINGS.name,
         productDescription: STRINGS.description,
         categories: ["Network"],
-        icon: `${ASSET_DIR}/icon.png`,
-      },
+        // A bare string here (what this used to be) only ever produces the
+        // legacy /usr/share/pixmaps/reaper.png — electron-installer-debian's
+        // copyLinuxIcons() takes the object-vs-string branch, and a single
+        // pixmap is not what modern GNOME/Ubuntu actually looks up an app's
+        // icon from. An object, one path per size, makes it install the
+        // proper /usr/share/icons/hicolor/<size>/apps/reaper.png set
+        // instead — the same set the flatpak maker above already uses, for
+        // exactly the same reason.
+        icon: {
+          "16x16": `${ASSET_DIR}/hicolor/16x16.png`,
+          "32x32": `${ASSET_DIR}/hicolor/32x32.png`,
+          "64x64": `${ASSET_DIR}/hicolor/64x64.png`,
+          "128x128": `${ASSET_DIR}/hicolor/128x128.png`,
+          "256x256": `${ASSET_DIR}/hicolor/256x256.png`,
+          "512x512": `${ASSET_DIR}/hicolor/512x512.png`,
+        },
+        // `tor` is a hard `Depends` — not just `recommends` — because the app
+        // is unreachable without a working tor binary and vendoring one at
+        // build time has proven to be a genuinely fragile step (it silently
+        // no-ops if the build machine never ran `apt install tor` itself; see
+        // `vendor-tor.mjs` and forge.config.ts's own TOR_DIR warning above).
+        // `apt install`-ing `tor` alongside this package guarantees a real,
+        // ABI-correct binary is on the system regardless of what the build
+        // machine had — `bridge.ts`'s `torExecutable()` now falls back to
+        // `/usr/bin/tor` if the bundled copy is missing, so this dependency
+        // actually gets used, not just declared.
+        //
+        // Setting `depends` here replaces electron-installer-debian's own
+        // computed list (filled in via lodash `_.defaults()`, which only
+        // fills what's still unset) rather than adding to it — so the
+        // Electron-required list is spelled out literally below and `tor`
+        // appended, rather than declared alone. These come from
+        // electron-installer-debian's own `dependencies.js` for the Electron
+        // version this project currently pins (confirmed via `dpkg-deb -I`
+        // against a real build) — hand-copied rather than required at
+        // config-eval time, because `electron-installer-debian` is a
+        // transitive dependency of `@electron-forge/maker-deb`, not a direct
+        // one, and pnpm's strict node_modules layout correctly refuses to
+        // resolve a bare `require()` of an undeclared package. Revisit this
+        // list if the Electron major version changes.
+        depends: [
+          "libgtk-3-0",
+          "libnotify4",
+          "libnss3",
+          "xdg-utils",
+          "libatspi2.0-0",
+          "libdrm2",
+          "libgbm1",
+          "libxcb-dri3-0",
+          "kde-cli-tools | kde-runtime | trash-cli | libglib2.0-bin | gvfs-bin",
+          "tor",
+        ],
+        // Still declared for the case where the bundled copy is the one that
+        // ends up running: its own runtime libraries (libevent, libseccomp,
+        // libgcrypt, ...) aren't pulled in by `Depends: tor` itself if that
+        // resolves to a different tor build than expected. Two names per line
+        // where Ubuntu's 24.04 time_t64 transition renamed the package
+        // (libssl3 -> libssl3t64 etc.).
+        recommends: [
+          "pulseaudio | libasound2",
+          "libssl3 | libssl3t64",
+          "libevent-2.1-7 | libevent-2.1-7t64",
+          "libsystemd0",
+          "liblzma5",
+          "libzstd1",
+          "libseccomp2",
+          "libcap2",
+          "libgcrypt20",
+          "liblz4-1",
+          "libgpg-error0",
+          "zlib1g",
+        ],
+      } as MakerDebConfigOptions,
     }),
   );
 }

@@ -298,39 +298,75 @@ export function createMainWindow() {
   session.defaultSession.setDisplayMediaRequestHandler(
     (request, callback) => {
       desktopCapturer
-        .getSources({ types: ["screen"] })
+        .getSources({
+          types: ["screen"],
+          thumbnailSize: { width: 320, height: 180 },
+        })
         .then((sources) => {
-          // Shortcut for linux wayland.
-          if (sources.length == 1) {
-            // TODO: Get audio to work with wayland
-            // See vencord for an implementation using a virtual microphone.
-            request.audioRequested
-              ? callback({
-                  video: sources[0],
-                  audio: "loopback",
-                })
-              : callback({
-                  video: sources[0],
-                });
+          if (!sources.length) {
+            callback({});
             return;
           }
-          // No renderer-side picker exists to answer a choice, so rather than
-          // block on a selection that can never arrive — which is why sharing
-          // "did nothing" on the desktop — grant the primary screen. That is
-          // what sharing a screen means by default.
-          if (!sources[0]) { callback({}); return; }
-          request.audioRequested
-            ? callback({ video: sources[0], audio: "loopback" })
-            : callback({ video: sources[0] });
+
+          const grant = (source: Electron.DesktopCapturerSource, audio: boolean) => {
+            request.audioRequested && audio
+              ? callback({ video: source, audio: "loopback" })
+              : callback({ video: source });
+          };
+
+          // Shortcut for linux wayland, and the common single-monitor case:
+          // nothing to choose between, so don't make anyone pick.
+          if (sources.length === 1) {
+            // TODO: Get audio to work with wayland
+            // See vencord for an implementation using a virtual microphone.
+            grant(sources[0], true);
+            return;
+          }
+
+          // More than one screen: ask the renderer to show a picker — it can
+          // actually put UI in front of the user, unlike this process
+          // mid-request. `useSystemPicker: false` below means Chromium's own
+          // picker never engages, which is what used to leave sharing
+          // grabbing the primary screen with no way to choose another.
+          //
+          // `once` plus an explicit removal on timeout keeps at most one
+          // pending listener — a share request that never gets answered
+          // (window closed, picker dismissed some other way) would otherwise
+          // leak a listener that fires on the *next* request's callback.
+          ipcMain.removeAllListeners("screenPickerCallback");
+          const timer = setTimeout(() => {
+            ipcMain.removeAllListeners("screenPickerCallback");
+            callback({});
+          }, 30_000);
+          ipcMain.once(
+            "screenPickerCallback",
+            (_event, idx: number, audio: boolean) => {
+              clearTimeout(timer);
+              const chosen = sources[idx];
+              if (!chosen) {
+                callback({});
+                return;
+              }
+              grant(chosen, audio);
+            },
+          );
+          mainWindow.webContents.send(
+            "screenPicker",
+            sources.map((source, idx) => ({
+              idx,
+              name: source.name,
+              isFullScreen: true,
+              image: source.thumbnail.isEmpty()
+                ? undefined
+                : source.thumbnail.toDataURL(),
+            })),
+          );
         })
         .catch((error) => {
           log("[screenshare] could not enumerate screens:", String(error));
           callback({});
         });
     },
-    // Deterministically use the callback above (the primary screen) rather than
-    // a system picker that was not engaging on Windows and left the share doing
-    // nothing. A source picker can be added later; working comes first.
     { useSystemPicker: false },
   );
 
