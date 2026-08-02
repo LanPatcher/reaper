@@ -1,0 +1,24 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Required to run a foreground service at all, and — since Android 14 —
+         to run one of this specific type. `dataSync` is the category Android
+         defines for a service that is "processing data... e.g. between the
+         device and the cloud", which describes a socket kept open to receive
+         a peer's connection well enough, and matches what other messaging
+         apps declare for the same reason. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- The persistent notification a foreground service is required to
+         show is still a notification, and Android 13 made posting one need
+         explicit runtime consent — the same permission `plugins/notify`
+         will need once it has an Android port. Requested at the point this
+         service actually starts; see `KeepalivePlugin.kt`. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application>
+        <service
+            android:name="chat.reaper.keepalive.KeepaliveService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+    </application>
+</manifest>

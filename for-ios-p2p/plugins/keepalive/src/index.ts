@@ -16,24 +16,44 @@ export interface KeepaliveStatus {
 
 export interface KeepalivePlugin {
   /**
-   * Hold an audio session open so iOS does not suspend the app.
+   * Keep the app running in the background, by whatever mechanism the
+   * platform actually grants that for.
    *
-   * The session is `.playback` with `.mixWithOthers` playing silence: it earns
-   * background execution without becoming the "now playing" app, so nothing
-   * else is paused, ducked, or handed to the lock screen controls.
+   * **iOS**: an audio session, `.playback` with `.mixWithOthers`, playing
+   * silence — it earns background execution without becoming the "now
+   * playing" app, so nothing else is paused, ducked, or handed to the lock
+   * screen controls. Reachability is "usually", not "always": memory
+   * pressure, a reboot, or a force-quit all end it, and there is no way
+   * around that on iOS — see `Keepalive.swift`.
+   *
+   * **Android**: a genuine foreground service with a persistent
+   * notification, which is a real, sanctioned "stay alive" grant rather
+   * than a workaround — the process is not suspended for being in the
+   * background at all while the service runs, `START_STICKY` asks the
+   * system to recreate it if it is killed for memory, and the persistent
+   * notification is what the platform requires in exchange for the grant
+   * (Android will not run an invisible background service indefinitely).
+   * A user can still force-stop the app from system settings, and a reboot
+   * still ends it until reopened — the same honest limits as iOS, reached
+   * by a stronger mechanism.
    */
   start(): Promise<KeepaliveStatus>;
 
-  /** Give the audio session back. The app will suspend normally afterwards. */
+  /** Give the background grant back. The app may be suspended/stopped afterwards. */
   stop(): Promise<KeepaliveStatus>;
 
   /**
    * Enter or leave call mode.
    *
-   * At rest the app claims `.playback`, which leaves other audio on the device
-   * alone. A call needs the microphone, so it claims `.playAndRecord` and the
-   * hands-free Bluetooth profile — which costs quality for everything playing,
-   * and is why it is only claimed while a call is actually up.
+   * On iOS: at rest the app claims `.playback`, which leaves other audio on
+   * the device alone. A call needs the microphone, so it claims
+   * `.playAndRecord` and the hands-free Bluetooth profile — which costs
+   * quality for everything playing, and is why it is only claimed while a
+   * call is actually up.
+   *
+   * On Android this is a no-op: the foreground service already grants full
+   * background execution regardless of call state, so there is no
+   * equivalent trade to make.
    */
   setInCall(options: { active: boolean }): Promise<{ ok: boolean }>;
 

@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Tor
 
 /**
@@ -100,6 +101,35 @@ final class TorService {
     private(set) var syncOnion: String?
     private(set) var socksPort: UInt16 = 0
     private(set) var lastError: String?
+
+    // ---- confirming publication, over the control port -----------------------
+    //
+    // A hidden-service directory produces a `hostname` file the instant tor
+    // reads the key — no network involved, since the address is just the
+    // public key spelled out in base32. Treating that as "published" (the
+    // .onion equivalent of "online") is the mistake this section exists to
+    // avoid: it reports an address as reachable up to a minute before the
+    // network actually has a route to it. This is only real evidence: tor's
+    // own `HS_DESC UPLOADED` control event, which it emits once a descriptor
+    // has actually been accepted by an HSDir.
+    //
+    // A second, dedicated connection rather than layering onto `controller`
+    // (the `TORController` used for bootstrap/circuit events): that library's
+    // observer API is typed around specific event shapes
+    // (`forStatusEvents`, `forCircuitEstablished`) and exposes no generic hook
+    // for an arbitrary control-protocol line, so this speaks just enough of
+    // the protocol by hand — connect, `AUTHENTICATE` with the same cookie,
+    // `SETEVENTS HS_DESC`, read lines — the same shape as desktop's `tor.ts`
+    // and Android's `TorService.kt`.
+
+    private var descriptorWatcher: NWConnection?
+    private var descriptorBuffer = Data()
+
+    /** Bare addresses (no `.onion`) the control port has confirmed uploaded. */
+    private var uploadedAddresses: Set<String> = []
+
+    /** Callbacks waiting on a specific bare address, keyed the same way. */
+    private var pendingConfirmations: [String: [(Bool) -> Void]] = [:]
 
     /**
      * Whether this launch configured the account service at all.
@@ -509,6 +539,175 @@ final class TorService {
         }
     }
 
+    /**
+     * Wait until the control port reports this specific address was actually
+     * uploaded, or give up after `timeout` and answer honestly that it was
+     * not confirmed. `fullAddress` may carry the `.onion` suffix or not —
+     * normalised the same way `handleDescriptorEvent` normalises what it
+     * reads off the wire, since tor's own `HSAddress` field omits it.
+     */
+    private func confirmPublication(
+        _ fullAddress: String,
+        timeout: TimeInterval = 120,
+        completion: @escaping (Bool) -> Void
+    ) {
+        let bare = Self.bareAddress(fullAddress)
+
+        if uploadedAddresses.contains(bare) {
+            completion(true)
+            return
+        }
+
+        pendingConfirmations[bare, default: []].append(completion)
+        connectDescriptorWatcher()
+
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeout) { [weak self] in
+            guard let self, let pending = self.pendingConfirmations[bare], !pending.isEmpty else { return }
+            self.pendingConfirmations[bare] = nil
+            for callback in pending { callback(false) }
+        }
+    }
+
+    private static func bareAddress(_ address: String) -> String {
+        address.lowercased().replacingOccurrences(of: ".onion", with: "")
+    }
+
+    /**
+     * Open a second control connection dedicated to watching descriptor
+     * uploads. Idempotent, and best-effort: a failure here leaves every
+     * `confirmPublication` call to resolve — honestly, to "not confirmed" —
+     * via its own timeout, rather than hanging on a connection that never
+     * arrives.
+     */
+    private func connectDescriptorWatcher() {
+        guard descriptorWatcher == nil else { return }
+        guard let controlPortFile else { return }
+        guard let cookie = configuration?.cookie else { return }
+
+        guard let port = Self.readControlPort(controlPortFile) else {
+            // Asked again shortly. The control port file may not have the
+            // chosen port written yet if this races the very start of tor —
+            // the same race `waitForControlSocket` already retries against.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.connectDescriptorWatcher()
+            }
+            return
+        }
+
+        let endpoint = NWEndpoint.hostPort(
+            host: .init("127.0.0.1"),
+            port: .init(rawValue: port) ?? 0
+        )
+        let connection = NWConnection(to: endpoint, using: .tcp)
+        descriptorWatcher = connection
+
+        connection.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                self.authenticateDescriptorWatcher(connection: connection, cookie: cookie)
+            case .failed, .cancelled:
+                if self.descriptorWatcher === connection { self.descriptorWatcher = nil }
+            default:
+                break
+            }
+        }
+
+        connection.start(queue: .global(qos: .utility))
+    }
+
+    private func authenticateDescriptorWatcher(connection: NWConnection, cookie: Data) {
+        let hex = cookie.map { String(format: "%02x", $0) }.joined()
+        let command = "AUTHENTICATE \(hex)\r\n".data(using: .ascii) ?? Data()
+
+        connection.send(content: command, completion: .contentProcessed { [weak self] error in
+            guard let self, error == nil else { return }
+
+            self.readDescriptorLine(connection: connection) { [weak self] line in
+                guard let self, let line, line.hasPrefix("250") else { return }
+                self.subscribeToDescriptorEvents(connection: connection)
+            }
+        })
+    }
+
+    private func subscribeToDescriptorEvents(connection: NWConnection) {
+        let command = "SETEVENTS HS_DESC\r\n".data(using: .ascii) ?? Data()
+
+        connection.send(content: command, completion: .contentProcessed { [weak self] error in
+            guard let self, error == nil else { return }
+
+            self.readDescriptorLine(connection: connection) { [weak self] line in
+                guard let self, let line, line.hasPrefix("250") else { return }
+                self.watchDescriptorEvents(connection: connection)
+            }
+        })
+    }
+
+    /** Reads one `650` line at a time, for as long as the connection lasts. */
+    private func watchDescriptorEvents(connection: NWConnection) {
+        readDescriptorLine(connection: connection) { [weak self] line in
+            guard let self else { return }
+
+            guard let line else {
+                if self.descriptorWatcher === connection { self.descriptorWatcher = nil }
+                return
+            }
+
+            if line.hasPrefix("650") { self.handleDescriptorEvent(line) }
+            self.watchDescriptorEvents(connection: connection)
+        }
+    }
+
+    /**
+     * One line at a time out of `descriptorBuffer`, topping it up from the
+     * connection when it holds no complete line. Safe against overlapping
+     * calls only because nothing here ever has two reads of the same
+     * connection outstanding at once — each call to this waits for the
+     * previous one's completion before the next is issued.
+     */
+    private func readDescriptorLine(connection: NWConnection, completion: @escaping (String?) -> Void) {
+        let crlf = Data([0x0d, 0x0a])
+
+        if let range = descriptorBuffer.range(of: crlf) {
+            let lineData = descriptorBuffer.subdata(in: descriptorBuffer.startIndex..<range.lowerBound)
+            descriptorBuffer.removeSubrange(descriptorBuffer.startIndex..<range.upperBound)
+            completion(String(data: lineData, encoding: .utf8))
+            return
+        }
+
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            guard let self else { completion(nil); return }
+
+            if let data, !data.isEmpty { self.descriptorBuffer.append(data) }
+
+            if error != nil || (isComplete && (data?.isEmpty ?? true)) {
+                completion(nil)
+                return
+            }
+
+            self.readDescriptorLine(connection: connection, completion: completion)
+        }
+    }
+
+    /**
+     * `650 HS_DESC UPLOADED <address> <AuthType> <HsDir> ...` is the one line
+     * this is watching for. `<address>` arrives without the `.onion` suffix,
+     * matching the control protocol's own `HSAddress` field.
+     */
+    private func handleDescriptorEvent(_ line: String) {
+        let parts = line.split(separator: " ").map(String.init)
+        guard parts.count > 3, parts[1] == "HS_DESC", parts[2] == "UPLOADED" else { return }
+
+        let address = Self.bareAddress(parts[3])
+        guard !address.isEmpty else { return }
+
+        uploadedAddresses.insert(address)
+
+        guard let callbacks = pendingConfirmations[address] else { return }
+        pendingConfirmations[address] = nil
+        for callback in callbacks { callback(true) }
+    }
+
     // ---- what the transport needs to know -----------------------------------
 
     /**
@@ -566,7 +765,10 @@ final class TorService {
         guard !address.isEmpty else { return }
 
         syncOnion = address
-        emit("sync", ["syncOnion": address])
+        confirmPublication(address) { [weak self] confirmed in
+            guard confirmed, self?.syncOnion == address else { return }
+            self?.emit("sync", ["syncOnion": address])
+        }
     }
 
     /**
@@ -619,11 +821,30 @@ final class TorService {
             let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !address.isEmpty {
                 onion = address
-                emit("published", [
-                    "onion": address,
-                    "syncOnion": syncOnion as Any,
-                    "socksPort": Int(socksPort),
-                ])
+
+                // The hostname file only proves the address was *derived*
+                // from the key — tor writes it the moment the directory is
+                // read, which needs no network at all. `"published"` means
+                // "peers can reach us" (see `TorEvent`), so it waits for the
+                // control port to confirm the descriptor was genuinely
+                // accepted somewhere, rather than firing the moment this file
+                // merely exists.
+                confirmPublication(address) { [weak self] confirmed in
+                    guard let self, self.onion == address else { return }
+
+                    if confirmed {
+                        self.emit("published", [
+                            "onion": address,
+                            "syncOnion": self.syncOnion as Any,
+                            "socksPort": Int(self.socksPort),
+                        ])
+                    } else {
+                        self.emit("log", [
+                            "line": "onion service address is \(address), but publication " +
+                                "was not confirmed in time",
+                        ])
+                    }
+                }
 
                 // Kept going if the sync address has not appeared yet. The two
                 // services publish independently and stopping here would leave
@@ -665,7 +886,10 @@ final class TorService {
             let address = text.trimmingCharacters(in: .whitespacesAndNewlines)
             if !address.isEmpty {
                 syncOnion = address
-                emit("sync", ["syncOnion": address])
+                confirmPublication(address) { [weak self] confirmed in
+                    guard confirmed, self?.syncOnion == address else { return }
+                    self?.emit("sync", ["syncOnion": address])
+                }
                 return
             }
         }
@@ -685,6 +909,12 @@ final class TorService {
     func stop() {
         controller?.disconnect()
         controller = nil
+
+        descriptorWatcher?.cancel()
+        descriptorWatcher = nil
+        descriptorBuffer.removeAll()
+        uploadedAddresses.removeAll()
+        pendingConfirmations.removeAll()
 
         thread?.cancel()
         thread = nil

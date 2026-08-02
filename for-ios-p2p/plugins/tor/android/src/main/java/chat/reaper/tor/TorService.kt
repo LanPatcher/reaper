@@ -66,6 +66,20 @@ class TorService(
          */
         private const val SOCKS_PORT = 39050
 
+        /**
+         * The loopback port tor's control interface listens on.
+         *
+         * Offset from `SOCKS_PORT` for the same reason: fixed and non-default,
+         * so it cannot collide with a system Tor already running on the device.
+         */
+        private const val CONTROL_PORT = 39051
+
+        /**
+         * How long to wait for the control port to confirm a descriptor upload
+         * before giving up and reporting honestly that it was not confirmed.
+         */
+        private const val PUBLISH_TIMEOUT_MS = 120_000L
+
         /** The running tor process, if any — shared across every instance in this process. */
         @Volatile private var process: Process? = null
 
@@ -74,6 +88,19 @@ class TorService(
 
         @Volatile private var lastOnion: String? = null
         @Volatile private var lastSyncOnion: String? = null
+
+        /**
+         * The control connection, and what it has told this process about
+         * genuinely-uploaded descriptors — see `connectControl`.
+         *
+         * Companion-level like `process` itself: the control connection
+         * belongs to the tor process, not to whichever `TorService` instance
+         * happens to be asking, and a WebView reload (which recreates the
+         * instance but not the process) must not open a second one.
+         */
+        @Volatile private var controlSocket: Socket? = null
+        private val uploadedAddresses = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+        private val controlScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
         private const val SECRET_FILE = "hs_ed25519_secret_key"
         private const val PUBLIC_FILE = "hs_ed25519_public_key"
@@ -254,6 +281,15 @@ class TorService(
                 val lines = mutableListOf(
                     "SocksPort $SOCKS_PORT",
                     "DataDirectory ${File(dir, "state").absolutePath}",
+                    "ControlPort $CONTROL_PORT",
+                    // Without this tor opens the control port unauthenticated,
+                    // which it warns about for good reason: any other local
+                    // process could connect and reconfigure it. Cookie auth
+                    // makes the only thing that can authenticate the thing
+                    // that can already read this app's own private storage —
+                    // see `connectControl`, which reads the cookie tor writes
+                    // here at startup.
+                    "CookieAuthentication 1",
                 )
 
                 // ---- the account address, if this device is the one holding it --
@@ -412,13 +448,33 @@ class TorService(
             if (address != null) {
                 onion = address
                 lastOnion = address
-                emit(
-                    "published",
-                    JSObject()
-                        .put("onion", address)
-                        .put("syncOnion", syncOnion)
-                        .put("socksPort", socksPort),
-                )
+
+                // The hostname file only proves the address was *derived*
+                // from the key — tor writes it the moment the service
+                // directory is read, which needs no network at all. Whether
+                // anyone can actually reach it is a separate question,
+                // answered only once the control port reports the descriptor
+                // was genuinely accepted somewhere. Confirmed before emitting
+                // `"published"` — see `TorEvent`'s own contract, "peers can
+                // reach us" — rather than the moment this file merely exists,
+                // which used to report an address as reachable up to a
+                // minute before the network actually had a route to it.
+                val confirmed = confirmPublication(address)
+                if (confirmed) {
+                    emit(
+                        "published",
+                        JSObject()
+                            .put("onion", address)
+                            .put("syncOnion", syncOnion)
+                            .put("socksPort", socksPort),
+                    )
+                } else {
+                    Log.w(
+                        TAG,
+                        "onion service address is $address, but publication was not " +
+                            "confirmed within ${PUBLISH_TIMEOUT_MS / 1000}s",
+                    )
+                }
                 pollForSync(syncDirectory)
                 return
             }
@@ -440,7 +496,16 @@ class TorService(
             if (address != null) {
                 syncOnion = address
                 lastSyncOnion = address
-                emit("sync", JSObject().put("syncOnion", address))
+
+                if (confirmPublication(address)) {
+                    emit("sync", JSObject().put("syncOnion", address))
+                } else {
+                    Log.w(
+                        TAG,
+                        "sync service address is $address, but publication was not " +
+                            "confirmed within ${PUBLISH_TIMEOUT_MS / 1000}s",
+                    )
+                }
                 return
             }
             delay(2_000)
@@ -460,6 +525,134 @@ class TorService(
         return text.ifEmpty { null }
     }
 
+    // ---- confirming publication, over the control port -----------------------
+    //
+    // A hidden-service directory produces a `hostname` file the instant tor
+    // reads the key — no network involved, since the address is just the
+    // public key spelled out in base32. This is only real evidence: tor's own
+    // `HS_DESC UPLOADED` control event, which it emits once a descriptor has
+    // actually been accepted by an HSDir.
+
+    /**
+     * Open the control connection and start watching for descriptor uploads.
+     *
+     * Idempotent, and best-effort: a failure here is logged, and every
+     * `confirmPublication` call still resolves — honestly, to "not
+     * confirmed" — via its own timeout rather than hanging on a connection
+     * that is never coming.
+     */
+    private fun connectControl(dataDir: File) {
+        if (controlSocket != null) return
+
+        controlScope.launch {
+            val socket = try {
+                Socket().apply { connect(InetSocketAddress("127.0.0.1", CONTROL_PORT), 5_000) }
+            } catch (e: IOException) {
+                Log.w(TAG, "control port unavailable, publication will not be confirmed: ${e.message}")
+                return@launch
+            }
+
+            if (controlSocket != null) {
+                // Lost a race with another caller. Only one connection is
+                // kept; this one is surplus.
+                try { socket.close() } catch (e: IOException) { /* already gone */ }
+                return@launch
+            }
+            controlSocket = socket
+
+            try {
+                // Written by tor at startup because `CookieAuthentication 1`
+                // is in the torrc above. 32 arbitrary bytes, not text — read
+                // as raw bytes, which corrupting through a text reader would
+                // break at the first byte that is not valid UTF-8.
+                val cookieFile = File(File(dataDir, "state"), "control_auth_cookie")
+                val cookie = waitForFileBytes(cookieFile, 10_000)
+                    ?: throw IOException("no control_auth_cookie within 10s")
+
+                val out = socket.getOutputStream()
+                val reader = socket.getInputStream().bufferedReader()
+
+                val hex = cookie.joinToString("") { "%02x".format(it) }
+                out.write("AUTHENTICATE $hex\r\n".toByteArray(Charsets.US_ASCII))
+                out.flush()
+                val authReply = reader.readLine() ?: throw IOException("control port closed during auth")
+                if (!authReply.startsWith("250")) {
+                    throw IOException("authentication refused: $authReply")
+                }
+
+                out.write("SETEVENTS HS_DESC\r\n".toByteArray(Charsets.US_ASCII))
+                out.flush()
+                val eventsReply = reader.readLine()
+                    ?: throw IOException("control port closed during SETEVENTS")
+                if (!eventsReply.startsWith("250")) {
+                    throw IOException("could not subscribe to HS_DESC events: $eventsReply")
+                }
+
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    if (line.startsWith("650")) handleControlEvent(line)
+                }
+            } catch (e: IOException) {
+                Log.w(TAG, "control port unavailable, publication will not be confirmed: ${e.message}")
+            } finally {
+                try { socket.close() } catch (e: IOException) { /* already gone */ }
+                if (controlSocket === socket) controlSocket = null
+            }
+        }
+    }
+
+    /**
+     * `650 HS_DESC UPLOADED <address> <AuthType> <HsDir> ...` is the one line
+     * this is watching for. `<address>` arrives without the `.onion` suffix,
+     * matching the control protocol's own `HSAddress` field — everything this
+     * is compared against is normalised the same way, in `confirmPublication`.
+     */
+    private fun handleControlEvent(line: String) {
+        val parts = line.split(" ")
+        if (parts.getOrNull(1) != "HS_DESC" || parts.getOrNull(2) != "UPLOADED") return
+
+        val address = parts.getOrNull(3)?.lowercase()?.removeSuffix(".onion") ?: return
+        if (address.isEmpty()) return
+
+        uploadedAddresses.add(address)
+    }
+
+    /**
+     * Wait until the control port reports this specific address was actually
+     * uploaded, or give up after `PUBLISH_TIMEOUT_MS`.
+     *
+     * Polled rather than event-driven — simpler than a second pub/sub
+     * mechanism next to the control socket's own line reader, and the cost is
+     * at most half a second of extra latency on an operation already measured
+     * in tens of seconds.
+     */
+    private suspend fun confirmPublication(fullAddress: String): Boolean {
+        connectControl(dataDir())
+
+        val bare = fullAddress.lowercase().removeSuffix(".onion")
+        val deadline = System.currentTimeMillis() + PUBLISH_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            if (bare in uploadedAddresses) return true
+            delay(500)
+        }
+        return bare in uploadedAddresses
+    }
+
+    private suspend fun waitForFileBytes(file: File, timeoutMs: Long): ByteArray? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (file.exists()) {
+                try {
+                    return file.readBytes()
+                } catch (e: IOException) {
+                    // Caught mid-write. Try again.
+                }
+            }
+            delay(100)
+        }
+        return if (file.exists()) try { file.readBytes() } catch (e: IOException) { null } else null
+    }
+
     // ---- stopping -------------------------------------------------------------
 
     fun stop() {
@@ -468,6 +661,10 @@ class TorService(
         launchedWithAccount = null
         lastOnion = null
         lastSyncOnion = null
+
+        controlSocket?.let { try { it.close() } catch (e: IOException) { /* already gone */ } }
+        controlSocket = null
+        uploadedAddresses.clear()
 
         running = false
         bootstrapped = false

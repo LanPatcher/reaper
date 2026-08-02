@@ -2012,6 +2012,10 @@
             "Voice settings": "Ajustes de voz",
             "Waiting": "Esperando",
             "Waiting for Tor to publish your address…": "Esperando a que Tor publique tu dirección…",
+            "Tor has your address — confirming it can be reached…": "Tor tiene tu dirección — confirmando que se puede alcanzar…",
+            "Tor confirmed your address is reachable — your friend code is ready": "Tor confirmó que tu dirección es alcanzable — tu código de amigo está listo",
+            "Still confirming this address can be reached — sharing it now works, but the first request may take a minute.": "Todavía confirmando que esta dirección se puede alcanzar — compartirla ya funciona, pero la primera solicitud puede tardar un minuto.",
+            "Already sent — waiting for {name} to answer": "Ya enviado — esperando la respuesta de {name}",
             "Waiting for Tor…": "Esperando a Tor…",
             "Waiting for them to accept your request": "Esperando a que acepten tu solicitud",
             "Waiting for them to come online. Retrying every 45 seconds.": "Esperando a que se conecten. Reintentando cada 45 segundos.",
@@ -2756,6 +2760,10 @@
             "Voice settings": "Paramètres vocaux",
             "Waiting": "En attente",
             "Waiting for Tor to publish your address…": "En attente de la publication de votre adresse par Tor…",
+            "Tor has your address — confirming it can be reached…": "Tor a votre adresse — confirmation qu'elle est joignable…",
+            "Tor confirmed your address is reachable — your friend code is ready": "Tor a confirmé que votre adresse est joignable — votre code ami est prêt",
+            "Still confirming this address can be reached — sharing it now works, but the first request may take a minute.": "Confirmation en cours que cette adresse est joignable — la partager fonctionne déjà, mais la première demande peut prendre une minute.",
+            "Already sent — waiting for {name} to answer": "Déjà envoyé — en attente de la réponse de {name}",
             "Waiting for Tor…": "En attente de Tor…",
             "Waiting for them to accept your request": "En attente de l'acceptation de votre demande",
             "Waiting for them to come online. Retrying every 45 seconds.": "En attente de leur connexion. Nouvelle tentative toutes les 45 secondes.",
@@ -3500,6 +3508,10 @@
             "Voice settings": "Spracheinstellungen",
             "Waiting": "Wartet",
             "Waiting for Tor to publish your address…": "Warte darauf, dass Tor deine Adresse veröffentlicht…",
+            "Tor has your address — confirming it can be reached…": "Tor hat deine Adresse — wird bestätigt, dass sie erreichbar ist…",
+            "Tor confirmed your address is reachable — your friend code is ready": "Tor hat bestätigt, dass deine Adresse erreichbar ist — dein Freundescode ist bereit",
+            "Still confirming this address can be reached — sharing it now works, but the first request may take a minute.": "Es wird noch bestätigt, dass diese Adresse erreichbar ist — sie jetzt zu teilen funktioniert bereits, aber die erste Anfrage kann eine Minute dauern.",
+            "Already sent — waiting for {name} to answer": "Bereits gesendet — warte auf die Antwort von {name}",
             "Waiting for Tor…": "Warte auf Tor…",
             "Waiting for them to accept your request": "Warte darauf, dass deine Anfrage angenommen wird",
             "Waiting for them to come online. Retrying every 45 seconds.": "Warte darauf, dass sie online kommen. Neuer Versuch alle 45 Sekunden.",
@@ -4244,6 +4256,10 @@
             "Voice settings": "Definições de voz",
             "Waiting": "Em espera",
             "Waiting for Tor to publish your address…": "À espera que o Tor publique o teu endereço…",
+            "Tor has your address — confirming it can be reached…": "O Tor tem o teu endereço — a confirmar que é possível alcançá-lo…",
+            "Tor confirmed your address is reachable — your friend code is ready": "O Tor confirmou que o teu endereço é alcançável — o teu código de amigo está pronto",
+            "Still confirming this address can be reached — sharing it now works, but the first request may take a minute.": "Ainda a confirmar que este endereço pode ser alcançado — partilhá-lo já funciona, mas o primeiro pedido pode demorar um minuto.",
+            "Already sent — waiting for {name} to answer": "Já enviado — a aguardar a resposta de {name}",
             "Waiting for Tor…": "À espera do Tor…",
             "Waiting for them to accept your request": "À espera que aceitem o teu pedido",
             "Waiting for them to come online. Retrying every 45 seconds.": "À espera que fiquem online. A tentar de novo a cada 45 segundos.",
@@ -10508,6 +10524,22 @@
 
       var myOnion = null;
 
+      /**
+       * Whether `myOnion` has actually been confirmed reachable, not just
+       * derived from the hidden-service key.
+       *
+       * `bridge.ts`'s `netInfo()` distinguishes the two — see `tor.ts`'s
+       * `#confirmPublication` — because the address exists (and this device
+       * will happily hand it out in a friend code) up to a minute or so
+       * before the network genuinely has a route to it. Kept as its own flag
+       * rather than folded into `myOnion` so the code can still be shown and
+       * copied early — sharing it does no harm, since whoever dials it just
+       * retries until the descriptor catches up — while places that would
+       * otherwise read a fresh `myOnion` as "we are reachable now" can tell
+       * the difference.
+       */
+      var myOnionPublished = false;
+
       var lastMemberCount = {};
 
       function inviteCode(s) {
@@ -11866,6 +11898,7 @@
        */
       function waitForOnion() {
         var tries = 0;
+        var addressAnnounced = false;
 
         var timer = setInterval(async function () {
           tries++;
@@ -11873,23 +11906,39 @@
           // Ten minutes. A device that has not published by then is not going
           // to without something changing, and the network panel already says
           // so in its own words.
-          if (myOnion || tries > 200) { clearInterval(timer); return; }
+          if (myOnionPublished || tries > 200) { clearInterval(timer); return; }
 
           try {
             var info = await window.p2p.netInfo();
             if (!info || !info.onion) return;
 
-            myOnion = info.onion;
-            clearInterval(timer);
+            if (!myOnion) {
+              myOnion = info.onion;
 
-            // The profile that went out without an address gets republished,
-            // so everyone who has this account saved learns where to reach it.
-            publishProfile();
+              // The profile that went out without an address gets republished,
+              // so everyone who has this account saved learns where to reach it.
+              publishProfile();
+            }
 
-            // Said, because the panels that show it are built when they are
-            // opened — somebody who has been staring at "waiting for Tor"
-            // would otherwise have no reason to look again.
-            flash(t("Tor published your address — your friend code is ready"));
+            // The address existing is not the same as it being reachable —
+            // see `myOnionPublished` above — so this keeps polling rather
+            // than stopping the moment `myOnion` is set. Said only once: a
+            // "your address exists but Tor is still confirming it" message
+            // every three seconds would be worse than the silence it replaces.
+            if (!addressAnnounced) {
+              addressAnnounced = true;
+              flash(t("Tor has your address — confirming it can be reached…"));
+            }
+
+            if (info.onionPublished) {
+              myOnionPublished = true;
+              clearInterval(timer);
+
+              // Said, because the panels that show it are built when they are
+              // opened — somebody who has been staring at "confirming…"
+              // would otherwise have no reason to look again.
+              flash(t("Tor confirmed your address is reachable — your friend code is ready"));
+            }
           } catch (e) {
             // Between states. Ask again.
           }
@@ -12863,6 +12912,20 @@
           c.textContent = myOnion ? myFriendCode() : t("Waiting for Tor to publish your address…");
           yours.appendChild(c);
           card.appendChild(yours);
+
+          // The code works the moment an address exists — whoever dials it
+          // just retries until the descriptor catches up — so this is shown
+          // rather than blocking anything. But if a request sent right now
+          // seems to need a couple of tries before it goes anywhere, this is
+          // usually why: the address in the code above exists, and the
+          // network has not finished routing to it yet.
+          if (myOnion && !myOnionPublished) {
+            var notYet = document.createElement("div");
+            notYet.className = "muted";
+            notYet.style.cssText = "font-size:11px;margin-top:2px";
+            notYet.textContent = t("Still confirming this address can be reached — sharing it now works, but the first request may take a minute.");
+            yours.appendChild(notYet);
+          }
 
           // The same code as a picture, for the phone in front of you.
           //
@@ -18076,6 +18139,20 @@
             state = "accepted";
           }
 
+          // The direct conversation itself has not synced to this device yet
+          // — ordinary on a sibling that has never talked to `uid` directly
+          // and only knows about the request via this account's own @index.
+          // `outgoingNoted`/`incomingNoted` are durable and already correctly
+          // synced across every device on the account (see `noteOutgoing`/
+          // `noteIncoming`), so trust them here rather than defaulting to
+          // "none" — which hid a request nobody had actually withdrawn,
+          // silently, until this device's own p2p sync happened to reach the
+          // conversation's other party and read the log for itself.
+          if (state === "none" && !ended) {
+            if (outgoingNoted[uid]) state = "outgoing";
+            else if (incomingNoted[uid]) state = "incoming";
+          }
+
           // The simultaneous add. Both sides sent a request before either
           // answered, so this log holds one from each and neither is a reply to
           // the other — the state above settles on whichever sorted last, and
@@ -18119,6 +18196,20 @@
         // accepting avoids leaving both sides pending on each other.
         if (requests[uid] === "incoming" || incomingNoted[uid]) {
           await acceptRequest(uid);
+          return;
+        }
+
+        // Already asked and still waiting on an answer. Without this, a
+        // request that has not visibly "done anything" yet — because it is
+        // still working through Tor's own connection latency, not because
+        // nothing happened — invited being sent again on every impatient
+        // click, each one writing a fresh `friend.request` and a fresh outbox
+        // obligation for the same standing request. The existing one is
+        // already being retried; a second does not deliver it any faster.
+        if (requests[uid] === "outgoing" || outgoingNoted[uid]) {
+          flash(t("Already sent — waiting for {name} to answer", { name: nameOf(uid) }));
+          requests[uid] = "outgoing";
+          renderSide();
           return;
         }
 
@@ -20634,6 +20725,7 @@
           netPort = net.port;
           var info = await window.p2p.netInfo();
           myOnion = info.onion || null;
+          myOnionPublished = !!info.onionPublished;
 
           // Profiles published before Tor was ready carry no address, so they
           // told nobody how to reach us. Publishing again once the onion
@@ -20645,9 +20737,13 @@
             // store can fail while the app is still starting, and the profile
             // is what everybody else reads a name and a face from.
             setTimeout(function () { publishProfile(); }, 30000);
-          } else {
-            waitForOnion();
           }
+
+          // Either the address itself is still missing, or it exists but has
+          // not been confirmed reachable yet — `netStart` resolving does not
+          // wait for that on any platform, only for the key to exist. Either
+          // way there is more to poll for.
+          if (!myOnionPublished) waitForOnion();
         } catch (e) { netPort = null; }
 
         if (window.p2p.onDelivered) {

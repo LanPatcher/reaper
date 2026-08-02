@@ -20,6 +20,7 @@
     "@noble/ciphers": "^2.2.0",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
+    "@reaper/keepalive": "file:../for-ios-p2p/plugins/keepalive",
     "@reaper/notify": "file:../for-ios-p2p/plugins/notify",
     "@reaper/socket": "file:../for-ios-p2p/plugins/socket",
     "@reaper/tor": "file:../for-ios-p2p/plugins/tor",
