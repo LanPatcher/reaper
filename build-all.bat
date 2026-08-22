@@ -103,13 +103,36 @@ if not exist "%ROOT%\for-desktop-p2p\build.bat" (
     goto after_desktop
 )
 
+REM Windows commonly locks last build's app.asar (antivirus scanning it, or a
+REM running Reaper), and forge then dies with "EBUSY ... unlink app.asar" when
+REM it tries to replace it. Removing the stale package dir first means there is
+REM nothing to unlink, which avoids the error in the common case.
+if exist "%ROOT%\for-desktop-p2p\out\Reaper-win32-x64" (
+    rmdir /s /q "%ROOT%\for-desktop-p2p\out\Reaper-win32-x64" >nul 2>&1
+)
+
 call "%ROOT%\for-desktop-p2p\build.bat" %CLEAN%
+if not errorlevel 1 goto desktop_copy
+
+REM One automatic retry: the EBUSY lock is usually a brief antivirus scan
+REM window, so a short wait plus a fresh package dir often gets through.
+echo.
+echo  [!] Desktop build failed. This is usually a transient file lock on
+echo      app.asar (antivirus, or a running Reaper). Retrying once in 5s...
+echo      If it fails again, close any running Reaper and exclude this folder
+echo      from Windows Defender, then run:  build-all.bat desktop
+timeout /t 5 /nobreak >nul
+if exist "%ROOT%\for-desktop-p2p\out\Reaper-win32-x64" (
+    rmdir /s /q "%ROOT%\for-desktop-p2p\out\Reaper-win32-x64" >nul 2>&1
+)
+call "%ROOT%\for-desktop-p2p\build.bat"
 if errorlevel 1 (
-    echo  [X] Desktop build failed.
-    set "R_DESKTOP=build FAILED"
+    echo  [X] Desktop build failed twice.
+    set "R_DESKTOP=build FAILED (app.asar locked - see note above)"
     goto after_desktop
 )
 
+:desktop_copy
 set "DESK_SRC=%ROOT%\for-desktop-p2p\out\make\squirrel.windows\x64\reaper-setup.exe"
 if exist "%DESK_SRC%" (
     copy /y "%DESK_SRC%" "%DEPLOY%\reaper-setup.exe" >nul
@@ -249,8 +272,10 @@ if defined IPA_SRC (
     copy /y "%ROOT%\for-ios-p2p\build\!IPA_SRC!" "%DEPLOY%\!IPA_SRC!" >nul
     if errorlevel 1 ( set "R_IOS=built, COPY FAILED" ) else ( set "R_IOS=OK -> !IPA_SRC!" )
 ) else (
-    echo  [X] Build succeeded but no .ipa was found under for-ios-p2p\build.
-    set "R_IOS=built, no artifact found"
+    echo  [X] No new .ipa was produced. The remote Mac build did not finish -
+    echo      check the Codemagic error above (a 403 means the token or app id
+    echo      lacks access to that app; a 404 means the app id is wrong).
+    set "R_IOS=no IPA (remote build did not produce one)"
 )
 :after_ios
 
