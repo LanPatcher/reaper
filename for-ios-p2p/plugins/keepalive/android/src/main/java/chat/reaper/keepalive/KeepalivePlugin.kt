@@ -1,17 +1,18 @@
 package chat.reaper.keepalive
 
 import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
-import com.getcapacitor.PermissionState
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
 import com.getcapacitor.annotation.CapacitorPlugin
-import com.getcapacitor.annotation.Permission
-import com.getcapacitor.annotation.PermissionCallback
 
 /**
  * `KeepaliveService` as seen from the WebView, on Android.
@@ -23,13 +24,11 @@ import com.getcapacitor.annotation.PermissionCallback
  * `KeepaliveService.kt`), but what the WebView calls and what events it
  * gets back are identical.
  */
-@CapacitorPlugin(
-    name = "Keepalive",
-    permissions = [
-        Permission(strings = [Manifest.permission.POST_NOTIFICATIONS], alias = "notifications"),
-    ],
-)
+@CapacitorPlugin(name = "Keepalive")
 class KeepalivePlugin : Plugin(), DefaultLifecycleObserver {
+
+    /** Any request code the plugin owns; nothing here ever reads the result. */
+    private val notificationPermissionRequest = 8401
 
     override fun load() {
         // Whole-app foreground/background, not per-`Activity` — the one
@@ -44,27 +43,36 @@ class KeepalivePlugin : Plugin(), DefaultLifecycleObserver {
 
     @PluginMethod
     fun start(call: PluginCall) {
-        // Refused is a perfectly reasonable answer, and the service starts
-        // either way — the permission gates only whether the notification
-        // Android requires in exchange is actually *visible*, not whether
-        // the foreground grant itself is honoured. Asked anyway, because a
-        // silently-invisible "the app is running" notice is worse than
-        // asking once and having it declined.
-        if (getPermissionState("notifications") != PermissionState.GRANTED) {
-            requestPermissionForAlias("notifications", call, "notificationPermCallback")
-            return
-        }
-        doStart(call)
-    }
-
-    @PermissionCallback
-    private fun notificationPermCallback(call: PluginCall) {
-        doStart(call)
-    }
-
-    private fun doStart(call: PluginCall) {
+        // Started unconditionally, before the permission is even looked at.
+        // `boot.ts` awaits this call before starting the network — Tor,
+        // every socket — so resolving late, or never, because a
+        // notification permission dialog is sitting there unanswered would
+        // hold the entire app hostage to it. The foreground grant this
+        // service provides does not depend on the notification being
+        // *visible*, only on the service running, so there is nothing here
+        // actually worth waiting on.
         KeepaliveService.start(context)
         call.resolve(JSObject().put("running", true).put("error", null))
+
+        // Asked separately, fire-and-forget: a silently-invisible "the app
+        // is running" notice is worse than asking once and having it
+        // declined, but it is a courtesy on top of an already-running
+        // service, not a precondition for one — plain `ActivityCompat`
+        // rather than Capacitor's permission-alias machinery, which ties
+        // the request to resolving *this* call and would recreate the exact
+        // blocking this is written to avoid.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            activity?.let {
+                ActivityCompat.requestPermissions(
+                    it,
+                    arrayOf(Manifest.permission.POST_NOTIFICATIONS),
+                    notificationPermissionRequest,
+                )
+            }
+        }
     }
 
     @PluginMethod

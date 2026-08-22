@@ -68,6 +68,18 @@ export interface TorStatus {
 
   /** This device's sync address, or null until its service is published. */
   syncOnion: string | null;
+
+  /**
+   * Whether `onion` has actually been confirmed reachable, not just derived
+   * from the hidden-service key. A key exists — and `onion` is set — the
+   * instant the service directory is read, which needs no network at all;
+   * this is true only once the control port has reported the descriptor was
+   * genuinely accepted by the network. `false` means either "still working
+   * on it" or "no account address configured on this device" — the two are
+   * not distinguished here, since `onion` already tells them apart.
+   */
+  published: boolean;
+
   error?: string | null;
 }
 
@@ -175,6 +187,7 @@ export const Tor = registerPlugin<TorPlugin>("Tor", {
       socksPort: 0,
       onion: null,
       syncOnion: null,
+      published: false,
       error: "not iOS",
     }),
     addListener: async () => ({ remove: async () => {} }),

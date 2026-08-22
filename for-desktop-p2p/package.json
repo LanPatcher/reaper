@@ -1,7 +1,7 @@
 {
   "name": "reaper",
   "productName": "Reaper",
-  "version": "1.4.3",
+  "version": "1.4.4",
   "main": ".vite/build/main.js",
   "repository": "stoatchat/desktop",
   "scripts": {

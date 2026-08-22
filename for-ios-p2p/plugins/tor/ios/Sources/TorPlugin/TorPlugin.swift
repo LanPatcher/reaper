@@ -80,6 +80,10 @@ public class TorPlugin: CAPPlugin, CAPBridgedPlugin {
             // Where this device's own siblings reach it. Separate from the
             // account address on purpose — see TorService.swift.
             "syncOnion": tor?.syncOnion as Any,
+
+            // Whether `onion` has actually been confirmed reachable, not
+            // just derived from the key — see `TorService.accountConfirmed`.
+            "published": tor?.accountConfirmed ?? false,
             "error": tor?.lastError as Any,
         ])
     }

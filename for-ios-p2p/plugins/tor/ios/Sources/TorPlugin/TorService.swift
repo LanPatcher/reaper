@@ -102,6 +102,19 @@ final class TorService {
     private(set) var socksPort: UInt16 = 0
     private(set) var lastError: String?
 
+    /**
+     * Whether the *account* address specifically has been confirmed
+     * reachable — not merely that it exists. `TorPlugin.status()` answers
+     * `published` from this, which `for-ios-p2p/src/shim/tor.ts` polls into
+     * its own `published` getter — `bridge.ts` (shared with desktop)
+     * answers `netInfo`'s `onionPublished` from that, and the renderer's own
+     * "still confirming this address" UI reads it from there. Without this,
+     * `status()` had no way to say the difference between "this device has
+     * an onion key" and "peers can actually reach it", even though
+     * `confirmPublication` already knows.
+     */
+    private(set) var accountConfirmed = false
+
     // ---- confirming publication, over the control port -----------------------
     //
     // A hidden-service directory produces a `hostname` file the instant tor
@@ -833,6 +846,7 @@ final class TorService {
                     guard let self, self.onion == address else { return }
 
                     if confirmed {
+                        self.accountConfirmed = true
                         self.emit("published", [
                             "onion": address,
                             "syncOnion": self.syncOnion as Any,
@@ -925,6 +939,7 @@ final class TorService {
         socksPort = 0
         onion = nil
         syncOnion = nil
+        accountConfirmed = false
 
         emit("stopped", [:])
     }

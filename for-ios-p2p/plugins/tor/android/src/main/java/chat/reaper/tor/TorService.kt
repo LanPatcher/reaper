@@ -88,6 +88,7 @@ class TorService(
 
         @Volatile private var lastOnion: String? = null
         @Volatile private var lastSyncOnion: String? = null
+        @Volatile private var lastAccountConfirmed: Boolean = false
 
         /**
          * The control connection, and what it has told this process about
@@ -211,6 +212,18 @@ class TorService(
     var socksPort: Int = 0; private set
     var lastError: String? = null; private set
 
+    /**
+     * Whether the *account* address specifically has been confirmed
+     * reachable — not merely that it exists. Read by `TorPlugin.status()`,
+     * which is what `for-ios-p2p/src/shim/tor.ts`'s `published` getter
+     * polls; without this the shim (and `bridge.ts`'s `onionPublished`,
+     * which the renderer's own confirmation UI reads) had no way to learn
+     * that a descriptor was genuinely uploaded, only that the `"published"`
+     * event fired once — which nothing was still listening for by the time
+     * anything asked.
+     */
+    var accountConfirmed: Boolean = false; private set
+
     /** Whether *this* launch configured the account service at all. */
     private var publishesAccount = true
 
@@ -257,6 +270,7 @@ class TorService(
             publishesAccount = launchedWithAccount ?: account
             onion = lastOnion
             syncOnion = lastSyncOnion
+            accountConfirmed = lastAccountConfirmed
             emit("ready", JSObject().put("socksPort", SOCKS_PORT))
             scope.launch { readOnionAddresses() }
             return
@@ -461,6 +475,8 @@ class TorService(
                 // minute before the network actually had a route to it.
                 val confirmed = confirmPublication(address)
                 if (confirmed) {
+                    accountConfirmed = true
+                    lastAccountConfirmed = true
                     emit(
                         "published",
                         JSObject()
@@ -661,6 +677,7 @@ class TorService(
         launchedWithAccount = null
         lastOnion = null
         lastSyncOnion = null
+        lastAccountConfirmed = false
 
         controlSocket?.let { try { it.close() } catch (e: IOException) { /* already gone */ } }
         controlSocket = null
@@ -671,6 +688,7 @@ class TorService(
         socksPort = 0
         onion = null
         syncOnion = null
+        accountConfirmed = false
 
         emit("stopped", JSObject())
     }

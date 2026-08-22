@@ -62,6 +62,12 @@ class TorPlugin : Plugin() {
                 .put("socksPort", tor.socksPort)
                 .put("onion", tor.onion)
                 .put("syncOnion", tor.syncOnion)
+                // Whether `onion` has actually been confirmed reachable, not
+                // just derived from the key — see `TorService.accountConfirmed`.
+                // `for-ios-p2p/src/shim/tor.ts` polls this into its own
+                // `published` getter, which `bridge.ts` answers `netInfo`'s
+                // `onionPublished` from.
+                .put("published", tor.accountConfirmed)
                 .put("error", tor.lastError),
         )
     }

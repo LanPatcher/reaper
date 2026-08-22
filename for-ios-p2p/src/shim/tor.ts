@@ -307,12 +307,38 @@ export class TorService extends EventEmitter {
 
   running = false;
 
+  /**
+   * Whether `address` has actually been confirmed reachable, not just
+   * derived from the key — see `TorStatus.published`. `bridge.ts` answers
+   * `netInfo`'s `onionPublished` from this, which is what the renderer's
+   * own "still confirming this address" UI reads.
+   */
+  published = false;
+
   #watching: ReturnType<typeof setInterval> | undefined;
+
+  /**
+   * How many ticks to keep polling for `published` specifically, once the
+   * addresses and the proxy are otherwise settled.
+   *
+   * The native side gives up confirming after `PUBLISH_TIMEOUT_MS` (2
+   * minutes — see `tor.ts`/`TorService.kt`/`TorService.swift`), so this has
+   * to keep asking at least that long, or it stops polling before the
+   * native side has even reached its own honest "not confirmed" answer —
+   * which would freeze `published` at `false` forever even on a device that
+   * goes on to confirm a minute later. 45 * 3s is 135s, a small margin over
+   * the native timeout. A displaced device (no account configured, so
+   * nothing here is ever going to confirm) also stops after this — the same
+   * "give up rather than poll forever" shape as everything else that waits
+   * on Tor in this codebase.
+   */
+  static readonly #MAX_PUBLISH_TICKS = 45;
+  #publishTicks = 0;
 
   /**
    * Keep `address` and `running` in step with the plugin.
    *
-   * `bridge.ts` answers `netInfo` from these two fields, and the interface
+   * `bridge.ts` answers `netInfo` from these fields, and the interface
    * builds the friend code out of the address it gets back. On the desktop
    * `start()` does not return until Tor has written its hostname file, so the
    * address is there by the time anything asks.
@@ -349,9 +375,20 @@ export class TorService extends EventEmitter {
           this.emit("sync", status.syncOnion);
         }
 
+        if (status.published && !this.published) {
+          this.published = true;
+        }
+
+        if (!this.published) this.#publishTicks++;
+
         // Nothing left to wait for. Neither address changes again without the
-        // app restarting, and the proxy port is now known.
-        if (this.address && this.syncAddress && proxyReady() && this.#watching) {
+        // app restarting, the proxy port is now known, and either publication
+        // has been confirmed or enough ticks have passed that the native side
+        // has already given up on its own — see `#MAX_PUBLISH_TICKS`.
+        const settled =
+          this.published || this.#publishTicks >= TorService.#MAX_PUBLISH_TICKS;
+
+        if (this.address && this.syncAddress && proxyReady() && settled && this.#watching) {
           clearInterval(this.#watching);
           this.#watching = undefined;
         }
