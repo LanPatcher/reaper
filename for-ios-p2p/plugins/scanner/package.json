@@ -8,11 +8,15 @@
   "files": [
     "dist/",
     "ios/Sources/",
+    "android/",
     "ReaperScanner.podspec"
   ],
   "capacitor": {
     "ios": {
       "src": "ios"
+    },
+    "android": {
+      "src": "android"
     }
   },
   "scripts": {

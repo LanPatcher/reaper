@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Reading a QR code needs the camera. Declared here in the plugin so it
+         is merged into any app that pulls the plugin in, and requested at
+         runtime by the ZXing capture screen the moment it opens — an app that
+         never scans is never asked for it. `required="false"` so the app still
+         installs on a device with no camera; scanning simply is not offered
+         there, and the sync address can always be typed instead. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+</manifest>

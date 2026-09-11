@@ -17,6 +17,19 @@ contextBridge.exposeInMainWorld("native", {
   setBadgeCount: (count: number) => ipcRenderer.send("setBadgeCount", count),
 
   /**
+   * Hide the window from screenshots and recorders, or stop hiding it.
+   *
+   * Used while a call is up. See the handler in `src/native/window.ts` for what
+   * the operating system actually does, and for what it cannot do.
+   */
+  setContentProtection: (on: boolean) =>
+    ipcRenderer.send("setContentProtection", on),
+
+  /** Whether this platform can exclude the window from capture at all. */
+  canProtectContent: (): boolean =>
+    process.platform === "win32" || process.platform === "darwin",
+
+  /**
    * Raise a desktop notification.
    *
    * There is no field for the message. That is not an oversight — a Windows

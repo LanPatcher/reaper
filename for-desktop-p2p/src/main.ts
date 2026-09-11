@@ -18,10 +18,15 @@ import "./native/autoLaunch";
 import { config } from "./native/config";
 import { log } from "./native/diagnostics";
 import { registerNotifications } from "./native/notify";
+import { registerLinkHandlers } from "./native/remoteBridge";
 import { initTray } from "./native/tray";
 import { startUpdates } from "./native/updates";
 import { BUILD_URL, createMainWindow, mainWindow } from "./native/window";
 import { registerP2PHandlers, shutdownP2P } from "./p2p/bridge";
+import {
+  registerLocalAIHandlers,
+  shutdownLocalAI,
+} from "./local-ai/bridge";
 
 // Scheme privileges have to be declared before the app becomes ready, so this
 // runs at module scope rather than inside the ready handler below.
@@ -164,6 +169,28 @@ if (acquiredLock) {
       log("[p2p] failed to initialise:", String(error));
     }
 
+    // Link previews. Every platform: this is the only way a message can show
+    // remote content at all, since the renderer's CSP refuses every remote
+    // origin. The fetch happens in the main process, over Tor.
+    try {
+      registerLinkHandlers();
+    } catch (error) {
+      log("[links] failed to initialise:", String(error));
+    }
+
+    // Local AI friends. Windows-only for now — the model runtime and image
+    // binary are only vendored for win32 — so the handlers are simply not
+    // registered elsewhere, and window.localai.available() then reports false
+    // and the UI hides the feature. Guarded like the P2P handlers above: a
+    // throw here must not stop the app from opening.
+    if (process.platform === "win32") {
+      try {
+        registerLocalAIHandlers();
+      } catch (error) {
+        log("[localai] failed to initialise:", String(error));
+      }
+    }
+
     // create window and application contexts
     createMainWindow();
 
@@ -201,6 +228,11 @@ if (acquiredLock) {
   // couple of seconds of messages in memory at any moment. Flush them, or the
   // buffering that makes storage cheap would cost data on every quit.
   app.on("before-quit", shutdownP2P);
+
+  // Free the local model on quit, if one is loaded.
+  app.on("before-quit", () => {
+    void shutdownLocalAI();
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

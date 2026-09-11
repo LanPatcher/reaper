@@ -415,6 +415,38 @@
       .listitem .grow { flex: 1; min-width: 0; }
       .muted { color: var(--dim); font-size: 12px; }
       .mention { background: rgba(253,102,113,.18); color: var(--accent); border-radius: 4px; padding: 0 3px; }
+      /* Addressing the whole room is louder than naming one person, and
+         reads as such. It was drawn identically to any other mention,
+         which is why it looked like it had not been recognised. */
+      .mention.everyone { background: var(--accent); color: #fff; font-weight: 600; }
+      /* links in messages, and the cards for the ones we trust */
+      .msglink { color: #7cb7ff; text-decoration: none; word-break: break-all; }
+      .msglink:hover { text-decoration: underline; }
+      .msglink.trusted { color: #6fd3a2; }
+      /* What a deceptive link claimed to say. Deliberately not a link, and
+         deliberately not styled like one. */
+      .linkclaim { color: var(--dim); font-style: italic; }
+      .linkclaim::after { content: " \2192 "; font-style: normal; }
+      .embed { margin: 6px 0 2px; border-left: 3px solid var(--line);
+               background: rgba(255,255,255,.03); border-radius: 4px;
+               padding: 7px 10px; max-width: 420px; }
+      .embed .ehead { font-size: 11px; color: var(--dim); display: flex;
+                      align-items: center; gap: 6px; margin-bottom: 5px; }
+      .embed .ename { font-weight: 600; color: var(--text); }
+      .embed .eload { font-size: 11px; color: var(--dim); padding: 3px 8px;
+                      border: 1px solid var(--line); border-radius: 4px;
+                      background: none; cursor: pointer; }
+      .embed .eload:hover { color: var(--text); background: var(--hover); }
+      .embed img { display: block; max-width: 100%; max-height: 260px;
+                   border-radius: 4px; cursor: pointer; }
+      .embed .enote { font-size: 11px; color: var(--dim); margin-top: 4px; }
+      /* What a character did while answering, shown in the transcript. */
+      .aiact { font-size: 11px; color: var(--dim); margin: 4px 0 4px 46px;
+               display: flex; align-items: center; gap: 6px; }
+      .aiact::before { content: ""; width: 5px; height: 5px; border-radius: 50%;
+                       background: var(--good); flex-shrink: 0; }
+      .aiact.failed { color: var(--accent); }
+      .aiact.failed::before { background: var(--accent); }
       .msg.pinged { background: rgba(253,102,113,.07); box-shadow: inset 2px 0 0 var(--accent); }
       .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
       .copybtn { color: var(--dim); font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line); }
@@ -625,6 +657,17 @@
         max-height: 42vh; overflow: hidden;
       }
       #screenView.hide { display: none; }
+      /* the row of faces during a call */
+      #camView { display: flex; gap: 8px; padding: 8px 10px; overflow-x: auto;
+                 background: var(--rail); border-bottom: 1px solid var(--line); }
+      #camView.hide { display: none; }
+      .camTile { position: relative; flex: 0 0 auto; border-radius: 8px;
+                 overflow: hidden; background: #000; line-height: 0; }
+      .camTile img { height: 132px; width: auto; display: block; }
+      .camTile.self { outline: 2px solid var(--accent); outline-offset: -2px; }
+      .camName { position: absolute; left: 5px; bottom: 4px; font-size: 11px;
+                 line-height: 1.4; color: #fff; background: rgba(0,0,0,.55);
+                 padding: 1px 6px; border-radius: 4px; }
       .screenImg { max-width: 100%; max-height: 38vh; object-fit: contain;
         image-rendering: auto; display: block; }
       .screenImg:fullscreen { max-width: 100vw; max-height: 100vh;
@@ -764,6 +807,69 @@
       .tag { color: var(--dim); font-size: 11px; font-family: ui-monospace, monospace; margin-left: 6px; }
       .row .tag { margin-left: auto; }
       .warn { color: var(--dim); font-size: 12px; border-left: 2px solid var(--line); padding-left: 10px; }
+    
+      /* ================= Local AI friends ================= */
+      #aiView { position: absolute; inset: 0; z-index: 40; background: var(--main); display: none; flex-direction: column; }
+      #aiView.show { display: flex; }
+      #aiHead { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
+      #aiHead .av { width: 32px; height: 32px; font-size: 13px; background-size: cover; background-position: center; }
+      #aiHead .nm { font-weight: 600; }
+      #aiHead .sp { flex: 1; }
+      #aiHead .aitoggle { font-size: 12px; color: var(--dim); padding: 5px 9px; border-radius: 7px; border: 1px solid var(--line); }
+      #aiHead .aitoggle.on { color: var(--text); border-color: var(--accent); background: rgba(253,102,113,.12); }
+      #aiHead button.ico { width: 32px; height: 32px; border-radius: 7px; color: var(--dim); }
+      #aiHead button.ico:hover { background: var(--hover); color: var(--text); }
+      #aiStatus { font-size: 11px; color: var(--dim); padding: 3px 16px; min-height: 17px; flex-shrink: 0; }
+      #aiMessages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px; }
+      .aimsg { display: flex; gap: 11px; padding: 6px 0; }
+      .aimsg .av { width: 36px; height: 36px; flex-shrink: 0; background-size: cover; background-position: center; }
+      .aimsg .who { font-weight: 600; }
+      .aimsg .when { color: var(--dim); font-size: 11px; margin-left: 7px; }
+      .aimsg .aibody { white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; min-width: 0; }
+      .aimsg .aibody em { color: var(--dim); font-style: italic; }
+      .aicursor::after { content: "▍"; color: var(--accent); animation: aiblink 1s steps(2) infinite; }
+      @keyframes aiblink { 50% { opacity: 0; } }
+      .aiscene { margin-top: 6px; }
+      .aiscene img { max-width: min(380px, 100%); border-radius: 8px; display: block; }
+      .aiscene .note { font-size: 11px; color: var(--dim); }
+      #aiComposer { padding: 0 16px 16px; flex-shrink: 0; display: flex; gap: 8px; align-items: center; }
+      #aiComposer input[type=text] { flex: 1; padding: 12px 15px; border-radius: 8px; border: 1px solid var(--line); background: var(--side); color: var(--text); }
+      #aiComposer input[type=text]:focus { outline: none; border-color: var(--accent); }
+      #aiComposer button.send { padding: 11px 18px; border-radius: 8px; background: var(--accent); color: #fff; font-weight: 600; }
+      #aiComposer button.send:disabled { opacity: .5; cursor: default; }
+      #aiHome { flex: 1; padding: 20px; overflow-y: auto; }
+      /* AI-to-AI conversation sandbox (the duet modal). */
+      .duetrow { display: flex; gap: 12px; margin: 10px 0; flex-wrap: wrap; }
+      .duetlabel { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--dim); flex: 1; min-width: 140px; }
+      .duetsel, .duetnum, .duetopener { width: 100%; box-sizing: border-box; padding: 7px 8px; border-radius: 8px; border: 1px solid var(--line, #333); background: var(--panel, #1e1e1e); color: inherit; font: inherit; }
+      .duetnum { max-width: 90px; }
+      .duetopener { resize: vertical; margin: 6px 0; }
+      .duetscript { max-height: 42vh; overflow-y: auto; margin: 10px 0; padding: 4px; display: flex; flex-direction: column; gap: 8px; }
+      .duetmsg { max-width: 88%; padding: 8px 11px; border-radius: 12px; background: var(--panel, #26262b); }
+      .duetmsg.left { align-self: flex-start; border-bottom-left-radius: 4px; }
+      .duetmsg.right { align-self: flex-end; border-bottom-right-radius: 4px; background: var(--accent-soft, #2a3550); }
+      .duetwho { font-size: 11px; font-weight: 700; color: var(--dim); margin-bottom: 3px; }
+      .duetbody { white-space: pre-wrap; word-break: break-word; line-height: 1.4; }
+      .duetbody.aicursor::after { content: "\2588"; opacity: 0.5; animation: aiblink 1s steps(2) infinite; }
+      .duetstatus { min-height: 16px; font-size: 12px; }
+      #aiHome h3 { font-size: 16px; margin-bottom: 4px; }
+      #aiHome .sub { color: var(--dim); font-size: 12px; }
+      .aigrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 16px; }
+      .aicard { background: var(--side); border: 1px solid var(--line); border-radius: 10px; padding: 14px; text-align: center; cursor: pointer; }
+      .aicard:hover { border-color: var(--accent); }
+      .aicard .av { width: 56px; height: 56px; margin: 0 auto 8px; font-size: 20px; background-size: cover; background-position: center; }
+      .aicard .nm { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .aicard .meta { font-size: 11px; color: var(--dim); margin-top: 2px; }
+      .aicard.new { display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--dim); border-style: dashed; min-height: 118px; font-size: 13px; }
+      .aicard.new .plus { font-size: 26px; margin-bottom: 4px; }
+      .aifield { margin-bottom: 4px; }
+      .aifield label { font-size: 12px; color: var(--dim); display: block; margin-bottom: 4px; }
+      #modalCard textarea.aisheet { width: 100%; min-height: 150px; resize: vertical; font: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--main); color: var(--text); }
+      .airow { display: flex; align-items: center; gap: 10px; }
+      .airow .av { width: 52px; height: 52px; background-size: cover; background-position: center; }
+      .aiopt { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 4px 0; }
+      .orb.ai { background: var(--side); font-size: 18px; }
+
     </style>
   </head>
   <body>
@@ -871,6 +977,7 @@
           <div id="callBtns"></div>
         </div>
         <div id="screenView" class="hide"></div>
+        <div id="camView" class="hide"></div>
         <div id="topbar">
           <b id="chanName">Home</b>
           <div id="stats"></div>
@@ -897,6 +1004,27 @@
         <div id="composer">
           <button id="attachBtn" title="Attach a file">+</button>
           <input id="input" type="text" placeholder="Message" autocomplete="off" disabled />
+        </div>
+        <div id="aiView">
+          <div id="aiHead">
+            <div class="av" id="aiHeadAv"></div>
+            <div class="nm" id="aiHeadName">AI</div>
+            <div class="sp"></div>
+            <button class="aitoggle" id="aiTtsToggle" title="Read replies aloud (this chat)" style="display:none">TTS</button>
+            <button class="ico" id="aiRegenBtn" title="Regenerate last reply" style="display:none">&#8635;</button>
+            <button class="ico" id="aiClearBtn" title="Restart chat (delete all messages)" style="display:none">&#10227;</button>
+            <button class="ico" id="aiEditBtn" title="Edit character &amp; picture" style="display:none">&#9881;</button>
+            <button class="ico" id="aiDeleteBtn" title="Delete this friend" style="display:none">&#128465;</button>
+            <button class="ico" id="aiDuetBtn" title="Have this character talk to another AI" style="display:none">&#8644;</button>
+            <button class="ico" id="aiBackBtn" title="Close">&#10005;</button>
+          </div>
+          <div id="aiStatus"></div>
+          <div id="aiHome"></div>
+          <div id="aiMessages" style="display:none"></div>
+          <div id="aiComposer" style="display:none">
+            <input id="aiInput" type="text" placeholder="Message" autocomplete="off" />
+            <button class="send" id="aiSend">Send</button>
+          </div>
         </div>
       </div>
       <div id="members" class="hide"></div>
@@ -1444,6 +1572,66 @@
             "{name} was added to {place}": "{name} ha sido añadido a {place}",
             "Ban in {place}": "Veto en {place}",
             "Could not invite {name} — no conversation with them": "No se pudo invitar a {name} — no hay conversación con esa persona",
+            "AI": "IA",
+            "AI character": "Personaje de IA",
+            "Person": "Persona",
+            "Something went wrong.": "Algo salió mal.",
+            "Thinking…": "Pensando…",
+            "Waking up…": "Despertando…",
+            "The language model is not installed in this build. Rebuild with the model bundled to use this feature.": "El modelo de lenguaje no está incluido en esta compilación. Vuelve a compilar con el modelo incluido para usar esta función.",
+            "A character that runs entirely on this computer. Nothing it says leaves the device or touches the network.": "Un personaje que se ejecuta por completo en este ordenador. Nada de lo que dice sale del dispositivo ni toca la red.",
+            "The model is not installed in this build.": "El modelo no está incluido en esta compilación.",
+            "Say something to begin.": "Di algo para empezar.",
+            "The image generator is not installed in this build.": "El generador de imágenes no está incluido en esta compilación.",
+            "You": "Tú",
+            "Generating scene…": "Generando escena…",
+            "Scene failed.": "La escena falló.",
+            "Default (system voice)": "Predeterminada (voz del sistema)",
+            "Female voice": "Voz femenina",
+            "Male voice": "Voz masculina",
+            "Restart chat with {name}?": "¿Reiniciar el chat con {name}?",
+            "This deletes every message and scene in this conversation. The friend and its character are kept. There is no undo.": "Esto elimina todos los mensajes y escenas de esta conversación. El amigo y su personaje se conservan. No se puede deshacer.",
+            "Restart": "Reiniciar",
+            "AI character - runs on this device": "Personaje de IA: se ejecuta en este dispositivo",
+            "Choose picture": "Elegir imagen",
+            "Character sheet": "Ficha del personaje",
+            "Who they are, how they speak, the setting, what they want. This becomes their personality.": "Quién es, cómo habla, el escenario, qué quiere. Esto se convierte en su personalidad.",
+            "First message / greeting (optional)": "Primer mensaje / saludo (opcional)",
+            "What the character says to open the scene. Leave blank to speak first yourself.": "Lo que dice el personaje para abrir la escena. Déjalo vacío para hablar tú primero.",
+            "Read replies aloud (text to speech)": "Leer las respuestas en voz alta (texto a voz)",
+            "Voice (text to speech)": "Voz (texto a voz)",
+            "Preview": "Escuchar",
+            "Hi! This is how I sound.": "¡Hola! Así es como sueno.",
+            "Advanced settings": "Ajustes avanzados",
+            "Summarise older messages when the chat gets long": "Resumir los mensajes antiguos cuando el chat se alarga",
+            "Edit AI friend": "Editar amigo de IA",
+            "Delete {name}?": "¿Eliminar a {name}?",
+            "This removes the friend and its whole conversation from this computer. There is no undo.": "Esto elimina al amigo y toda su conversación de este ordenador. No se puede deshacer.",
+            "This link was labelled with text of its own. Reaper shows where it actually goes.": "Este enlace llevaba un texto propio. Reaper muestra a donde va realmente.",
+            "Show preview": "Ver vista previa",
+            "Loading over Tor…": "Cargando por Tor…",
+            "Could not load it: {why}": "No se pudo cargar: {why}",
+            "unknown error": "error desconocido",
+            "Web and folder access": "Acceso a la web y a carpetas",
+            "Let this character search and read the web": "Permitir que este personaje busque y lea la web",
+            "Everything it fetches goes over Tor, so no site learns your address. It is off for every character until you turn it on.": "Todo lo que descarga pasa por Tor, asi que ningun sitio conoce tu direccion. Esta desactivado en todos los personajes hasta que lo actives.",
+            "Folder it may read and write": "Carpeta que puede leer y escribir",
+            "No folder — it cannot see your files": "Sin carpeta: no puede ver tus archivos",
+            "Choose folder": "Elegir carpeta",
+            "Only that folder, and only text files. Anything it overwrites is copied into .reaper-backups first.": "Solo esa carpeta y solo archivos de texto. Lo que sobrescriba se copia antes en .reaper-backups.",
+            "With both on, a web page this character reads could tell it to send your files somewhere. Turn on only what you need.": "Con ambos activados, una pagina que lea este personaje podria pedirle que envie tus archivos a alguna parte. Activa solo lo que necesites.",
+            "Camera frame rate": "Fotogramas por segundo de la camara",
+            "{n} frames per second": "{n} fotogramas por segundo",
+            "Twenty is smooth enough to read a face. Everything crosses Tor as still frames, so a slow circuit will do better at ten or less.": "Veinte basta para leer una cara. Todo cruza Tor como imagenes fijas, asi que un circuito lento ira mejor con diez o menos.",
+            "While a call is up this window is hidden from screenshots and screen recorders.": "Mientras hay una llamada, esta ventana se oculta de las capturas y grabaciones de pantalla.",
+            "This system cannot hide the window from screen recorders, so that protection is unavailable here.": "Este sistema no puede ocultar la ventana de los grabadores de pantalla, asi que esa proteccion no esta disponible aqui.",
+            "No camera is available here": "No hay ninguna camara disponible aqui",
+            "Could not open the camera": "No se pudo abrir la camara",
+            "Your camera is on — only people in this call can see it": "Tu camara esta encendida: solo las personas de esta llamada pueden verla",
+            "Turn on your camera": "Encender la camara",
+            "Turn off your camera": "Apagar la camara",
+            "This system cannot hide the window from screen recorders.": "Este sistema no puede ocultar la ventana de los grabadores de pantalla.",
+            "Camera": "Camara",
             "Delivering now…": "Entregando ahora…",
             "Disconnected from {name} — nothing left in common": "Desconectado de {name} — ya no hay nada en común",
             "Ignored a message from {name} in {place} — {reason}": "Se ignoró un mensaje de {name} en {place} — {reason}",
@@ -2192,6 +2380,66 @@
             "{name} was added to {place}": "{name} a été ajouté à {place}",
             "Ban in {place}": "Bannissement dans {place}",
             "Could not invite {name} — no conversation with them": "Impossible d'inviter {name} — aucune conversation avec cette personne",
+            "AI": "IA",
+            "AI character": "Personnage IA",
+            "Person": "Personne",
+            "Something went wrong.": "Une erreur s'est produite.",
+            "Thinking…": "Réflexion…",
+            "Waking up…": "Réveil en cours…",
+            "The language model is not installed in this build. Rebuild with the model bundled to use this feature.": "Le modèle de langage n'est pas inclus dans cette version. Recompilez avec le modèle intégré pour utiliser cette fonction.",
+            "A character that runs entirely on this computer. Nothing it says leaves the device or touches the network.": "Un personnage qui s'exécute entièrement sur cet ordinateur. Rien de ce qu'il dit ne quitte l'appareil ni ne touche le réseau.",
+            "The model is not installed in this build.": "Le modèle n'est pas inclus dans cette version.",
+            "Say something to begin.": "Dites quelque chose pour commencer.",
+            "The image generator is not installed in this build.": "Le générateur d'images n'est pas inclus dans cette version.",
+            "You": "Vous",
+            "Generating scene…": "Génération de la scène…",
+            "Scene failed.": "Échec de la scène.",
+            "Default (system voice)": "Par défaut (voix du système)",
+            "Female voice": "Voix féminine",
+            "Male voice": "Voix masculine",
+            "Restart chat with {name}?": "Redémarrer la conversation avec {name} ?",
+            "This deletes every message and scene in this conversation. The friend and its character are kept. There is no undo.": "Cela supprime tous les messages et toutes les scènes de cette conversation. L'ami et son personnage sont conservés. C'est irréversible.",
+            "Restart": "Redémarrer",
+            "AI character - runs on this device": "Personnage IA — s'exécute sur cet appareil",
+            "Choose picture": "Choisir une image",
+            "Character sheet": "Fiche du personnage",
+            "Who they are, how they speak, the setting, what they want. This becomes their personality.": "Qui il est, comment il parle, le décor, ce qu'il veut. Cela devient sa personnalité.",
+            "First message / greeting (optional)": "Premier message / salutation (facultatif)",
+            "What the character says to open the scene. Leave blank to speak first yourself.": "Ce que le personnage dit pour ouvrir la scène. Laissez vide pour parler en premier.",
+            "Read replies aloud (text to speech)": "Lire les réponses à voix haute (synthèse vocale)",
+            "Voice (text to speech)": "Voix (synthèse vocale)",
+            "Preview": "Aperçu",
+            "Hi! This is how I sound.": "Bonjour ! Voici à quoi je ressemble.",
+            "Advanced settings": "Paramètres avancés",
+            "Summarise older messages when the chat gets long": "Résumer les anciens messages quand la conversation s'allonge",
+            "Edit AI friend": "Modifier l'ami IA",
+            "Delete {name}?": "Supprimer {name} ?",
+            "This removes the friend and its whole conversation from this computer. There is no undo.": "Cela supprime l'ami et toute sa conversation de cet ordinateur. C'est irréversible.",
+            "This link was labelled with text of its own. Reaper shows where it actually goes.": "Ce lien portait un texte a lui. Reaper montre ou il mene reellement.",
+            "Show preview": "Afficher l'apercu",
+            "Loading over Tor…": "Chargement via Tor…",
+            "Could not load it: {why}": "Impossible de le charger : {why}",
+            "unknown error": "erreur inconnue",
+            "Web and folder access": "Acces au web et aux dossiers",
+            "Let this character search and read the web": "Autoriser ce personnage a chercher et lire le web",
+            "Everything it fetches goes over Tor, so no site learns your address. It is off for every character until you turn it on.": "Tout ce qu'il recupere passe par Tor, donc aucun site ne connait votre adresse. C'est desactive pour chaque personnage jusqu'a ce que vous l'activiez.",
+            "Folder it may read and write": "Dossier qu'il peut lire et ecrire",
+            "No folder — it cannot see your files": "Aucun dossier : il ne voit pas vos fichiers",
+            "Choose folder": "Choisir un dossier",
+            "Only that folder, and only text files. Anything it overwrites is copied into .reaper-backups first.": "Ce dossier seulement, et uniquement des fichiers texte. Tout ce qu'il ecrase est d'abord copie dans .reaper-backups.",
+            "With both on, a web page this character reads could tell it to send your files somewhere. Turn on only what you need.": "Avec les deux actives, une page lue par ce personnage pourrait lui demander d'envoyer vos fichiers ailleurs. N'activez que ce dont vous avez besoin.",
+            "Camera frame rate": "Images par seconde de la camera",
+            "{n} frames per second": "{n} images par seconde",
+            "Twenty is smooth enough to read a face. Everything crosses Tor as still frames, so a slow circuit will do better at ten or less.": "Vingt suffit pour lire un visage. Tout traverse Tor sous forme d'images fixes, donc un circuit lent s'en sortira mieux a dix ou moins.",
+            "While a call is up this window is hidden from screenshots and screen recorders.": "Pendant un appel, cette fenetre est masquee des captures et des enregistrements d'ecran.",
+            "This system cannot hide the window from screen recorders, so that protection is unavailable here.": "Ce systeme ne peut pas masquer la fenetre aux enregistreurs d'ecran, cette protection n'est donc pas disponible ici.",
+            "No camera is available here": "Aucune camera n'est disponible ici",
+            "Could not open the camera": "Impossible d'ouvrir la camera",
+            "Your camera is on — only people in this call can see it": "Votre camera est allumee : seules les personnes de cet appel peuvent la voir",
+            "Turn on your camera": "Allumer votre camera",
+            "Turn off your camera": "Eteindre votre camera",
+            "This system cannot hide the window from screen recorders.": "Ce systeme ne peut pas masquer la fenetre aux enregistreurs d'ecran.",
+            "Camera": "Camera",
             "Delivering now…": "Livraison en cours…",
             "Disconnected from {name} — nothing left in common": "Déconnecté de {name} — plus rien en commun",
             "Ignored a message from {name} in {place} — {reason}": "Message de {name} ignoré dans {place} — {reason}",
@@ -2940,6 +3188,66 @@
             "{name} was added to {place}": "{name} wurde zu {place} hinzugefügt",
             "Ban in {place}": "Sperre in {place}",
             "Could not invite {name} — no conversation with them": "{name} konnte nicht eingeladen werden — kein Gespräch mit dieser Person",
+            "AI": "KI",
+            "AI character": "KI-Charakter",
+            "Person": "Person",
+            "Something went wrong.": "Etwas ist schiefgelaufen.",
+            "Thinking…": "Denkt nach…",
+            "Waking up…": "Wacht auf…",
+            "The language model is not installed in this build. Rebuild with the model bundled to use this feature.": "Das Sprachmodell ist in diesem Build nicht enthalten. Erstelle den Build mit dem Modell neu, um diese Funktion zu nutzen.",
+            "A character that runs entirely on this computer. Nothing it says leaves the device or touches the network.": "Eine Figur, die vollständig auf diesem Computer läuft. Nichts, was sie sagt, verlässt das Gerät oder berührt das Netzwerk.",
+            "The model is not installed in this build.": "Das Modell ist in diesem Build nicht enthalten.",
+            "Say something to begin.": "Sag etwas, um zu beginnen.",
+            "The image generator is not installed in this build.": "Der Bildgenerator ist in diesem Build nicht enthalten.",
+            "You": "Du",
+            "Generating scene…": "Szene wird erzeugt…",
+            "Scene failed.": "Szene fehlgeschlagen.",
+            "Default (system voice)": "Standard (Systemstimme)",
+            "Female voice": "Weibliche Stimme",
+            "Male voice": "Männliche Stimme",
+            "Restart chat with {name}?": "Chat mit {name} neu starten?",
+            "This deletes every message and scene in this conversation. The friend and its character are kept. There is no undo.": "Damit werden alle Nachrichten und Szenen dieser Unterhaltung gelöscht. Der Freund und seine Figur bleiben erhalten. Das lässt sich nicht rückgängig machen.",
+            "Restart": "Neu starten",
+            "AI character - runs on this device": "KI-Charakter – läuft auf diesem Gerät",
+            "Choose picture": "Bild auswählen",
+            "Character sheet": "Charakterbogen",
+            "Who they are, how they speak, the setting, what they want. This becomes their personality.": "Wer sie ist, wie sie spricht, der Schauplatz, was sie will. Daraus wird ihre Persönlichkeit.",
+            "First message / greeting (optional)": "Erste Nachricht / Begrüßung (optional)",
+            "What the character says to open the scene. Leave blank to speak first yourself.": "Was die Figur sagt, um die Szene zu eröffnen. Leer lassen, um selbst zuerst zu sprechen.",
+            "Read replies aloud (text to speech)": "Antworten vorlesen (Sprachausgabe)",
+            "Voice (text to speech)": "Stimme (Sprachausgabe)",
+            "Preview": "Vorschau",
+            "Hi! This is how I sound.": "Hallo! So klinge ich.",
+            "Advanced settings": "Erweiterte Einstellungen",
+            "Summarise older messages when the chat gets long": "Ältere Nachrichten zusammenfassen, wenn der Chat lang wird",
+            "Edit AI friend": "KI-Freund bearbeiten",
+            "Delete {name}?": "{name} löschen?",
+            "This removes the friend and its whole conversation from this computer. There is no undo.": "Damit werden der Freund und seine gesamte Unterhaltung von diesem Computer entfernt. Das lässt sich nicht rückgängig machen.",
+            "This link was labelled with text of its own. Reaper shows where it actually goes.": "Dieser Link trug einen eigenen Text. Reaper zeigt, wohin er wirklich fuehrt.",
+            "Show preview": "Vorschau anzeigen",
+            "Loading over Tor…": "Wird ueber Tor geladen…",
+            "Could not load it: {why}": "Konnte nicht geladen werden: {why}",
+            "unknown error": "unbekannter Fehler",
+            "Web and folder access": "Web- und Ordnerzugriff",
+            "Let this character search and read the web": "Dieser Figur erlauben, im Web zu suchen und zu lesen",
+            "Everything it fetches goes over Tor, so no site learns your address. It is off for every character until you turn it on.": "Alles, was sie abruft, laeuft ueber Tor, sodass keine Seite deine Adresse erfaehrt. Bei jeder Figur aus, bis du es einschaltest.",
+            "Folder it may read and write": "Ordner, den sie lesen und beschreiben darf",
+            "No folder — it cannot see your files": "Kein Ordner - sie sieht deine Dateien nicht",
+            "Choose folder": "Ordner waehlen",
+            "Only that folder, and only text files. Anything it overwrites is copied into .reaper-backups first.": "Nur dieser Ordner und nur Textdateien. Was sie ueberschreibt, wird vorher nach .reaper-backups kopiert.",
+            "With both on, a web page this character reads could tell it to send your files somewhere. Turn on only what you need.": "Wenn beides an ist, koennte eine Webseite, die diese Figur liest, sie anweisen, deine Dateien irgendwohin zu senden. Schalte nur ein, was du brauchst.",
+            "Camera frame rate": "Bildrate der Kamera",
+            "{n} frames per second": "{n} Bilder pro Sekunde",
+            "Twenty is smooth enough to read a face. Everything crosses Tor as still frames, so a slow circuit will do better at ten or less.": "Zwanzig reicht, um ein Gesicht zu lesen. Alles laeuft als Einzelbilder ueber Tor, daher faehrt eine langsame Verbindung mit zehn oder weniger besser.",
+            "While a call is up this window is hidden from screenshots and screen recorders.": "Waehrend eines Anrufs ist dieses Fenster vor Screenshots und Bildschirmaufnahmen verborgen.",
+            "This system cannot hide the window from screen recorders, so that protection is unavailable here.": "Dieses System kann das Fenster nicht vor Bildschirmaufnahmen verbergen, daher ist dieser Schutz hier nicht verfuegbar.",
+            "No camera is available here": "Hier ist keine Kamera verfuegbar",
+            "Could not open the camera": "Die Kamera konnte nicht geoeffnet werden",
+            "Your camera is on — only people in this call can see it": "Deine Kamera ist an - nur Personen in diesem Anruf sehen sie",
+            "Turn on your camera": "Kamera einschalten",
+            "Turn off your camera": "Kamera ausschalten",
+            "This system cannot hide the window from screen recorders.": "Dieses System kann das Fenster nicht vor Bildschirmaufnahmen verbergen.",
+            "Camera": "Kamera",
             "Delivering now…": "Wird jetzt zugestellt…",
             "Disconnected from {name} — nothing left in common": "Verbindung zu {name} getrennt — nichts mehr gemeinsam",
             "Ignored a message from {name} in {place} — {reason}": "Eine Nachricht von {name} in {place} wurde ignoriert — {reason}",
@@ -3688,6 +3996,66 @@
             "{name} was added to {place}": "{name} foi adicionado a {place}",
             "Ban in {place}": "Banimento em {place}",
             "Could not invite {name} — no conversation with them": "Não foi possível convidar {name} — não há conversa com essa pessoa",
+            "AI": "IA",
+            "AI character": "Personagem de IA",
+            "Person": "Pessoa",
+            "Something went wrong.": "Algo correu mal.",
+            "Thinking…": "A pensar…",
+            "Waking up…": "A acordar…",
+            "The language model is not installed in this build. Rebuild with the model bundled to use this feature.": "O modelo de linguagem não está incluído nesta compilação. Volta a compilar com o modelo incluído para usar esta funcionalidade.",
+            "A character that runs entirely on this computer. Nothing it says leaves the device or touches the network.": "Uma personagem que corre inteiramente neste computador. Nada do que diz sai do dispositivo nem toca na rede.",
+            "The model is not installed in this build.": "O modelo não está incluído nesta compilação.",
+            "Say something to begin.": "Diz algo para começar.",
+            "The image generator is not installed in this build.": "O gerador de imagens não está incluído nesta compilação.",
+            "You": "Tu",
+            "Generating scene…": "A gerar cena…",
+            "Scene failed.": "A cena falhou.",
+            "Default (system voice)": "Predefinida (voz do sistema)",
+            "Female voice": "Voz feminina",
+            "Male voice": "Voz masculina",
+            "Restart chat with {name}?": "Reiniciar a conversa com {name}?",
+            "This deletes every message and scene in this conversation. The friend and its character are kept. There is no undo.": "Isto elimina todas as mensagens e cenas desta conversa. O amigo e a sua personagem são mantidos. Não há forma de desfazer.",
+            "Restart": "Reiniciar",
+            "AI character - runs on this device": "Personagem de IA — corre neste dispositivo",
+            "Choose picture": "Escolher imagem",
+            "Character sheet": "Ficha da personagem",
+            "Who they are, how they speak, the setting, what they want. This becomes their personality.": "Quem é, como fala, o cenário, o que quer. Isto torna-se a sua personalidade.",
+            "First message / greeting (optional)": "Primeira mensagem / saudação (opcional)",
+            "What the character says to open the scene. Leave blank to speak first yourself.": "O que a personagem diz para abrir a cena. Deixa vazio para falares tu primeiro.",
+            "Read replies aloud (text to speech)": "Ler as respostas em voz alta (voz sintetizada)",
+            "Voice (text to speech)": "Voz (voz sintetizada)",
+            "Preview": "Pré-visualizar",
+            "Hi! This is how I sound.": "Olá! É assim que soo.",
+            "Advanced settings": "Definições avançadas",
+            "Summarise older messages when the chat gets long": "Resumir as mensagens antigas quando a conversa fica longa",
+            "Edit AI friend": "Editar amigo de IA",
+            "Delete {name}?": "Eliminar {name}?",
+            "This removes the friend and its whole conversation from this computer. There is no undo.": "Isto remove o amigo e toda a sua conversa deste computador. Não há forma de desfazer.",
+            "This link was labelled with text of its own. Reaper shows where it actually goes.": "Esta ligacao tinha um texto proprio. O Reaper mostra para onde vai realmente.",
+            "Show preview": "Ver pre-visualizacao",
+            "Loading over Tor…": "A carregar por Tor…",
+            "Could not load it: {why}": "Nao foi possivel carregar: {why}",
+            "unknown error": "erro desconhecido",
+            "Web and folder access": "Acesso a web e a pastas",
+            "Let this character search and read the web": "Permitir que esta personagem pesquise e leia a web",
+            "Everything it fetches goes over Tor, so no site learns your address. It is off for every character until you turn it on.": "Tudo o que obtem passa por Tor, por isso nenhum site fica a saber o teu endereco. Esta desligado em todas as personagens ate o ligares.",
+            "Folder it may read and write": "Pasta que pode ler e escrever",
+            "No folder — it cannot see your files": "Sem pasta - nao consegue ver os teus ficheiros",
+            "Choose folder": "Escolher pasta",
+            "Only that folder, and only text files. Anything it overwrites is copied into .reaper-backups first.": "Apenas essa pasta e apenas ficheiros de texto. Tudo o que substituir e primeiro copiado para .reaper-backups.",
+            "With both on, a web page this character reads could tell it to send your files somewhere. Turn on only what you need.": "Com ambos ligados, uma pagina que esta personagem leia poderia mandar enviar os teus ficheiros para algum lado. Liga so o que precisares.",
+            "Camera frame rate": "Fotogramas por segundo da camara",
+            "{n} frames per second": "{n} fotogramas por segundo",
+            "Twenty is smooth enough to read a face. Everything crosses Tor as still frames, so a slow circuit will do better at ten or less.": "Vinte chega para ler um rosto. Tudo atravessa o Tor como imagens fixas, por isso um circuito lento sai-se melhor com dez ou menos.",
+            "While a call is up this window is hidden from screenshots and screen recorders.": "Durante uma chamada, esta janela fica oculta de capturas e gravacoes de ecra.",
+            "This system cannot hide the window from screen recorders, so that protection is unavailable here.": "Este sistema nao consegue ocultar a janela de gravadores de ecra, por isso essa protecao nao esta disponivel aqui.",
+            "No camera is available here": "Nao ha nenhuma camara disponivel aqui",
+            "Could not open the camera": "Nao foi possivel abrir a camara",
+            "Your camera is on — only people in this call can see it": "A tua camara esta ligada - so as pessoas nesta chamada a podem ver",
+            "Turn on your camera": "Ligar a camara",
+            "Turn off your camera": "Desligar a camara",
+            "This system cannot hide the window from screen recorders.": "Este sistema nao consegue ocultar a janela de gravadores de ecra.",
+            "Camera": "Camara",
             "Delivering now…": "A entregar agora…",
             "Disconnected from {name} — nothing left in common": "Desligado de {name} — já não há nada em comum",
             "Ignored a message from {name} in {place} — {reason}": "Ignorada uma mensagem de {name} em {place} — {reason}",
@@ -4483,6 +4851,8 @@
         film: "M4.2 4.8h15.6a.6.6 0 0 1 .6.6v13.2a.6.6 0 0 1-.6.6H4.2a.6.6 0 0 1-.6-.6V5.4a.6.6 0 0 1 .6-.6M7.8 4.8v14.4M16.2 4.8v14.4M3.6 12h16.8M3.6 8.4h4.2M3.6 15.6h4.2M16.2 8.4h4.2M16.2 15.6h4.2",
         music: "M9 18V6l10.2-1.8v12M9 18a2.4 2.4 0 1 1-4.8 0A2.4 2.4 0 0 1 9 18M19.2 16.2a2.4 2.4 0 1 1-4.8 0 2.4 2.4 0 0 1 4.8 0",
         screen: "M2.4 4.8h19.2v11.4H2.4z M9 20.4h6 M12 16.2v4.2",
+        cam: "M2.6 6.6h11.2v10.8H2.6z M13.8 12l7.6-3.9v7.8z",
+        camOff: "M2.6 6.6h11.2v10.8H2.6z M13.8 12l7.6-3.9v7.8z M3 3l18 18",
         file: "M13.8 3.6H7.2A1.8 1.8 0 0 0 5.4 5.4v13.2a1.8 1.8 0 0 0 1.8 1.8h9.6a1.8 1.8 0 0 0 1.8-1.8V8.4zM13.8 3.6v4.8h4.8",
         invite: "M4.2 12h12M12 6.6 17.4 12 12 17.4M18.6 4.8v14.4",
         sync: "M20.4 12a8.4 8.4 0 1 1-2.5-6M20.4 4.2V10h-5.8",
@@ -5289,15 +5659,49 @@
           // by a steady trickle of newer work to the same person.
           ready.sort(function (a, b) { return outbox[a].at - outbox[b].at; });
 
+          // Grouped by who and where, so somebody owed five things in one
+          // conversation is asked about all five in a single frame.
+          var asking = {};
+
           for (var i = 0; i < ready.length; i++) {
             var item = outbox[ready[i]];
             item.tries++;
             try { await window.p2p.open(item.community); } catch (e) { /* gone */ }
+
+            var groupKey = item.to + "\n" + item.community;
+            if (!asking[groupKey]) {
+              asking[groupKey] = { to: item.to, community: item.community, ids: [] };
+            }
+            asking[groupKey].ids.push(item.eventId);
           }
 
           if (ready.length) {
             updateSyncFocus();
             window.p2p.netAnnounce().catch(function () {});
+          }
+
+          // Hand the events over again, rather than only announcing.
+          //
+          // Announcing offers an id list, and a peer that already holds
+          // everything in it answers with nothing. There is no receipt in that,
+          // and a receipt is the only thing that retires an obligation — so an
+          // item whose first receipt was missed could never be settled by
+          // syncing, however long the two devices stayed connected. That is the
+          // "Delivering now…" that never finished: the unfriending had arrived
+          // the moment it was written, and this side was never told.
+          //
+          // Re-offering is what asks. The far side merges a duplicate and
+          // acknowledges holding it, which is exactly the confirmation being
+          // waited for. It costs one small frame per person per pass, and only
+          // while something is still owed to somebody who is right here.
+          if (window.p2p.netResend) {
+            var groups = Object.keys(asking);
+            for (var g = 0; g < groups.length; g++) {
+              var ask = asking[groups[g]];
+              try {
+                await window.p2p.netResend(ask.to, ask.community, ask.ids);
+              } catch (e) { /* they went away mid-pass */ }
+            }
           }
 
           // Only after the deliverable work is done, and only a few per pass:
@@ -6539,6 +6943,13 @@
         if (homeWaiting && view !== "home") homeWrap.appendChild(badgeEl(homeWaiting));
         rail.appendChild(homeWrap);
 
+        // AI characters used to have an orb of their own here, and a home
+        // screen behind it. They are conversations, so they now live in Direct
+        // messages beside everybody else and are told apart by a tag rather
+        // than by being filed somewhere else. Creating one is a tab in Add a
+        // friend, which is where somebody looking to add a conversation
+        // already goes.
+
         // Direct conversations with something waiting, between Home and the
         // servers.
         //
@@ -6660,6 +7071,20 @@
         return b;
       }
 
+      /**
+       * Whether a conversation row should look selected.
+       *
+       * `current` is the last peer conversation that was opened, and it stays
+       * set while an AI chat sits on top of it — so asking `current === id` on
+       * its own lit two rows at once: the person you were last talking to, and
+       * the character you are talking to now. The AI view is a full-screen
+       * layer over Home, so while it is up, nothing underneath it is what the
+       * reader is looking at.
+       */
+      function rowSelected(id) {
+        return !aiViewOpen && current === id;
+      }
+
       function renderSide() {
         var list = $("sideList"), acts = $("sideActs");
         list.innerHTML = ""; acts.innerHTML = "";
@@ -6762,9 +7187,32 @@
             decorateUnread(r, dmIdFor(uid), null);
             r.oncontextmenu = function (e) { friendCtx(e, person, isFriend); };
             r.onclick = function () { openDM(person); };
-            if (current === dmIdFor(uid)) r.classList.add("on");
+            if (rowSelected(dmIdFor(uid))) r.classList.add("on");
             list.appendChild(r);
           });
+
+          // Characters that run on this machine, in the same list.
+          //
+          // From where the user sits these are conversations: a name, a face, a
+          // history, a box to type in. Filing them under a heading of their own
+          // said the opposite — that talking to one is a different activity —
+          // and it put the two things somebody actually chooses between on
+          // different screens. The tag is the whole of the distinction, and it
+          // is the true one: this row never touches the network.
+          if (aiAvailable && aiFriends.length) {
+            aiFriends.forEach(function (af) {
+              var ar = rowEl(avatarEl(24, af.name, af.id, af.pfpUrl), af.name, t("AI"));
+              ar.onclick = function () { openAIChat(af); };
+              ar.oncontextmenu = function (e) {
+                e.preventDefault();
+                editAIFriendDialog(af);
+              };
+              if (aiViewOpen && aiChat && aiChat.friend.id === af.id) {
+                ar.classList.add("on");
+              }
+              list.appendChild(ar);
+            });
+          }
 
           // The call used to be listed here. It is an overlay now — a call is
           // a mode rather than a row, and one that could be missed in a list
@@ -6782,7 +7230,7 @@
             decorateUnread(r, g.id, null);
             r.onclick = function () { openGroup(g); };
             r.oncontextmenu = function (e) { groupCtx(e, g); };
-            if (current === g.id) r.classList.add("on");
+            if (rowSelected(g.id)) r.classList.add("on");
             list.appendChild(r);
           });
         } else {
@@ -8784,33 +9232,376 @@
       // rather than the key id, because nobody is going to type 26 characters.
       // Built with DOM nodes and textContent rather than innerHTML, so a
       // message containing markup stays inert.
+      // ---- links
+      //
+      // Turning somebody else's text into something clickable, without letting
+      // it lie about where it goes.
+      //
+      // The rules that matter, and why each is here:
+      //
+      //   * A link's visible text is always built from its own URL. It is never
+      //     taken from the message, so there is no arrangement of words that
+      //     makes a link read as one destination and go to another.
+      //   * Markdown-style `[text](url)` is recognised only so the claimed text
+      //     can be defused: it is shown as plain quoted text beside a link
+      //     labelled with the real host. It never becomes the label.
+      //   * Content is shown only for hosts on TRUSTED_HOSTS, and even then
+      //     only when the reader asks for it, and even then the fetch happens
+      //     in the main process over Tor. The renderer cannot fetch anything —
+      //     the CSP forbids every remote origin, which is what stops a message
+      //     from revealing this reader's IP just by being displayed.
+      //
+      // Kept in step with src/native/links.ts, which is the copy the main
+      // process enforces; src/local-ui/links.test.ts fails if the two disagree.
+
+      var TRUSTED_HOSTS = [
+        "cdn.discordapp.com",
+        "encrypted-tbn0.gstatic.com",
+        "i.imgur.com",
+        "i.redd.it",
+        "i.ytimg.com",
+        "lh3.googleusercontent.com",
+        "media.discordapp.net",
+        "media.tenor.com",
+        "upload.wikimedia.org",
+        "youtu.be",
+        "youtube.com"
+      ];
+
+      var TRUSTED_NAMES = {
+        "cdn.discordapp.com": "Discord",
+        "encrypted-tbn0.gstatic.com": "Google",
+        "i.imgur.com": "Imgur",
+        "i.redd.it": "Reddit",
+        "i.ytimg.com": "YouTube",
+        "lh3.googleusercontent.com": "Google",
+        "media.discordapp.net": "Discord",
+        "media.tenor.com": "Tenor",
+        "upload.wikimedia.org": "Wikimedia",
+        "youtu.be": "YouTube",
+        "youtube.com": "YouTube"
+      };
+
+      // Controls, bidi overrides and isolates, and the invisible spaces. A
+      // right-to-left override inside a hostname reverses what the eye reads
+      // while the bytes stay as they are; a zero-width space inside
+      // "youtube.com" is a different string that draws identically. Written as
+      // escapes because a file containing the characters themselves is subject
+      // to the same trick.
+      var DECEPTIVE = new RegExp(
+        "[" +
+        "\\u0000-\\u001F\\u007F-\\u009F" +
+        "\\u00AD" +
+        "\\u200B-\\u200F" +
+        "\\u202A-\\u202E" +
+        "\\u2060-\\u2064" +
+        "\\u2066-\\u2069" +
+        "\\uFEFF" +
+        "]"
+      );
+
+      function hostMatches(host, domain) {
+        if (host === domain) return true;
+        return host.slice(-(domain.length + 1)) === "." + domain;
+      }
+
+      function hostIsTrusted(host) {
+        for (var i = 0; i < TRUSTED_HOSTS.length; i++) {
+          if (hostMatches(host, TRUSTED_HOSTS[i])) return true;
+        }
+        return false;
+      }
+
+      function trustedNameFor(host) {
+        for (var i = 0; i < TRUSTED_HOSTS.length; i++) {
+          if (hostMatches(host, TRUSTED_HOSTS[i])) return TRUSTED_NAMES[TRUSTED_HOSTS[i]];
+        }
+        return undefined;
+      }
+
+      /**
+       * Read a URL, or refuse it.
+       *
+       * Refusing is not a judgement about the destination — it only means the
+       * link cannot be shown as itself, so it stays the plain text it arrived
+       * as. Credentials are rejected because `https://youtube.com@evil.example`
+       * goes to evil.example while reading as YouTube; non-ASCII hostnames
+       * because "apple.com" with a Cyrillic first letter is a different domain
+       * that draws identically.
+       */
+      function parseSafeUrl(raw) {
+        if (!raw || DECEPTIVE.test(raw)) return null;
+
+        var url;
+        try { url = new URL(raw); } catch (e) { return null; }
+
+        if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+        if (url.username || url.password) return null;
+
+        var host = url.hostname.toLowerCase();
+        if (!/^[a-z0-9.-]+$/.test(host)) return null;
+        if (host.indexOf("xn--") === 0 || host.indexOf(".xn--") >= 0) return null;
+
+        var trusted = url.protocol === "https:" && !url.port && hostIsTrusted(host);
+
+        return {
+          href: url.toString(),
+          host: host,
+          path: url.pathname + url.search,
+          trusted: trusted,
+          name: trusted ? trustedNameFor(host) : undefined
+        };
+      }
+
+      function youTubeId(link) {
+        var ok = function (v) { return v && /^[A-Za-z0-9_-]{11}$/.test(v) ? v : null; };
+
+        if (hostMatches(link.host, "youtu.be")) {
+          return ok(link.path.split("?")[0].replace(/^\//, ""));
+        }
+        if (hostMatches(link.host, "youtube.com")) {
+          var parts = link.path.split("?");
+          var pathname = parts[0], query = parts[1] || "";
+          if (pathname === "/watch") return ok(new URLSearchParams(query).get("v"));
+          if (pathname.indexOf("/embed/") === 0) return ok(pathname.slice(7).split("/")[0]);
+          if (pathname.indexOf("/shorts/") === 0) return ok(pathname.slice(8).split("/")[0]);
+        }
+        return null;
+      }
+
+      /** The picture that stands for a link, if there is one. Never content. */
+      function previewFor(link) {
+        if (!link.trusted) return null;
+
+        var id = youTubeId(link);
+        if (id) return "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg";
+
+        // The query is dropped before the extension test: Discord signs its
+        // attachment URLs, and the signature is not part of the file name.
+        var path = link.path.split("?")[0];
+        if (/\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(path)) return link.href;
+
+        return null;
+      }
+
+      /**
+       * Trailing punctuation that belongs to the sentence, not the link.
+       *
+       * A closing bracket is kept when the URL opened one, so Wikipedia's
+       * parenthesised titles survive, and dropped otherwise.
+       */
+      function trimUrlTail(raw) {
+        var out = raw;
+        for (;;) {
+          var last = out.slice(-1);
+          if (".,;:!?'\"".indexOf(last) >= 0) { out = out.slice(0, -1); continue; }
+          if (last === ")" && out.split(")").length > out.split("(").length) {
+            out = out.slice(0, -1); continue;
+          }
+          if (last === "]" && out.indexOf("[") < 0) { out = out.slice(0, -1); continue; }
+          break;
+        }
+        return out;
+      }
+
+      /** How a link is labelled: from the URL, never from the message. */
+      function linkLabel(link) {
+        var path = link.path === "/" ? "" : link.path;
+        var text = link.host + path;
+        return text.length > 64 ? text.slice(0, 63) + "…" : text;
+      }
+
+      // ---- end links
+
+      // ---- message content
+      /**
+       * Draw a message body: mentions, links, and cards for links we trust.
+       *
+       * One pass over the text, matching whichever of the three comes first.
+       * The ordering in the pattern matters — a bracketed link has to be
+       * recognised before the bare URL inside it, or the claimed text would be
+       * left sitting next to a link as though it were a caption.
+       */
       function renderContent(el, text) {
-        var re = /@([a-z0-9_.-]{2,32})/gi;
-        var at = 0, m;
+        var re = new RegExp(
+          // [claimed text](url) -- recognised only so the claim can be defused
+          "\\[([^\\]\\n]{1,120})\\]\\((https?:\\/\\/[^\\s)]{1,2000})\\)" +
+          // a bare URL
+          "|(https?:\\/\\/[^\\s<>\"'`]{1,2000})" +
+          // a mention
+          "|@([a-z0-9_.-]{2,32})",
+          "gi"
+        );
+
+        var cards = [];
+        var at = 0;
+        var m;
+
         while ((m = re.exec(text)) !== null) {
-          if (m.index > at) el.appendChild(document.createTextNode(text.slice(at, m.index)));
+          if (m.index > at) {
+            el.appendChild(document.createTextNode(text.slice(at, m.index)));
+          }
+          at = m.index + m[0].length;
+
+          if (m[2] !== undefined) {
+            // A link wearing someone else's words.
+            //
+            // The claim is shown, because hiding it would hide the attempt, but
+            // it is shown as what it is: quoted text with an arrow to the real
+            // destination. It is never the label, and it is never clickable.
+            var masked = parseSafeUrl(trimUrlTail(m[2]));
+            if (!masked) { el.appendChild(document.createTextNode(m[0])); continue; }
+
+            var claim = document.createElement("span");
+            claim.className = "linkclaim";
+            claim.textContent = '"' + m[1] + '"';
+            claim.title = t("This link was labelled with text of its own. Reaper shows where it actually goes.");
+            el.appendChild(claim);
+            el.appendChild(linkEl(masked, cards));
+            continue;
+          }
+
+          if (m[3] !== undefined) {
+            var bare = parseSafeUrl(trimUrlTail(m[3]));
+            if (!bare) { el.appendChild(document.createTextNode(m[0])); continue; }
+
+            // Any punctuation trimmed off the end is still part of the
+            // sentence, so it goes back after the link.
+            var tail = m[3].slice(trimUrlTail(m[3]).length);
+            el.appendChild(linkEl(bare, cards));
+            if (tail) el.appendChild(document.createTextNode(tail));
+            continue;
+          }
+
           // @everyone is a real mention in a server or group — it was
           // previously only highlighted if somebody happened to be called
           // "everyone", which is why it never notified anyone.
-          var isEveryone = m[1].toLowerCase() === "everyone" &&
+          var name = m[4];
+          var isEveryone = name.toLowerCase() === "everyone" &&
             current && current.indexOf("dm") !== 0;
           var known = isEveryone ||
-            m[1].toLowerCase() === (username || "").toLowerCase() ||
+            name.toLowerCase() === (username || "").toLowerCase() ||
             Object.keys(profiles).some(function (u) {
-              return (profiles[u].username || "").toLowerCase() === m[1].toLowerCase();
+              return (profiles[u].username || "").toLowerCase() === name.toLowerCase();
             }) ||
-            friends.some(function (f) { return f.username.toLowerCase() === m[1].toLowerCase(); });
+            friends.some(function (f) { return f.username.toLowerCase() === name.toLowerCase(); });
+
           if (known) {
             var sp = document.createElement("span");
-            sp.className = "mention"; sp.textContent = "@" + m[1];
+            sp.className = "mention" + (isEveryone ? " everyone" : "");
+            sp.textContent = "@" + name;
             el.appendChild(sp);
           } else {
             el.appendChild(document.createTextNode(m[0]));
           }
-          at = m.index + m[0].length;
         }
+
         if (at < text.length) el.appendChild(document.createTextNode(text.slice(at)));
+
+        // Cards last, under the text, in the order the links appeared. At most
+        // a few: a message pasted full of links should not become a wall of
+        // boxes.
+        cards.slice(0, 3).forEach(function (card) { el.appendChild(card); });
       }
+
+      /**
+       * One link, labelled with its own destination.
+       *
+       * `textContent` rather than anything parsed, and built from the URL the
+       * parser returned rather than the text as written — so what is shown is
+       * what the browser will be handed. Opening it goes through the window
+       * open handler in main.ts, which hands it to the system browser.
+       */
+      function linkEl(link, cards) {
+        var a = document.createElement("a");
+        a.className = "msglink" + (link.trusted ? " trusted" : "");
+        a.href = link.href;
+        a.target = "_blank";
+        a.rel = "noreferrer noopener";
+        a.textContent = linkLabel(link);
+        a.title = link.href;
+
+        if (cards) {
+          var card = embedCard(link);
+          if (card) cards.push(card);
+        }
+
+        return a;
+      }
+
+      /**
+       * The card under a message for a link we are willing to show.
+       *
+       * Nothing is fetched until it is asked for. That is not only about
+       * bandwidth: the request goes out over Tor from the main process, and a
+       * reader should be the one who decides to make it — a message that
+       * fetched on sight would tell whoever sent it that it had been read.
+       */
+      function embedCard(link) {
+        var src = previewFor(link);
+        if (!src) return null;
+
+        var card = document.createElement("div");
+        card.className = "embed";
+
+        var head = document.createElement("div");
+        head.className = "ehead";
+        var who = document.createElement("span");
+        who.className = "ename";
+        who.textContent = link.name || link.host;
+        head.appendChild(who);
+        var where = document.createElement("span");
+        where.textContent = link.host;
+        head.appendChild(where);
+        card.appendChild(head);
+
+        var load = document.createElement("button");
+        load.className = "eload";
+        load.textContent = t("Show preview");
+        head.appendChild(load);
+
+        var note = document.createElement("div");
+        note.className = "enote";
+        note.style.display = "none";
+        card.appendChild(note);
+
+        load.onclick = async function () {
+          load.disabled = true;
+          load.textContent = t("Loading over Tor…");
+
+          var res;
+          try {
+            res = await window.links.preview(src);
+          } catch (e) {
+            res = { ok: false, error: String((e && e.message) || e) };
+          }
+
+          if (!res || !res.ok) {
+            load.style.display = "none";
+            note.style.display = "";
+            // Said plainly rather than as a generic failure: plenty of CDNs
+            // refuse Tor exits outright, and that is worth knowing rather than
+            // wondering about.
+            note.textContent = t("Could not load it: {why}", {
+              why: (res && res.error) || t("unknown error"),
+            });
+            return;
+          }
+
+          load.style.display = "none";
+          var img = document.createElement("img");
+          img.src = res.dataUrl;
+          img.alt = link.host;
+          // Named, so the lightbox's Save button offers something better than
+          // an untitled file.
+          img.onclick = function () { openLightbox(res.dataUrl, link.host); };
+          card.appendChild(img);
+        };
+
+        return card;
+      }
+
+      // ---- end message content
 
       /**
        * User ids a message addresses.
@@ -9122,6 +9913,7 @@
       }
 
       async function openHome() {
+        aiLeave();
         view = "home";
         currentDM = null; currentGroup = null;
         current = null; channel = null; channels = [];
@@ -9333,8 +10125,16 @@
         var online = friends.filter(function (f) { return isOnline(f.userId); });
         var offline = friends.filter(function (f) { return !isOnline(f.userId); });
 
-        section2(pane, t("Online — {n}", { n: online.length }));
-        if (!online.length) {
+        // A local character is online by definition — the model is on this
+        // machine, so the only thing that could make one unreachable is the app
+        // not running. Counted and listed with everybody else rather than under
+        // a heading of its own; the tag on the row is the distinction.
+        var localAI = (typeof aiAvailable !== "undefined" && aiAvailable && aiFriends)
+          ? aiFriends : [];
+
+        section2(pane, t("Online — {n}", { n: online.length + localAI.length }));
+        localAI.forEach(function (af) { pane.appendChild(aiFriendPaneRow(af)); });
+        if (!online.length && !localAI.length) {
           var n = document.createElement("div");
           n.className = "muted";
           n.style.padding = "4px";
@@ -9829,6 +10629,7 @@
 
 
       async function openServer(id) {
+        aiLeave();
         view = id;
         currentDM = null; currentGroup = null;
         showComposer(true);
@@ -9948,6 +10749,7 @@
       }
 
       async function openDM(friend) {
+        aiLeave();
         var id = dmIdFor(friend.userId);
 
         // Opening one is enough to put it on the list, and reopening a closed
@@ -9998,6 +10800,7 @@
       }
 
       async function openGroup(g) {
+        aiLeave();
         view = "home";
         currentGroup = g; currentDM = null;
         await loadCommunity(g.id);
@@ -12899,7 +13702,17 @@
       // ---- friend management ----------------------------------------------
 
       function addFriendDialog() {
-        modal(t("Add a friend"), function (card) {
+        modal(t("Add a friend"), function (outer) {
+          // Two ways to end up with a row in Direct messages, so one dialog with
+          // two tabs rather than two places to look. A person is reached over
+          // Tor by swapping codes; a character is made here and never leaves the
+          // machine. Without the feature there is nothing to choose between, so
+          // the dialog stays exactly as it was.
+          var tab = (typeof aiAvailable !== "undefined" && aiAvailable && window.localai)
+            ? tabbed(outer)
+            : null;
+          var card = tab ? tab(t("Person")) : outer;
+
           var p1 = document.createElement("div");
           p1.className = "muted";
           p1.textContent = t("Swap codes. Pasting theirs sends a request they have to accept before either of you can message.");
@@ -13011,6 +13824,8 @@
           }
 
           buttons(card, t("Add"), function () { return add(theirs.value); });
+
+          if (tab) aiCreatePane(tab(t("AI character")));
         });
       }
 
@@ -13382,6 +14197,8 @@
 
         markVoicePresent(c.id, me.userId);
         markVoiceSeen(c.id, me.userId);
+        syncCallAudience();
+        setCallPrivacy(true);
         soundJoinSelf();
 
         // A fresh call is a fresh room, possibly with headphones this time.
@@ -13542,8 +14359,31 @@
         sweepVoice();
       }, 10000);
 
+      /**
+       * Tell the transport who is in this call.
+       *
+       * Media goes only to these people and is accepted only from them, and the
+       * transport starts out sending to nobody — so this has to be called
+       * whenever the roster changes, and with nothing on leaving. Membership is
+       * derived here rather than down there because it comes out of the
+       * community log, which is the renderer's to replay.
+       *
+       * Self is included: a device with two of its own clients in the same call
+       * is an ordinary thing, and excluding the account would silence it.
+       */
+      function syncCallAudience() {
+        if (!window.p2p.netCallAudience) return;
+        var who = inVoice ? (voiceState[inVoice.channelId] || []).slice() : [];
+        window.p2p.netCallAudience(who).catch(function () {
+          /* the core is not up; nothing is being sent either */
+        });
+      }
+
       function updateVoiceWho() {
         if (!inVoice) return;
+        // The roster is redrawn whenever it changes, so this is the one place
+        // that is guaranteed to run when somebody joins or goes.
+        syncCallAudience();
         var here = (voiceState[inVoice.channelId] || []).map(nameOf);
         $("vcWho").textContent = here.join(", ") || t("just you");
 
@@ -13578,9 +14418,14 @@
         await window.p2p.append(inVoice.community, "voice.leave", { channelId: inVoice.channelId });
         voiceState[inVoice.channelId] = (voiceState[inVoice.channelId] || []).filter(function (u) { return u !== me.userId; });
         inVoice = null;
+        // Before the teardown below, so nothing can be sent during it.
+        syncCallAudience();
+        setCallPrivacy(false);
         updateCallFocus();
         stopScreenShare();
+        stopCamera();
         screenShares = {};
+        cameraShares = {};
         renderScreenView();
         hideCallOverlay();
         stopMic();
@@ -15279,6 +16124,10 @@
       // ===================================================================
 
       var voicePrefs = {
+        // Frames a second for the camera. Twenty by default: a face at five is
+        // unpleasant in a way a slideshow of a screen is not. Lowered by anyone
+        // whose circuit cannot carry it.
+        camFps: 20,
         input: "", output: "", inputGain: 1, vad: 0.02, volume: 1,
         // Browser DSP, applied as getUserMedia constraints. All on by default
         // because the common setup is a laptop with its speakers and its
@@ -15805,6 +16654,52 @@
           sndw.appendChild(sndc); sndw.appendChild(sndl);
           card.appendChild(sndw);
 
+          card = pane("Camera");
+
+          var cfl = document.createElement("label");
+          cfl.textContent = t("Camera frame rate");
+          card.appendChild(cfl);
+
+          var cfVal = document.createElement("div");
+          cfVal.className = "muted";
+          cfVal.style.fontSize = "12px";
+
+          var cf = document.createElement("input");
+          cf.type = "range"; cf.min = "1"; cf.max = "30"; cf.step = "1";
+          cf.value = String(camFps());
+          var paintCf = function () {
+            cfVal.textContent = t("{n} frames per second", { n: cf.value });
+          };
+          paintCf();
+          cf.oninput = function () {
+            voicePrefs.camFps = parseInt(cf.value, 10);
+            paintCf();
+            // Applied to a camera that is already running, by restarting the
+            // timer at the new rate rather than making the user toggle it.
+            if (camOn && camTimer) {
+              var was = camOn;
+              stopCamera();
+              if (was) startCamera();
+            }
+          };
+          card.appendChild(cf);
+          card.appendChild(cfVal);
+
+          var cfNote = document.createElement("div");
+          cfNote.className = "muted";
+          cfNote.style.cssText = "font-size:11px;margin-top:6px";
+          cfNote.textContent = t("Twenty is smooth enough to read a face. Everything crosses Tor as still frames, so a slow circuit will do better at ten or less.");
+          card.appendChild(cfNote);
+
+          var privNote = document.createElement("div");
+          privNote.className = "muted";
+          privNote.style.cssText = "font-size:11px;margin-top:10px";
+          privNote.textContent = window.native && window.native.canProtectContent &&
+            window.native.canProtectContent()
+            ? t("While a call is up this window is hidden from screenshots and screen recorders.")
+            : t("This system cannot hide the window from screen recorders, so that protection is unavailable here.");
+          card.appendChild(privNote);
+
           card = pane("Test");
 
           var ml = document.createElement("label"); ml.textContent = t("Microphone test");
@@ -16127,10 +17022,17 @@
             var reader = new FileReader();
             reader.onload = function () {
               if (!screenSharing) return;
-              window.p2p.netAudio(
-                "screen:" + channel, ++screenSeq,
-                String(reader.result).split(",")[1]
-              );
+              var b64 = String(reader.result).split(",")[1];
+
+              // Shown here rather than waiting for it to come back, because it
+              // never does: the transport delivers to the others in the call,
+              // not to us. A self view has to be drawn on the way out.
+              screenShares[me.userId] = {
+                url: "data:image/webp;base64," + b64, at: Date.now(), seq: ++screenSeq,
+              };
+              renderScreenView();
+
+              window.p2p.netAudio("screen:" + channel, screenSeq, b64);
             };
             reader.readAsDataURL(blob);
           }, "image/webp", SCREEN_Q);
@@ -16143,6 +17045,7 @@
       function stopScreenShare() {
         if (!screenSharing && !screenStream) return;
         screenSharing = false;
+        delete screenShares[me.userId];
         if (screenTimer) { clearInterval(screenTimer); screenTimer = null; }
         if (screenStream) {
           screenStream.getTracks().forEach(function (tr) {
@@ -16158,6 +17061,234 @@
           } catch (e) { /* not connected — the timeout covers it */ }
         }
         renderCallOverlay(); renderScreenView();
+      }
+
+
+      // ===================================================================
+      // Camera
+      //
+      // The same shape as the screen share above and for the same reasons:
+      // frames are drawn to a canvas and sent as small still images on the
+      // media transport, because there is no WebRTC here and no video codec —
+      // everything crosses Tor as ordinary frames on the same connection as
+      // everything else.
+      //
+      // Twenty frames a second by default. That is a lot for this transport
+      // and it is deliberately the default anyway, because a face at 5fps is
+      // unpleasant in a way a slideshow of somebody's screen is not; the
+      // setting exists for people on a circuit that cannot carry it.
+      // ===================================================================
+
+      var CAM_H = 240, CAM_Q = 0.45;
+      var camStream = null, camTimer = null, camSeq = 0;
+      var camOn = false;
+      var cameraShares = {};   // userId -> { url, at, seq }
+
+      function camFps() {
+        var n = parseInt(voicePrefs.camFps, 10);
+        if (isNaN(n)) return 20;
+        return Math.max(1, Math.min(30, n));
+      }
+
+      async function startCamera() {
+        if (camOn) return;
+        if (!inVoice || String(inVoice.channelId).indexOf("call:") !== 0) return;
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          flash(t("No camera is available here")); return;
+        }
+
+        var stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: { ideal: 640 }, height: { ideal: CAM_H }, frameRate: camFps() },
+            audio: false,
+          });
+        } catch (e) {
+          flash(t("Could not open the camera"));
+          return;
+        }
+
+        camStream = stream;
+        camOn = true;
+        var channel = inVoice.channelId;
+
+        var track = stream.getVideoTracks()[0];
+        if (track) track.addEventListener("ended", function () { stopCamera(); });
+
+        var video = document.createElement("video");
+        video.srcObject = stream; video.muted = true; video.playsInline = true;
+        video.play().catch(function () {});
+
+        var canvas = document.createElement("canvas");
+        var ctx = canvas.getContext("2d");
+
+        camTimer = setInterval(function () {
+          if (!camOn || !video.videoWidth) return;
+
+          var vw = video.videoWidth, vh = video.videoHeight;
+          var h = CAM_H, w = Math.max(1, Math.round(h * vw / vh));
+          canvas.width = w; canvas.height = h;
+
+          try { ctx.drawImage(video, 0, 0, w, h); } catch (e) { return; }
+
+          canvas.toBlob(function (blob) {
+            if (!blob || !camOn) return;
+            var reader = new FileReader();
+            reader.onload = function () {
+              if (!camOn) return;
+              var b64 = String(reader.result).split(",")[1];
+
+              // Shown here directly rather than waiting for it to come back.
+              // Nothing is ever sent to yourself — the transport delivers to
+              // the others in the call — so a self view has to be drawn from
+              // the frame on its way out.
+              cameraShares[me.userId] = {
+                url: "data:image/webp;base64," + b64, at: Date.now(), seq: ++camSeq,
+              };
+              renderCamStrip();
+
+              window.p2p.netAudio("cam:" + channel, camSeq, b64);
+            };
+            reader.readAsDataURL(blob);
+          }, "image/webp", CAM_Q);
+        }, Math.round(1000 / camFps()));
+
+        renderCallOverlay(); renderCamStrip();
+        flash(t("Your camera is on — only people in this call can see it"));
+      }
+
+      function stopCamera() {
+        if (!camOn && !camStream) return;
+        camOn = false;
+        if (camTimer) { clearInterval(camTimer); camTimer = null; }
+        if (camStream) {
+          camStream.getTracks().forEach(function (tr) {
+            try { tr.stop(); } catch (e) { /* already stopped */ }
+          });
+          camStream = null;
+        }
+        delete cameraShares[me.userId];
+
+        // The empty frame is the "stopped" sentinel, so the others drop the
+        // tile now rather than waiting for it to go stale.
+        if (inVoice) {
+          try {
+            window.p2p.netAudio("cam:" + inVoice.channelId, ++camSeq, "");
+          } catch (e) { /* not connected — the timeout covers it */ }
+        }
+        renderCallOverlay(); renderCamStrip();
+      }
+
+      function toggleCamera() {
+        if (camOn) stopCamera(); else startCamera();
+      }
+
+      /** A camera frame from somebody in the call, or the stopped sentinel. */
+      function onCamFrame(channel, from, seq, frame) {
+        if (!inVoice || channel !== inVoice.channelId) return;
+        // Our own frames never come back to us; a frame claiming to be ours is
+        // not ours.
+        if (from === me.userId) return;
+
+        if (!frame) { delete cameraShares[from]; renderCamStrip(); return; }
+
+        var cur = cameraShares[from];
+        if (cur && cur.seq > seq) return;   // Tor reorders; keep the newest
+        cameraShares[from] = {
+          url: "data:image/webp;base64," + frame, at: Date.now(), seq: seq,
+        };
+        renderCamStrip();
+      }
+
+      // Somebody who vanished without sending the sentinel.
+      setInterval(function () {
+        var now = Date.now(), changed = false;
+        Object.keys(cameraShares).forEach(function (u) {
+          if (u === me.userId) return;   // ours is refreshed by the timer
+          if (now - cameraShares[u].at > 6000) { delete cameraShares[u]; changed = true; }
+        });
+        if (changed) renderCamStrip();
+      }, 2000);
+
+      /**
+       * The row of faces.
+       *
+       * Yours included, and labelled, the way every other call app does it —
+       * seeing what you are sending is the only way to know your camera is
+       * pointed at what you think it is.
+       */
+      function renderCamStrip() {
+        var box = $("camView");
+        if (!box) return;
+
+        var active = inVoice && String(inVoice.channelId).indexOf("call:") === 0;
+        var who = Object.keys(cameraShares);
+
+        if (!active || !who.length) { box.className = "hide"; box.innerHTML = ""; return; }
+        box.className = "";
+
+        // Ourselves last, so a growing call does not shuffle the others about.
+        who.sort(function (a, b) {
+          if (a === me.userId) return 1;
+          if (b === me.userId) return -1;
+          return a < b ? -1 : 1;
+        });
+
+        // Tiles are reused rather than rebuilt: replacing an <img> every frame
+        // makes it flicker, and drops it out of fullscreen if it was in it.
+        Object.keys(camTiles).forEach(function (uid) {
+          if (who.indexOf(uid) < 0) {
+            if (camTiles[uid] && camTiles[uid].parentNode) camTiles[uid].remove();
+            delete camTiles[uid];
+          }
+        });
+
+        who.forEach(function (uid) {
+          var tile = camTiles[uid];
+          if (!tile) {
+            tile = document.createElement("div");
+            tile.className = "camTile";
+            var img = document.createElement("img");
+            tile.appendChild(img);
+            var label = document.createElement("span");
+            label.className = "camName";
+            tile.appendChild(label);
+            camTiles[uid] = tile;
+            box.appendChild(tile);
+          }
+          if (tile.parentNode !== box) box.appendChild(tile);
+
+          var img2 = tile.querySelector("img");
+          if (img2.src !== cameraShares[uid].url) img2.src = cameraShares[uid].url;
+          tile.querySelector(".camName").textContent =
+            uid === me.userId ? t("You") : nameOf(uid);
+          tile.classList.toggle("self", uid === me.userId);
+        });
+      }
+
+      var camTiles = {};   // userId -> tile element, reused between frames
+
+      /**
+       * Keep the window out of screenshots and recordings while a call is up.
+       *
+       * A conversation is the user's own history and screenshotting it is their
+       * business; somebody else's camera is not, and the moment one is on the
+       * screen the window stops being capturable at all. Turned off again on
+       * leaving, so the restriction lasts exactly as long as the reason for it.
+       *
+       * Said out loud where it cannot be done. Silently failing to protect
+       * something is worse than not offering to.
+       */
+      function setCallPrivacy(on) {
+        if (!window.native || !window.native.setContentProtection) return;
+        try {
+          window.native.setContentProtection(!!on);
+        } catch (e) {
+          return;
+        }
+        if (on && window.native.canProtectContent && !window.native.canProtectContent()) {
+          flash(t("This system cannot hide the window from screen recorders."));
+        }
       }
 
       function toggleScreenShare() {
@@ -16264,7 +17395,13 @@
         box.className = "";
 
         if (sharers.length) {
-          sharers.sort(function (a, b) { return screenShares[b].at - screenShares[a].at; });
+          // Newest first, but never our own while somebody else is sharing:
+          // the large view is for watching, and we already know what is on our
+          // own screen. Ours takes it only when it is the only one.
+          sharers.sort(function (a, b) {
+            if ((a === me.userId) !== (b === me.userId)) return a === me.userId ? 1 : -1;
+            return screenShares[b].at - screenShares[a].at;
+          });
           var who = sharers[0];
 
           var img = box.querySelector(".screenImg");
@@ -16595,32 +17732,51 @@
 
       var sugItems = [], sugIndex = 0, sugStart = -1;
 
+      /**
+       * Who can be mentioned here.
+       *
+       * The people in *this* conversation, which is what a mention means. It
+       * used to be every friend and every profile this device had ever seen,
+       * so a server of three offered a list of thirty — and worse, typing one
+       * of those names produced a mention that would never reach anyone,
+       * because `mentionedUsers` resolves against the same conversation this
+       * list should have been drawn from. The suggestion and the delivery
+       * disagreed, which is the kind of bug that looks like the network losing
+       * messages.
+       *
+       * `membersOf` is that list: whoever has spoken here, the group's roster,
+       * the other person in a direct conversation, anyone in the call, minus
+       * anyone who left. Names are resolved through `nameOf` rather than taken
+       * from the stored friend entry, which records the name in use when the
+       * friendship was made and keeps an id fragment forever.
+       */
+      // ---- mention candidates
       function candidates(prefix) {
-        var out = [{ id: "@everyone", name: "everyone", sub: t("Notify the channel") }];
-        var seen = {};
+        var out = [];
 
-        // Resolved fresh, never from the stored friend entry.
-        //
-        // That entry records the name in use when the friendship was made, and
-        // it was made at a moment when profiles had not arrived — so it holds
-        // an id fragment forever. Messages and the member list ask `nameOf`
-        // each time and had corrected themselves; this one list did not, which
-        // is why one place kept showing a name nowhere else did.
-        friends.forEach(function (f) {
-          if (seen[f.userId]) return;
-          seen[f.userId] = 1;
-          out.push({ id: f.userId, name: nameOf(f.userId), sub: "Friend" });
+        // Not in a direct conversation, where there is no channel to notify
+        // and `renderContent` would not highlight it anyway.
+        if (current && current.indexOf("dm") !== 0) {
+          out.push({ id: "@everyone", name: "everyone", sub: t("Notify the channel") });
+        }
+
+        var here = membersOf();
+        here.forEach(function (uid) {
+          if (uid === me.userId) return;
+          out.push({
+            id: uid,
+            name: nameOf(uid),
+            sub: friends.some(function (f) { return f.userId === uid; }) ? t("Friend") : "",
+          });
         });
-        Object.keys(profiles).forEach(function (uid) {
-          if (seen[uid] || uid === me.userId) return;
-          seen[uid] = 1;
-          out.push({ id: uid, name: nameOf(uid), sub: "" });
-        });
+
         var q = prefix.toLowerCase();
         return out.filter(function (c) {
           return !q || c.name.toLowerCase().indexOf(q) === 0;
         }).slice(0, 8);
       }
+
+      // ---- end mention candidates
 
       function showSuggest() {
         var input = $("input");
@@ -17553,6 +18709,11 @@
           btn("screen", screenSharing ? "act" : "",
             screenSharing ? "Stop sharing your screen" : "Share your screen",
             toggleScreenShare);
+        }
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          btn(camOn ? "camOff" : "cam", camOn ? "act" : "",
+            camOn ? "Turn off your camera" : "Turn on your camera",
+            toggleCamera);
         }
         btn("gear", "", "Voice settings", voiceSettings);
         btn("phoneOff", "hang", "Leave call", function () { leaveVoice(); });
@@ -21018,6 +22179,11 @@
             onScreenFrame(String(channel).slice(7), from, seq, frame);
             return;
           }
+          // Camera frames ride the same transport, tagged apart the same way.
+          if (String(channel).indexOf("cam:") === 0) {
+            onCamFrame(String(channel).slice(4), from, seq, frame);
+            return;
+          }
           if (!inVoice || channel !== inVoice.channelId) return;
           if (from === me.userId) return;
           playFrame(from, seq, frame);
@@ -21810,6 +22976,1293 @@
         if (replyTo) { cancelReply(); return; }
         closeModal();
       };
+
+      // ===================================================================
+      // Local AI friends (Windows)
+      //
+      // A "friend" that is a small language model running on this machine.
+      // Nothing here is a p2p community, nothing is announced, nothing syncs —
+      // the whole feature talks only to window.localai, whose data lives
+      // outside the event log. The model is loaded when a chat is opened and
+      // unloaded when it is left, so an idle friend costs nothing. See
+      // src/local-ai/* for the main-process side.
+      // ===================================================================
+
+      var aiAvailable = false;
+      var aiInfo = { modelPresent: false, imageReady: false };
+      var aiFriends = [];
+      var aiChat = null; // { friend, messages } while a chat is open
+      var duetState = null; // live handle while an AI-to-AI conversation is on screen
+      var aiViewOpen = false;
+      var aiBusy = false;
+      var aiRows = {}; // msgId -> row element, for streaming
+      var aiVoices = [];
+
+      function aiEscape(s) {
+        return String(s || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
+      // Roleplay leans on *asterisks* for actions; italicise those and leave
+      // everything else as plain, pre-wrapped text. Nothing here reaches the
+      // network, but the text is still the model's, so it is escaped first.
+      function aiFormat(s) {
+        return aiEscape(s).replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+      }
+
+      function aiPlain(s) {
+        return String(s || "").replace(/[*_`#>]/g, " ").replace(/\s+/g, " ").trim();
+      }
+
+      function aiSetStatus(text) {
+        var el = $("aiStatus");
+        if (el) el.textContent = text || "";
+      }
+
+      function aiScrollEnd() {
+        var m = $("aiMessages");
+        if (m) m.scrollTop = m.scrollHeight;
+      }
+
+      function aiAvatar(el, friend) {
+        if (friend && friend.pfpUrl) {
+          el.style.backgroundImage = "url(" + friend.pfpUrl + ")";
+          el.textContent = "";
+        } else {
+          el.style.backgroundImage = "";
+          el.textContent = initials((friend && friend.name) || "AI");
+        }
+      }
+
+      function aiShowView(on) {
+        aiViewOpen = on;
+        $("aiView").classList.toggle("show", on);
+      }
+
+      function aiChatMode(on) {
+        $("aiHome").style.display = on ? "none" : "block";
+        $("aiMessages").style.display = on ? "block" : "none";
+        $("aiComposer").style.display = on ? "flex" : "none";
+        var show = on ? "" : "none";
+        $("aiTtsToggle").style.display = show;
+        $("aiRegenBtn").style.display = show;
+        $("aiClearBtn").style.display = show;
+        $("aiEditBtn").style.display = show;
+        $("aiDeleteBtn").style.display = show;
+        $("aiDuetBtn").style.display = show;
+      }
+
+      // Unload the model behind the current chat, if any. Fire-and-forget: the
+      // main process frees it; the UI does not need to wait.
+      function aiUnload() {
+        if (aiChat) {
+          try {
+            window.localai.closeChat(aiChat.friend.id);
+          } catch (e) {
+            /* nothing to do */
+          }
+        }
+      }
+
+      // Called by every navigation out of the AI area (see openHome/openServer/
+      // openDM/openGroup) as well as the Close button. Leaving frees the model.
+      function aiLeave() {
+        if (!aiViewOpen) return;
+        aiUnload();
+        aiStopSpeak();
+        aiChat = null;
+        aiBusy = false;
+        aiShowView(false);
+        try {
+          renderRail();
+          renderSide();
+        } catch (e) {
+          /* the UI is not up */
+        }
+      }
+
+      async function initAI() {
+        try {
+          if (!window.localai) return;
+          aiAvailable = await window.localai.available();
+        } catch (e) {
+          aiAvailable = false;
+        }
+        if (!aiAvailable) return;
+
+        try {
+          aiInfo = await window.localai.status();
+        } catch (e) {
+          /* keep defaults */
+        }
+
+        // Streaming wiring, set once.
+        window.localai.onToken(function (e) {
+          if (!aiChat || aiChat.friend.id !== e.id) return;
+          var body = aiBodyFor(e.msgId);
+          if (!body) return;
+          body.setAttribute("data-raw", (body.getAttribute("data-raw") || "") + e.chunk);
+          body.classList.add("aicursor");
+          aiRepaint(body);
+          aiScrollEnd();
+        });
+
+        window.localai.onDone(function (e) {
+          if (!aiChat || aiChat.friend.id !== e.id) return;
+          var body = aiBodyFor(e.msgId);
+          if (body) {
+            body.setAttribute("data-raw", e.content);
+            body.classList.remove("aicursor");
+            aiRepaint(body);
+          }
+          var m = aiChat.messages.filter(function (x) { return x.id === e.msgId; })[0];
+          if (m) m.content = e.content;
+          else aiChat.messages.push({ id: e.msgId, role: "assistant", content: e.content, ts: Date.now() });
+          aiBusy = false;
+          aiSetStatus("");
+          aiRenderComposerState();
+          if (aiChat.friend.settings && aiChat.friend.settings.tts) {
+            aiSpeak(e.content, aiChat.friend.settings.ttsVoice);
+          }
+        });
+
+        // What a character did while answering: a page it read, a file it
+        // wrote. Drawn as it happens rather than summarised afterwards, so a
+        // long answer is not a silent one — and so somebody who did not expect
+        // a character to touch a file finds out at the moment it does.
+        window.localai.onAction(function (e) {
+          if (!aiChat || aiChat.friend.id !== e.id) return;
+          var line = document.createElement("div");
+          line.className = "aiact" + (e.ok ? "" : " failed");
+          line.textContent = e.note;
+          $("aiMessages").appendChild(line);
+          aiScrollEnd();
+        });
+
+        window.localai.onScene(function (e) {
+          if (!aiChat || aiChat.friend.id !== e.id) return;
+          aiSceneUpdate(e.msgId, e.state, e.dataUrl, e.message);
+        });
+
+        window.localai.onStatus(function (e) {
+          if (!aiChat || aiChat.friend.id !== e.id) return;
+          if (e.state === "loading") aiSetStatus(t("Waking up…"));
+          else if (e.state === "generating") aiSetStatus(t("Thinking…"));
+          else if (e.state === "error") aiSetStatus(t("Something went wrong.") + " " + (e.message || ""));
+          else aiSetStatus("");
+        });
+
+        // ---- two characters talking to each other (the experiment) --------
+        // These fire only while the duet modal is on screen; `duetState` is the
+        // live handle it hands over, and is nulled the moment the modal closes,
+        // so a late event after closing is simply ignored.
+        window.localai.onDuetTurn(function (e) {
+          if (!duetState) return;
+          var wrap = document.createElement("div");
+          wrap.className = "duetmsg " + (e.turn % 2 === 0 ? "left" : "right");
+          var who = document.createElement("div");
+          who.className = "duetwho";
+          who.textContent = e.name || duetState.names[e.speakerId] || "AI";
+          var body = document.createElement("div");
+          body.className = "duetbody aicursor";
+          body.setAttribute("data-raw", "");
+          wrap.appendChild(who);
+          wrap.appendChild(body);
+          duetState.transcript.appendChild(wrap);
+          duetState.bubbles[e.msgId] = body;
+          duetState.status.textContent = (e.name || "") + " " + t("is thinking…");
+          duetState.transcript.scrollTop = duetState.transcript.scrollHeight;
+        });
+
+        window.localai.onDuetToken(function (e) {
+          if (!duetState) return;
+          var body = duetState.bubbles[e.msgId];
+          if (!body) return;
+          body.setAttribute("data-raw", (body.getAttribute("data-raw") || "") + e.chunk);
+          body.textContent = body.getAttribute("data-raw");
+          duetState.transcript.scrollTop = duetState.transcript.scrollHeight;
+        });
+
+        window.localai.onDuetMessage(function (e) {
+          if (!duetState) return;
+          var body = duetState.bubbles[e.msgId];
+          if (!body) return;
+          body.classList.remove("aicursor");
+          body.setAttribute("data-raw", e.content);
+          body.textContent = e.content;
+          duetState.transcript.scrollTop = duetState.transcript.scrollHeight;
+        });
+
+        window.localai.onDuetAction(function (e) {
+          if (!duetState) return;
+          var line = document.createElement("div");
+          line.className = "aiact" + (e.ok ? "" : " failed");
+          line.textContent = (duetState.names[e.speakerId] || "AI") + ": " + e.note;
+          duetState.transcript.appendChild(line);
+          duetState.transcript.scrollTop = duetState.transcript.scrollHeight;
+        });
+
+        window.localai.onDuetStatus(function (e) {
+          if (!duetState) return;
+          var who = duetState.names[e.speakerId] || "";
+          if (e.state === "loading") duetState.status.textContent = who + " " + t("is waking up…");
+          else if (e.state === "generating") duetState.status.textContent = who + " " + t("is thinking…");
+          else if (e.state === "error") duetState.status.textContent = t("Something went wrong.") + " " + (e.message || "");
+        });
+
+        window.localai.onDuetDone(function (e) {
+          if (!duetState) return;
+          duetState.status.textContent = e.cancelled ? t("Stopped.") : t("Done.");
+          if (duetState.setRunning) duetState.setRunning(false);
+        });
+
+        window.localai.onDuetError(function (e) {
+          if (!duetState) return;
+          duetState.status.textContent = String(e.message || "error");
+          if (duetState.setRunning) duetState.setRunning(false);
+        });
+
+        // Static controls.
+        $("aiBackBtn").onclick = aiLeave;
+        $("aiRegenBtn").onclick = aiRegenerate;
+        $("aiClearBtn").onclick = aiClearChat;
+        $("aiEditBtn").onclick = function () { if (aiChat) editAIFriendDialog(aiChat.friend); };
+        $("aiDeleteBtn").onclick = function () { if (aiChat) deleteAIFriend(aiChat.friend); };
+        $("aiDuetBtn").onclick = function () { openDuetDialog(aiChat ? aiChat.friend : null); };
+        $("aiSend").onclick = aiSend;
+        $("aiInput").onkeydown = function (ev) {
+          if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); aiSend(); }
+        };
+        $("aiTtsToggle").onclick = function () { aiToggleSetting("tts"); };
+
+        if (window.speechSynthesis) {
+          aiVoices = window.speechSynthesis.getVoices();
+          window.speechSynthesis.onvoiceschanged = function () {
+            aiVoices = window.speechSynthesis.getVoices();
+          };
+        }
+
+        await aiRefresh();
+        try {
+          renderRail();
+        } catch (e) {
+          /* rail not up yet */
+        }
+      }
+
+      async function aiRefresh() {
+        try {
+          aiFriends = await window.localai.list();
+        } catch (e) {
+          aiFriends = [];
+        }
+        // Keep the sidebar and the friends pane — where AI characters now live
+        // alongside everyone else — in step with what the store holds.
+        try { renderSide(); } catch (e) { /* the UI is not up yet */ }
+      }
+
+      // ---- home (list of friends) -----------------------------------------
+
+      // The "AI character" tab of the Add a friend dialog.
+      //
+      // The same form the edit dialog uses, so a character is described the same
+      // way whenever it is described. Creating one drops straight into its chat,
+      // because the reason somebody just filled this in is that they want to
+      // talk to it — and the row is waiting in Direct messages afterwards.
+      function aiCreatePane(pane) {
+        if (!aiInfo.modelPresent) {
+          var warn = document.createElement("div");
+          warn.className = "muted";
+          warn.textContent = t("The language model is not installed in this build. Rebuild with the model bundled to use this feature.");
+          pane.appendChild(warn);
+        }
+
+        var intro = document.createElement("div");
+        intro.className = "muted";
+        intro.textContent = t("A character that runs entirely on this computer. Nothing it says leaves the device or touches the network.");
+        pane.appendChild(intro);
+
+        var form = aiFriendForm(pane, null);
+
+        buttons(pane, "Create", async function () {
+          var v = form.read();
+          if (!v.name.trim()) v.name = t("Friend");
+          try {
+            var made = await window.localai.create({
+              name: v.name,
+              characterSheet: v.characterSheet,
+              greeting: v.greeting,
+              pfp: v.pfp,
+              settings: v.settings,
+            });
+            closeModal();
+            await aiRefresh();
+            var fresh = aiFriends.filter(function (x) { return x.id === made.id; })[0];
+            openAIChat(fresh || made);
+          } catch (e) {
+            alert(String((e && e.message) || e));
+          }
+        });
+      }
+
+      /**
+       * What the built-in assistant is told about this device.
+       *
+       * An assistant that cannot answer "what is my friend code" is not much of
+       * an assistant, and it has no way to find out for itself: it has nothing
+       * to call, and a character sheet is written once and then goes stale
+       * while the thing it describes keeps changing. So the handful of facts
+       * somebody actually asks about are handed over as facts.
+       *
+       * Gathered when the chat is opened rather than kept up to date, which is
+       * the honest trade: a session has to be rebuilt to change what the model
+       * was told, and rebuilding one mid-conversation to note that a peer came
+       * online would cost a reload of the whole transcript. Closing the chat and
+       * opening it again refreshes everything here.
+       *
+       * All of it is the user's own, and none of it goes anywhere: the model
+       * runs on this machine, and this string is never written to a log or
+       * offered to a peer. Only the built-in assistant is given it — see
+       * `builtin` in src/local-ai/store.ts.
+       */
+      function aiUserContext() {
+        var lines = [];
+
+        lines.push("- You are talking to " + (username || "someone who has not set a name yet") + ".");
+
+        if (me && me.userId) {
+          lines.push("- Their Reaper ID is " + me.userId +
+            ", which the app shows beside their name as " + tagOf(me.userId) + ".");
+        }
+
+        // The whole pasteable string, because that is what somebody is asking
+        // for when they ask for their code — not a description of one.
+        try {
+          if (myOnion) {
+            lines.push("- Their friend code, which is the entire string another " +
+              "person pastes into Add a friend to send them a request:");
+            lines.push("  " + myFriendCode());
+          } else {
+            lines.push("- They have no friend code yet: Tor has not published an " +
+              "address for this device. It usually takes a minute or two after " +
+              "the app starts, and the code appears in Add a friend once it has.");
+          }
+        } catch (e) {
+          /* no code to hand over; better to say nothing than to invent one */
+        }
+
+        if (myOnion) {
+          lines.push("- Their address is " + myOnion +
+            (myOnionPublished
+              ? ", and it has been confirmed reachable."
+              : ", which has not been confirmed reachable yet — sharing it still works."));
+        }
+
+        var live = netPeers.filter(function (p) { return !!p.userId; }).length;
+        lines.push("- This device currently has " + live + " peer connection(s) open over Tor.");
+
+        lines.push("- They have " + friends.length + " friend(s), " +
+          servers.length + " server(s) and " + groups.length + " group chat(s).");
+
+        var others = aiFriends
+          .filter(function (f) { return !aiChat || f.id !== aiChat.friend.id; })
+          .map(function (f) { return f.name; });
+        if (others.length) {
+          lines.push("- Their other AI characters, listed in Direct messages " +
+            "alongside their friends: " + others.join(", ") + ".");
+        }
+
+        try {
+          lines.push("- This is Reaper " + window.native.versions.desktop() +
+            ", and their local date and time is " + new Date().toLocaleString() + ".");
+        } catch (e) {
+          /* version unavailable; the rest still stands */
+        }
+
+        return lines.join("\n");
+      }
+
+      // ---- two characters talking to each other ---------------------------
+
+      /**
+       * Set two characters talking to each other.
+       *
+       * A sandbox, not a saved conversation: the exchange is shown here and
+       * kept nowhere, so experimenting never disturbs either character's real
+       * chat. The heavy lifting is in the main process (src/local-ai/duet.ts);
+       * this only collects the two characters, an opening line and a length,
+       * and draws the lines as they stream back on the onDuet* events above.
+       */
+      function openDuetDialog(preselectA) {
+        if (!aiAvailable) {
+          alert(t("The on-device AI is not available in this build."));
+          return;
+        }
+        var list = aiFriends.slice();
+        if (list.length < 2) {
+          alert(t("You need at least two AI characters. Make another from Add a friend, then try again."));
+          return;
+        }
+
+        modal("Two characters talking", function (card) {
+          var intro = document.createElement("div");
+          intro.className = "muted";
+          intro.textContent = t("Pick two characters, give an opening line, and watch them take turns. Nothing here is saved to either character's own chat.");
+          card.appendChild(intro);
+
+          function sel(defId) {
+            var el = document.createElement("select");
+            el.className = "duetsel";
+            list.forEach(function (fr) {
+              var o = document.createElement("option");
+              o.value = fr.id;
+              o.textContent = fr.name;
+              if (fr.id === defId) o.selected = true;
+              el.appendChild(o);
+            });
+            return el;
+          }
+
+          var aId = preselectA && preselectA.id ? preselectA.id : list[0].id;
+          var bId = (list.filter(function (f) { return f.id !== aId; })[0] || list[0]).id;
+          var selA = sel(aId);
+          var selB = sel(bId);
+
+          var rowSel = document.createElement("div");
+          rowSel.className = "duetrow";
+          var la = document.createElement("label");
+          la.className = "duetlabel";
+          la.appendChild(document.createTextNode(t("Speaks first")));
+          la.appendChild(selA);
+          var lb = document.createElement("label");
+          lb.className = "duetlabel";
+          lb.appendChild(document.createTextNode(t("Replies")));
+          lb.appendChild(selB);
+          rowSel.appendChild(la);
+          rowSel.appendChild(lb);
+          card.appendChild(rowSel);
+
+          var opener = document.createElement("textarea");
+          opener.className = "duetopener";
+          opener.rows = 3;
+          opener.placeholder = t("Opening line or topic — e.g. Debate whether a hot dog is a sandwich. Make your first argument.");
+          card.appendChild(opener);
+
+          var rowN = document.createElement("div");
+          rowN.className = "duetrow";
+          var ln = document.createElement("label");
+          ln.className = "duetlabel";
+          ln.appendChild(document.createTextNode(t("Exchanges")));
+          var num = document.createElement("input");
+          num.type = "number";
+          num.min = "1";
+          num.max = "60";
+          num.value = "8";
+          num.className = "duetnum";
+          ln.appendChild(num);
+          rowN.appendChild(ln);
+          card.appendChild(rowN);
+
+          var transcript = document.createElement("div");
+          transcript.className = "duetscript";
+          card.appendChild(transcript);
+
+          var status = document.createElement("div");
+          status.className = "muted duetstatus";
+          card.appendChild(status);
+
+          var row = document.createElement("div");
+          row.className = "mrow";
+          var closeBtn = document.createElement("button");
+          closeBtn.className = "ghost";
+          closeBtn.textContent = t("Close");
+          var stopBtn = document.createElement("button");
+          stopBtn.className = "danger";
+          stopBtn.textContent = t("Stop");
+          stopBtn.style.display = "none";
+          var startBtn = document.createElement("button");
+          startBtn.className = "send";
+          startBtn.textContent = t("Start");
+          row.appendChild(closeBtn);
+          row.appendChild(stopBtn);
+          row.appendChild(startBtn);
+          card.appendChild(row);
+
+          duetState = {
+            transcript: transcript,
+            status: status,
+            bubbles: {},
+            names: {},
+            running: false,
+          };
+          list.forEach(function (f) { duetState.names[f.id] = f.name; });
+
+          function setRunning(on) {
+            duetState.running = on;
+            startBtn.style.display = on ? "none" : "";
+            stopBtn.style.display = on ? "" : "none";
+            selA.disabled = selB.disabled = opener.disabled = num.disabled = on;
+          }
+          duetState.setRunning = setRunning;
+
+          startBtn.onclick = async function () {
+            transcript.innerHTML = "";
+            duetState.bubbles = {};
+            status.textContent = t("Starting…");
+            setRunning(true);
+            try {
+              await window.localai.duetStart({
+                aId: selA.value,
+                bId: selB.value,
+                opener: opener.value,
+                exchanges: Math.max(1, Math.min(60, parseInt(num.value, 10) || 8)),
+              });
+            } catch (e) {
+              status.textContent = String((e && e.message) || e);
+              setRunning(false);
+            }
+          };
+
+          stopBtn.onclick = function () {
+            status.textContent = t("Stopping after this line…");
+            try { window.localai.duetStop(); } catch (e) { /* nothing running */ }
+          };
+
+          closeBtn.onclick = function () {
+            try { if (duetState && duetState.running) window.localai.duetStop(); } catch (e) {}
+            duetState = null;
+            closeModal();
+          };
+
+          // Escape or a click on the backdrop closes the modal too — stop the
+          // run and drop the handle the same way.
+          modalCancel = function () {
+            try { if (duetState && duetState.running) window.localai.duetStop(); } catch (e) {}
+            duetState = null;
+          };
+        });
+      }
+
+      // ---- one chat --------------------------------------------------------
+
+      /**
+       * Which open is the current one.
+       *
+       * Opening a chat loads a model, which takes seconds, so two of them can
+       * be in flight at once — a second click on a row is all it takes. Only
+       * the most recent may touch the screen; the rest return quietly when
+       * they find they have been overtaken.
+       */
+      var aiOpenSeq = 0;
+
+      async function openAIChat(friend) {
+        // A second click on the chat you are already reading is not a request
+        // to reload it, and treating it as one is what made the transcript
+        // appear twice: the message list was emptied *before* the load rather
+        // than after it, so two overlapping opens each appended a full
+        // transcript to a list neither of them had cleared.
+        //
+        // Only once it has actually loaded, though. An open that failed leaves
+        // an error on screen, and clicking the row again is the obvious way to
+        // ask for another go.
+        if (aiViewOpen && aiChat && aiChat.friend.id === friend.id && aiChat.loaded) {
+          setTimeout(function () { var i = $("aiInput"); if (i) i.focus(); }, 0);
+          return;
+        }
+
+        var seq = ++aiOpenSeq;
+
+        aiViewOpen = true;
+        aiChat = { friend: friend, messages: [] };
+        aiBusy = false;
+        aiShowView(true);
+        aiChatMode(true);
+        $("aiHeadName").textContent = friend.name;
+        aiAvatar($("aiHeadAv"), friend);
+        $("aiMessages").innerHTML = "";
+        aiRows = {};
+        aiSetStatus(aiInfo.modelPresent ? t("Waking up…") : t("The model is not installed in this build."));
+        aiRenderComposerState();
+        aiRenderToggles();
+
+        if (!aiInfo.modelPresent) {
+          try { renderRail(); renderSide(); } catch (e) { /* not up yet */ }
+          return;
+        }
+
+        try {
+          var res = await window.localai.openChat(friend.id, aiUserContext());
+
+          // Overtaken while the model was loading. Whatever is on screen
+          // belongs to a later open than this one, so leave it alone.
+          if (seq !== aiOpenSeq) return;
+
+          // Cleared here rather than before the await. The list is emptied and
+          // refilled in the same tick, so there is no window in which a second
+          // open can append to a list this one is about to add to.
+          $("aiMessages").innerHTML = "";
+          aiRows = {};
+
+          aiChat.friend = res.friend;
+          // Kept, rather than left as the empty array it was initialised with.
+          // Regenerate splices this list and the streaming handler looks
+          // messages up in it, and both were working on a transcript that
+          // never contained anything written before this session.
+          aiChat.messages = (res.messages || []).slice();
+
+          $("aiHeadName").textContent = res.friend.name;
+          aiAvatar($("aiHeadAv"), res.friend);
+          aiRenderToggles();
+          aiChat.messages.forEach(function (m) { aiBubble(m); });
+          aiScrollEnd();
+          if (!aiChat.messages.length) aiSetStatus(t("Say something to begin."));
+          aiChat.loaded = true;
+        } catch (e) {
+          if (seq !== aiOpenSeq) return;
+          aiSetStatus(String((e && e.message) || e));
+        }
+
+        try { renderRail(); renderSide(); } catch (e) { /* not up yet */ }
+        setTimeout(function () { var i = $("aiInput"); if (i) i.focus(); }, 40);
+      }
+
+      function aiRenderComposerState() {
+        var send = $("aiSend");
+        if (send) send.disabled = aiBusy || !aiInfo.modelPresent;
+        var inp = $("aiInput");
+        if (inp) inp.disabled = !aiInfo.modelPresent;
+      }
+
+      function aiRenderToggles() {
+        if (!aiChat) return;
+        $("aiTtsToggle").classList.toggle("on", !!(aiChat.friend.settings || {}).tts);
+      }
+
+      async function aiToggleSetting(key) {
+        if (!aiChat) return;
+        if (key === "imageGen" && !aiInfo.imageReady && !aiChat.friend.settings.imageGen) {
+          aiSetStatus(t("The image generator is not installed in this build."));
+          return;
+        }
+        var patch = { settings: {} };
+        patch.settings[key] = !aiChat.friend.settings[key];
+        try {
+          var f = await window.localai.update(aiChat.friend.id, patch);
+          aiChat.friend = f;
+          if (key === "tts" && !f.settings.tts) aiStopSpeak();
+          aiRenderToggles();
+        } catch (e) {
+          aiSetStatus(String((e && e.message) || e));
+        }
+      }
+
+      // Build a message row, remember it by id, and return it.
+      function aiBubble(m) {
+        var row = document.createElement("div");
+        row.className = "aimsg";
+        row.setAttribute("data-msgid", m.id);
+
+        var av = document.createElement("div");
+        av.className = "av";
+        if (m.role === "assistant") aiAvatar(av, aiChat.friend);
+        else { av.textContent = t("You").slice(0, 2).toUpperCase(); }
+        row.appendChild(av);
+
+        var col = document.createElement("div");
+        col.style.minWidth = "0";
+
+        var head = document.createElement("div");
+        var who = document.createElement("span");
+        who.className = "who";
+        who.textContent = m.role === "assistant" ? aiChat.friend.name : t("You");
+        head.appendChild(who);
+        col.appendChild(head);
+
+        var body = document.createElement("div");
+        body.className = "aibody";
+        body.setAttribute("data-raw", m.content || "");
+        aiRepaint(body);
+        col.appendChild(body);
+
+        var scene = document.createElement("div");
+        scene.className = "aiscene";
+        col.appendChild(scene);
+        if (m.sceneUrl) {
+          var im = document.createElement("img");
+          im.src = m.sceneUrl;
+          scene.appendChild(im);
+        }
+
+        row.appendChild(col);
+        $("aiMessages").appendChild(row);
+        aiRows[m.id] = row;
+        return row;
+      }
+
+      function aiBodyFor(msgId) {
+        var row = aiRows[msgId];
+        if (!row) row = aiBubble({ id: msgId, role: "assistant", content: "" });
+        return row.querySelector(".aibody");
+      }
+
+      function aiRepaint(body) {
+        body.innerHTML = aiFormat(body.getAttribute("data-raw") || "");
+      }
+
+      function aiSceneUpdate(msgId, state, dataUrl, message) {
+        var row = aiRows[msgId];
+        if (!row) return;
+        var slot = row.querySelector(".aiscene");
+        if (!slot) return;
+        slot.innerHTML = "";
+        if (state === "generating") {
+          var n = document.createElement("div");
+          n.className = "note";
+          n.textContent = t("Generating scene…");
+          slot.appendChild(n);
+        } else if (state === "ready" && dataUrl) {
+          var im = document.createElement("img");
+          im.src = dataUrl;
+          slot.appendChild(im);
+          aiScrollEnd();
+        } else if (state === "error") {
+          var e = document.createElement("div");
+          e.className = "note";
+          e.textContent = t("Scene failed.") + " " + (message || "");
+          slot.appendChild(e);
+        }
+      }
+
+      async function aiSend() {
+        if (!aiChat || aiBusy || !aiInfo.modelPresent) return;
+        var inp = $("aiInput");
+        var text = inp.value.trim();
+        if (!text) return;
+        inp.value = "";
+        aiBusy = true;
+        aiRenderComposerState();
+        aiStopSpeak();
+
+        var um = { id: "u-" + Date.now(), role: "user", content: text, ts: Date.now() };
+        aiChat.messages.push(um);
+        aiBubble(um);
+        aiScrollEnd();
+        aiSetStatus(t("Thinking…"));
+
+        try {
+          await window.localai.send(aiChat.friend.id, text);
+        } catch (e) {
+          aiSetStatus(String((e && e.message) || e));
+          aiBusy = false;
+          aiRenderComposerState();
+        }
+      }
+
+      async function aiRegenerate() {
+        if (!aiChat || aiBusy || !aiInfo.modelPresent) return;
+        // Drop the last assistant message locally so the fresh one takes its
+        // place; the main process drops it from the transcript to match.
+        for (var i = aiChat.messages.length - 1; i >= 0; i--) {
+          if (aiChat.messages[i].role === "assistant") {
+            var id = aiChat.messages[i].id;
+            if (aiRows[id]) { aiRows[id].remove(); delete aiRows[id]; }
+            aiChat.messages.splice(i, 1);
+            break;
+          }
+        }
+        aiBusy = true;
+        aiRenderComposerState();
+        aiStopSpeak();
+        aiSetStatus(t("Thinking…"));
+        try {
+          await window.localai.regenerate(aiChat.friend.id);
+        } catch (e) {
+          aiSetStatus(String((e && e.message) || e));
+          aiBusy = false;
+          aiRenderComposerState();
+        }
+      }
+
+      // ---- text to speech (local, via the browser's own voices) -----------
+
+      // Best-effort gender guess from a voice's name. The Web Speech API does
+      // not expose gender, so this keys off well-known Windows/macOS voice
+      // names; anything unrecognised is left untagged.
+      var AI_FEMALE_VOICES = ["zira","hazel","susan","linda","heera","catherine","samantha","victoria","karen","moira","tessa","fiona","serena","allison","ava","zoe","eva","female","aria","jenny","michelle"];
+      var AI_MALE_VOICES = ["david","mark","george","james","richard","sean","daniel","alex","fred","tom","oliver","ravi","guy","male","christopher","eric","brandon"];
+
+      function aiVoiceGender(name) {
+        var n = String(name || "").toLowerCase();
+        for (var i = 0; i < AI_FEMALE_VOICES.length; i++)
+          if (n.indexOf(AI_FEMALE_VOICES[i]) !== -1) return "female";
+        for (var j = 0; j < AI_MALE_VOICES.length; j++)
+          if (n.indexOf(AI_MALE_VOICES[j]) !== -1) return "male";
+        return "";
+      }
+
+      // Fill a <select> with the system speech voices, English first, and within
+      // that females then males then untagged — so there is always a clear male
+      // and female option to pick. `current` preselects a saved voice name.
+      function aiFillVoiceOptions(sel, current) {
+        try {
+          if (window.speechSynthesis) aiVoices = window.speechSynthesis.getVoices();
+        } catch (e) {
+          /* voices unavailable */
+        }
+        sel.innerHTML = "";
+        function opt(val, label) {
+          var o = document.createElement("option");
+          o.value = val;
+          o.textContent = label;
+          if (val === current) o.selected = true;
+          sel.appendChild(o);
+        }
+        opt("", t("Default (system voice)"));
+        opt("female", t("Female voice"));
+        opt("male", t("Male voice"));
+      }
+
+      // Center-crop an image to a square data URL entirely in memory. The old
+      // path used the app's modal cropper, which replaced the single modal
+      // container and so tore down the open create/edit form. This keeps the
+      // form intact.
+      function aiCropToSquare(dataUrl, size) {
+        return new Promise(function (resolve, reject) {
+          var img = new Image();
+          img.onload = function () {
+            try {
+              var s = Math.min(img.width, img.height);
+              var sx = (img.width - s) / 2;
+              var sy = (img.height - s) / 2;
+              var c = document.createElement("canvas");
+              c.width = size;
+              c.height = size;
+              c.getContext("2d").drawImage(img, sx, sy, s, s, 0, 0, size, size);
+              resolve(c.toDataURL("image/png"));
+            } catch (e) {
+              reject(e);
+            }
+          };
+          img.onerror = reject;
+          img.src = dataUrl;
+        });
+      }
+
+      // Wipe every message with the current friend and start over. The friend
+      // and its character sheet are kept; only the transcript and scenes go.
+      async function aiClearChat() {
+        if (!aiChat) return;
+        var ok = await confirmDialog(
+          t("Restart chat with {name}?", { name: aiChat.friend.name }),
+          t("This deletes every message and scene in this conversation. The friend and its character are kept. There is no undo."),
+          t("Restart"),
+        );
+        if (!ok) return;
+        aiStopSpeak();
+        var res;
+        try {
+          res = await window.localai.clearChat(aiChat.friend.id);
+        } catch (e) {
+          aiSetStatus(String((e && e.message) || e));
+          return;
+        }
+        $("aiMessages").innerHTML = "";
+        aiRows = {};
+        aiChat.messages = (res && res.messages) || [];
+        aiChat.messages.forEach(function (m) { aiBubble(m); });
+        aiScrollEnd();
+        aiBusy = false;
+        aiRenderComposerState();
+        aiSetStatus(aiChat.messages.length ? "" : t("Say something to begin."));
+      }
+
+      // Map a saved preference ("female"/"male", or a legacy exact voice name)
+      // to a real system voice, preferring an English one.
+      function aiResolveVoice(pref) {
+        if (!pref) return null;
+        try { if (window.speechSynthesis) aiVoices = window.speechSynthesis.getVoices(); } catch (e) {}
+        var list = aiVoices || [];
+        if (pref === "female" || pref === "male") {
+          var byGender = list.filter(function (x) { return aiVoiceGender(x.name) === pref; });
+          var en = byGender.filter(function (x) { return /^en/i.test(x.lang); });
+          return en[0] || byGender[0] || null;
+        }
+        return list.filter(function (x) { return x.name === pref; })[0] || null;
+      }
+
+      // An AI character rendered as a row in the friends/DM list, so it sits
+      // among the user's DMs with an "AI" tag. Clicking opens its chat.
+      function aiFriendPaneRow(f) {
+        var row = document.createElement("div");
+        row.className = "frow";
+        var wrap = document.createElement("div");
+        wrap.className = "memwrap";
+        var av = document.createElement("div");
+        av.style.cssText = "width:32px;height:32px;border-radius:50%;background:var(--side);background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0;";
+        aiAvatar(av, f);
+        wrap.appendChild(av);
+        var st = document.createElement("div");
+        st.className = "st online";
+        wrap.appendChild(st);
+        row.appendChild(wrap);
+        var col = document.createElement("div");
+        col.className = "fgrow";
+        var nm = document.createElement("div");
+        nm.className = "fname";
+        nm.textContent = f.name;
+        var badge = document.createElement("span");
+        badge.textContent = "AI";
+        badge.style.cssText = "margin-left:6px;font-size:10px;font-weight:700;letter-spacing:.4px;padding:1px 5px;border-radius:6px;background:var(--accent);color:#fff;vertical-align:middle;";
+        nm.appendChild(badge);
+        col.appendChild(nm);
+        var sub = document.createElement("div");
+        sub.className = "fsub";
+        sub.textContent = t("AI character - runs on this device");
+        col.appendChild(sub);
+        row.appendChild(col);
+        row.onclick = function () { openAIChat(f); };
+        return row;
+      }
+
+      function aiSpeak(text, voiceName) {
+        if (!window.speechSynthesis) return;
+        try {
+          window.speechSynthesis.cancel();
+          var u = new SpeechSynthesisUtterance(aiPlain(text));
+          var v = aiResolveVoice(voiceName);
+          if (v) u.voice = v;
+          window.speechSynthesis.speak(u);
+        } catch (e) {
+          /* speech is a nicety; never let it break a reply */
+        }
+      }
+
+      function aiStopSpeak() {
+        if (window.speechSynthesis) {
+          try { window.speechSynthesis.cancel(); } catch (e) {}
+        }
+      }
+
+      // ---- create / edit / delete -----------------------------------------
+
+      function aiFriendForm(card, existing) {
+        var state = {
+          pfp: undefined, // new data URL if changed
+          pfpUrl: existing ? existing.pfpUrl : undefined,
+        };
+
+        var top = document.createElement("div");
+        top.className = "airow";
+        var av = document.createElement("div");
+        av.className = "av";
+        aiAvatar(av, { name: (existing && existing.name) || "AI", pfpUrl: state.pfpUrl });
+        top.appendChild(av);
+
+        var pick = document.createElement("button");
+        pick.className = "ghost";
+        pick.textContent = t("Choose picture");
+        var file = document.createElement("input");
+        file.type = "file";
+        file.accept = "image/*";
+        file.style.display = "none";
+        pick.onclick = function () { file.click(); };
+        file.onchange = function () {
+          var f = file.files && file.files[0];
+          if (!f) return;
+          var r = new FileReader();
+          r.onload = function () {
+            // Square it in memory (no modal — that used to close this form).
+            aiCropToSquare(String(r.result), 256)
+              .then(function (out) {
+                state.pfp = out;
+                av.style.backgroundImage = "url(" + out + ")";
+                av.textContent = "";
+              })
+              .catch(function () {
+                state.pfp = String(r.result);
+                av.style.backgroundImage = "url(" + state.pfp + ")";
+                av.textContent = "";
+              });
+          };
+          r.readAsDataURL(f);
+        };
+        top.appendChild(pick);
+        top.appendChild(file);
+        card.appendChild(top);
+
+        var nameInput = textRow(card, "Name", existing ? existing.name : "", "e.g. Captain Vale");
+
+        var sheetWrap = document.createElement("div");
+        sheetWrap.className = "aifield";
+        var sl = document.createElement("label");
+        sl.textContent = t("Character sheet");
+        sheetWrap.appendChild(sl);
+        var sheet = document.createElement("textarea");
+        sheet.className = "aisheet";
+        sheet.placeholder = t("Who they are, how they speak, the setting, what they want. This becomes their personality.");
+        sheet.value = existing ? existing.characterSheet : "";
+        sheetWrap.appendChild(sheet);
+        card.appendChild(sheetWrap);
+
+        // Optional opening message ("greeting"). Blank = the user speaks first.
+        var greetWrap = document.createElement("div");
+        greetWrap.className = "aifield";
+        var greetLbl = document.createElement("label");
+        greetLbl.textContent = t("First message / greeting (optional)");
+        greetWrap.appendChild(greetLbl);
+        var greetingBox = document.createElement("textarea");
+        greetingBox.className = "aisheet";
+        greetingBox.style.minHeight = "70px";
+        greetingBox.placeholder = t("What the character says to open the scene. Leave blank to speak first yourself.");
+        greetingBox.value = existing && existing.greeting ? existing.greeting : "";
+        greetWrap.appendChild(greetingBox);
+        card.appendChild(greetWrap);
+
+        // Per-friend defaults for the two extras.
+        var opts = document.createElement("div");
+        var ttsOpt = document.createElement("label");
+        ttsOpt.className = "aiopt";
+        var ttsBox = document.createElement("input");
+        ttsBox.type = "checkbox";
+        ttsBox.checked = existing ? !!existing.settings.tts : false;
+        ttsOpt.appendChild(ttsBox);
+        ttsOpt.appendChild(document.createTextNode(t("Read replies aloud (text to speech)")));
+        opts.appendChild(ttsOpt);
+
+        card.appendChild(opts);
+
+        // Voice picker for text-to-speech (male / female / any system voice).
+        var voiceWrap = document.createElement("div");
+        voiceWrap.className = "aifield";
+        var voiceLabel = document.createElement("label");
+        voiceLabel.textContent = t("Voice (text to speech)");
+        voiceWrap.appendChild(voiceLabel);
+        var voiceRow = document.createElement("div");
+        voiceRow.className = "airow";
+        var voiceSel = document.createElement("select");
+        voiceSel.className = "aivoice";
+        voiceSel.style.cssText =
+          "flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--main);color:var(--text);font:inherit;";
+        aiFillVoiceOptions(voiceSel, existing ? existing.settings.ttsVoice : "");
+        var voicePreview = document.createElement("button");
+        voicePreview.className = "ghost";
+        voicePreview.type = "button";
+        voicePreview.textContent = t("Preview");
+        voicePreview.onclick = function () {
+          aiSpeak(t("Hi! This is how I sound."), voiceSel.value);
+        };
+        voiceRow.appendChild(voiceSel);
+        voiceRow.appendChild(voicePreview);
+        voiceWrap.appendChild(voiceRow);
+        card.appendChild(voiceWrap);
+
+        // Advanced, per-friend controls (collapsed by default).
+        var g = existing ? existing.settings : {};
+        var withDefault = function (v, d) {
+          return v == null || v === "" ? String(d) : String(v);
+        };
+
+        var adv = document.createElement("details");
+        adv.className = "aifield";
+        adv.style.marginTop = "6px";
+        var advSum = document.createElement("summary");
+        advSum.textContent = t("Advanced settings");
+        advSum.style.cursor = "pointer";
+        adv.appendChild(advSum);
+
+        var tempIn = textRow(adv, "Creativity (temperature 0-2)", withDefault(g.temperature, 0.85), "");
+        var maxTokIn = textRow(adv, "Reply length (max tokens)", withDefault(g.maxTokens, 400), "");
+        var ctxIn = textRow(adv, "Context size (tokens; blank = auto)", g.contextTokens != null ? String(g.contextTokens) : "", "auto");
+        var keepIn = textRow(adv, "Keep recent messages verbatim", withDefault(g.keepRecentMessages, 30), "");
+
+        var compactOpt = document.createElement("label");
+        compactOpt.className = "aiopt";
+        var compactBox = document.createElement("input");
+        compactBox.type = "checkbox";
+        compactBox.checked = g.autoCompact !== false;
+        compactOpt.appendChild(compactBox);
+        compactOpt.appendChild(document.createTextNode(t("Summarise older messages when the chat gets long")));
+        adv.appendChild(compactOpt);
+
+        card.appendChild(adv);
+
+        // ---- what this character may do besides talk --------------------
+        //
+        // Its own section rather than another line in Advanced, because these
+        // two are not a preference. One lets a character reach the open web and
+        // the other hands it a folder on this machine, and somebody turning
+        // them on should have read a sentence about what that means.
+        var powers = document.createElement("details");
+        powers.className = "aifield";
+        powers.style.marginTop = "6px";
+        var powersSum = document.createElement("summary");
+        powersSum.textContent = t("Web and folder access");
+        powersSum.style.cursor = "pointer";
+        powers.appendChild(powersSum);
+
+        var webOpt = document.createElement("label");
+        webOpt.className = "aiopt";
+        var webBox = document.createElement("input");
+        webBox.type = "checkbox";
+        webBox.checked = !!g.web;
+        webOpt.appendChild(webBox);
+        webOpt.appendChild(document.createTextNode(t("Let this character search and read the web")));
+        powers.appendChild(webOpt);
+
+        var webNote = document.createElement("div");
+        webNote.className = "muted";
+        webNote.style.cssText = "font-size:11px;margin:2px 0 8px 22px";
+        webNote.textContent = t("Everything it fetches goes over Tor, so no site learns your address. It is off for every character until you turn it on.");
+        powers.appendChild(webNote);
+
+        var folderWrap = document.createElement("div");
+        folderWrap.className = "aifield";
+        var folderLabel = document.createElement("label");
+        folderLabel.textContent = t("Folder it may read and write");
+        folderWrap.appendChild(folderLabel);
+
+        var folderState = { path: g.folder || "" };
+
+        var folderRow = document.createElement("div");
+        folderRow.className = "airow";
+        var folderShown = document.createElement("div");
+        folderShown.style.cssText =
+          "flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--line);" +
+          "background:var(--main);color:var(--text);font:inherit;overflow:hidden;" +
+          "text-overflow:ellipsis;white-space:nowrap;";
+        var paintFolder = function () {
+          folderShown.textContent = folderState.path || t("No folder — it cannot see your files");
+          folderShown.style.color = folderState.path ? "var(--text)" : "var(--dim)";
+          folderClear.style.display = folderState.path ? "" : "none";
+          paintPowerWarning();
+        };
+
+        var folderPick = document.createElement("button");
+        folderPick.className = "ghost";
+        folderPick.type = "button";
+        folderPick.textContent = t("Choose folder");
+        folderPick.onclick = async function () {
+          try {
+            var picked = await window.localai.chooseFolder();
+            if (picked) { folderState.path = picked; paintFolder(); }
+          } catch (e) { /* the dialog was dismissed */ }
+        };
+
+        var folderClear = document.createElement("button");
+        folderClear.className = "ghost";
+        folderClear.type = "button";
+        folderClear.textContent = t("Remove");
+        folderClear.onclick = function () { folderState.path = ""; paintFolder(); };
+
+        folderRow.appendChild(folderShown);
+        folderRow.appendChild(folderPick);
+        folderRow.appendChild(folderClear);
+        folderWrap.appendChild(folderRow);
+
+        var folderNote = document.createElement("div");
+        folderNote.className = "muted";
+        folderNote.style.cssText = "font-size:11px;margin-top:4px";
+        folderNote.textContent = t("Only that folder, and only text files. Anything it overwrites is copied into .reaper-backups first.");
+        folderWrap.appendChild(folderNote);
+        powers.appendChild(folderWrap);
+
+        // The one thing worth saying out loud, said only when it applies.
+        var powerWarn = document.createElement("div");
+        powerWarn.style.cssText =
+          "font-size:11px;margin-top:8px;padding:7px 9px;border-radius:6px;" +
+          "background:rgba(253,102,113,.12);color:var(--accent);";
+        powerWarn.textContent = t("With both on, a web page this character reads could tell it to send your files somewhere. Turn on only what you need.");
+        powers.appendChild(powerWarn);
+
+        var paintPowerWarning = function () {
+          powerWarn.style.display = webBox.checked && folderState.path ? "" : "none";
+        };
+        webBox.onchange = paintPowerWarning;
+        paintFolder();
+
+        card.appendChild(powers);
+
+        return {
+          state: state,
+          read: function () {
+            var pInt = function (el) { var v = parseInt(el.value, 10); return isNaN(v) ? undefined : v; };
+            var pFloat = function (el, d) { var v = parseFloat(el.value); return isNaN(v) ? d : v; };
+            return {
+              name: nameInput.value,
+              characterSheet: sheet.value,
+              greeting: greetingBox.value,
+              pfp: state.pfp,
+              settings: {
+                tts: ttsBox.checked,
+                imageGen: false,
+                ttsVoice: voiceSel.value || undefined,
+                temperature: pFloat(tempIn, 0.85),
+                maxTokens: pInt(maxTokIn),
+                contextTokens: pInt(ctxIn),
+                keepRecentMessages: pInt(keepIn),
+                autoCompact: compactBox.checked,
+                web: webBox.checked,
+                folder: folderState.path,
+              },
+            };
+          },
+        };
+      }
+
+      function editAIFriendDialog(friend) {
+        modal(t("Edit AI friend"), function (card) {
+          var form = aiFriendForm(card, friend);
+          buttons(card, "Save", async function () {
+            var v = form.read();
+            try {
+              if (v.pfp) await window.localai.setPfp(friend.id, v.pfp);
+              var updated = await window.localai.update(friend.id, {
+                name: v.name,
+                characterSheet: v.characterSheet,
+                greeting: v.greeting,
+                settings: v.settings,
+              });
+              closeModal();
+              await aiRefresh();
+              if (aiChat && aiChat.friend.id === friend.id) {
+                aiChat.friend = aiFriends.filter(function (x) { return x.id === friend.id; })[0] || updated;
+                $("aiHeadName").textContent = aiChat.friend.name;
+                aiAvatar($("aiHeadAv"), aiChat.friend);
+                aiRenderToggles();
+              }
+              renderSide();
+            } catch (e) {
+              alert(String((e && e.message) || e));
+            }
+          });
+        });
+      }
+
+      async function deleteAIFriend(friend) {
+        var ok = await confirmDialog(
+          t("Delete {name}?", { name: friend.name }),
+          t("This removes the friend and its whole conversation from this computer. There is no undo."),
+          t("Delete"),
+        );
+        if (!ok) return;
+        try {
+          await window.localai.delete(friend.id);
+        } catch (e) {
+          /* already gone */
+        }
+        aiChat = null;
+        aiLeave();
+        await aiRefresh();
+        renderSide();
+      }
+
+      // Kick off once the rest of the script has run.
+      setTimeout(function () {
+        try { initAI(); } catch (e) { /* feature simply stays hidden */ }
+      }, 0);
+
 
       // A throw anywhere in start() previously left a half-rendered window with
       // no username prompt and no error — the worst possible failure, because

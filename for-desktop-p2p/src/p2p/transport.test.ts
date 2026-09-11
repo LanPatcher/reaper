@@ -201,6 +201,13 @@ ck("A drops the peer", a.t.peers().length === 0);
   y.t.on("audio", () => heard.Y++);
   z.t.on("audio", () => heard.Z++);
 
+  // All three are in the call. Media goes only to the people named here and is
+  // accepted only from them, so a mesh test has to say who is in the room
+  // before there is any media to multiply — see media.test.ts for the property
+  // that makes this necessary.
+  const room = [x.id.userId, y.id.userId, z.id.userId];
+  for (const n of [x, y, z]) n.t.setCallAudience(room);
+
   x.t.sendAudio("vc", 1, "AAAA");
   await wait(600);
 

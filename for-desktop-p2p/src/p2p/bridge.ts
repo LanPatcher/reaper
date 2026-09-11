@@ -81,6 +81,7 @@ const CHANNEL = {
   netInfo: "p2p:netInfo",
   netSignal: "p2p:netSignal",
   netAudio: "p2p:netAudio",
+  netCallAudience: "p2p:netCallAudience",
   netAnnounce: "p2p:netAnnounce",
   setKey: "p2p:setKey",
   dmKey: "p2p:dmKey",
@@ -91,6 +92,7 @@ const CHANNEL = {
   netFocus: "p2p:netFocus",
   communities: "p2p:communities",
   netDrop: "p2p:netDrop",
+  netResend: "p2p:netResend",
   sharedWith: "p2p:sharedWith",
   compact: "p2p:compact",
   netTune: "p2p:netTune",
@@ -2736,6 +2738,19 @@ export function registerP2PHandlers(): void {
     transport?.signal(to, data) ?? false,
   );
 
+  /**
+   * Who is in the call, so media can be sent to them and to nobody else.
+   *
+   * The renderer is the side that knows — membership comes from the community
+   * log it replays — so it says, and the transport enforces. An empty list is
+   * how leaving is expressed, and it is also the safe default: until this is
+   * called, no frame goes anywhere.
+   */
+  ipcMain.handle(CHANNEL.netCallAudience, (_, userIds: string[]) => {
+    transport?.setCallAudience(Array.isArray(userIds) ? userIds : []);
+    return true;
+  });
+
   ipcMain.handle(CHANNEL.netAudio, (_, channel: string, seq: number, frame: string) => {
     transport?.sendAudio(channel, seq, frame);
   });
@@ -3101,6 +3116,33 @@ export function registerP2PHandlers(): void {
   /** Close any connection to a peer. They may dial again; this is not a ban. */
   ipcMain.handle(CHANNEL.netDrop, (_, userId: string) =>
     transport?.drop(userId) ?? false,
+  );
+
+  /**
+   * Hand specific events to one peer again, so they can confirm holding them.
+   *
+   * The renderer is the side that knows what is still owed and to whom; this is
+   * how it asks to be told. Only ids this device actually holds in that
+   * community are sent, and only to somebody currently connected — anything
+   * else answers `false` rather than throwing, because "they are not here right
+   * now" is the ordinary case and not a fault. See `Transport.resend` for why
+   * ordinary reconciliation cannot answer this question.
+   */
+  ipcMain.handle(
+    CHANNEL.netResend,
+    (_, userId: string, community: string, ids: string[]) => {
+      if (!transport || !isShareable(community)) return false;
+
+      const wanted = new Set(ids || []);
+      if (wanted.size === 0) return false;
+
+      const events = storeFor(community)
+        .events()
+        .filter((event) => wanted.has(event.id));
+      if (events.length === 0) return false;
+
+      return transport.resend(userId, community, events);
+    },
   );
 
   ipcMain.handle(CHANNEL.netFocus, (_, communities: string[]) => {

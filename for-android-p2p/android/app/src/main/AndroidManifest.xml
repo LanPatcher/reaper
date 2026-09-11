@@ -39,4 +39,14 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Pairing two of your own devices by scanning the QR code the desktop
+         shows. The @reaper/scanner plugin's own manifest declares this too;
+         it is repeated here so the app's requirement is visible in one place.
+         The camera is requested at runtime by the scanner the moment it opens,
+         and never otherwise. required="false" keeps the app installable on a
+         device without a camera — the sync address can always be typed. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 </manifest>

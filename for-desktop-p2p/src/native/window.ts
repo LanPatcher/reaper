@@ -382,6 +382,34 @@ export function createMainWindow() {
   });
 
   // push world events to the window
+  /**
+   * Keep the window out of screenshots and screen recordings.
+   *
+   * Turned on while a call is up and off again afterwards, so reading a
+   * conversation can still be screenshotted — that is the user's own history
+   * and their own business — while somebody's camera cannot be captured by
+   * whatever else is running on the machine.
+   *
+   * `setContentProtection` is the OS mechanism rather than a trick: on Windows
+   * it is `SetWindowDisplayAffinity` with `WDA_EXCLUDEFROMCAPTURE`, so the
+   * window is excluded by the compositor and a capture sees nothing where it
+   * was; on macOS it is `NSWindowSharingNone`. Both cover the built-in
+   * screenshot tools and any ordinary recorder, because neither is being asked
+   * politely — the frames are never handed over.
+   *
+   * What it cannot do is worth being honest about, and the interface says so:
+   * it does not stop a camera pointed at the screen, and on Linux there is no
+   * equivalent, so the call warns instead of pretending.
+   */
+  ipcMain.on("setContentProtection", (_, on: boolean) => {
+    try {
+      mainWindow.setContentProtection(!!on);
+      log("[privacy] window capture", on ? "blocked" : "allowed");
+    } catch (error) {
+      log("[privacy] could not change capture protection:", String(error));
+    }
+  });
+
   ipcMain.on("minimise", () => mainWindow.minimize());
   ipcMain.on("maximise", () =>
     mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize(),

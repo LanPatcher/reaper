@@ -1,0 +1,38 @@
+# electron-builder configuration — portable Windows ZIP.
+#
+# Why a zip and not an installer: this app bundles ~4.6 GB of model files, and a
+# single-file Windows installer cannot embed a payload that large. Squirrel caps
+# at ~4 GB (it embeds the app as a PE resource in Setup.exe) and NSIS caps at
+# ~2 GB (its makensis.exe is 32-bit and memory-maps the app archive at compile
+# time). Both were tried and both hit those hard limits. A zip has no such limit
+# — it is built with 7-Zip/zip64 — so the whole app, models included, ships as
+# one offline archive that the user extracts and runs (reaper.exe).
+#
+# Electron Forge still packages the app (asar, fuses, native-module unpacking,
+# extraResource for the models and Tor). electron-builder runs afterwards in
+# --prepackaged mode on Forge's output (out/Reaper-win32-x64) purely to produce
+# the zip. See the `dist:win` script in package.json.
+
+appId: chat.stoat.reaper
+productName: Reaper
+copyright: Copyright (C) 2026 Ray
+
+directories:
+  output: out/installer
+
+# The model weights are already incompressible, so compressing them only burns
+# build time for no size win. "store" keeps the build fast; the zip ends up
+# roughly the size of the packaged app (~4.6 GB).
+compression: store
+
+# The app is already packaged by Forge; never let electron-builder try to
+# rebuild native modules (node-llama-cpp) against its own toolchain.
+npmRebuild: false
+
+win:
+  target:
+    - zip
+  icon: assets/desktop/icon.ico
+  # Forge packages the binary as reaper.exe (packagerConfig.executableName).
+  executableName: reaper
+  artifactName: ${name}-${version}-win-x64.${ext}

@@ -709,6 +709,28 @@ export class Transport extends EventEmitter {
   /** Whether only call-critical traffic should move. */
   #callFocus = false;
 
+  /**
+   * Who may receive live media, by user id.
+   *
+   * Voice, screen and camera frames go only to the people named here, and are
+   * accepted only from them. Empty means nobody, which is the state of a device
+   * that is not in a call — so a frame cannot go anywhere until the interface
+   * has said who is in the room.
+   *
+   * ## Why this is not left to the far end
+   *
+   * It used to be. Frames were sent to every connected peer and every client
+   * discarded the ones for a call it was not in, which is fine for a protocol
+   * where everybody runs the same honest code and is not a privacy property at
+   * all: a peer that is merely *connected* — someone in an unrelated server,
+   * an old friend — received the bytes and chose not to look. A camera makes
+   * that unacceptable rather than merely untidy, and a modified client keeps
+   * whatever it is sent.
+   *
+   * So the filter moved to the sender, where it is the only copy that matters.
+   */
+  #audience = new Set<string>();
+
   /** Recently relayed audio, so a mesh containing a cycle cannot amplify it. */
   #seenAudio = new Set<string>();
   #seenAudioOrder: string[] = [];
@@ -1301,12 +1323,21 @@ export class Transport extends EventEmitter {
         // to go, and passing it on again is how one utterance becomes several.
         if (msg.from === this.#userId) break;
 
+        // Media from somebody who is not in this call is dropped rather than
+        // shown. The interface would ignore it, but "the interface ignores it"
+        // is not the same as "it cannot appear", and a camera frame arriving
+        // from outside the room is exactly the thing that must not be able to.
+        if (!this.#inCall(msg.from)) break;
+
         this.emit("audio", msg.channel, msg.from, msg.seq, msg.frame);
 
         // Relayed onward so a call works without every participant being
-        // directly connected.
-        for (const [otherId] of this.#peers) {
+        // directly connected — but only ever to the others in it. Relaying to
+        // every peer is how frames reached people who were not in the call at
+        // all, which is the whole reason the audience exists.
+        for (const [otherId, other] of this.#peers) {
           if (otherId === id) continue;
+          if (!this.#inCall(other.info.userId)) continue;
           this.#send(otherId, msg);
         }
         break;
@@ -1492,6 +1523,49 @@ export class Transport extends EventEmitter {
       if (!following && !addressed) continue;
       this.#sendEvents(peer.info.id, "push", community, events, addressed);
     }
+  }
+
+  /**
+   * Offer specific events to one person again, so they can confirm holding them.
+   *
+   * Reconciliation cannot do this, and that is the whole reason this exists. An
+   * offer is an id list, and a peer that already holds everything in it answers
+   * with nothing — which is the correct, cheap behaviour for chat and useless
+   * for an obligation, because the only frame that produces a receipt is one
+   * carrying events. So once something has actually arrived there is no longer
+   * any way to be told that it did.
+   *
+   * That turned a single missed receipt into a permanent one. An unfriending
+   * pushed the instant it was written is normally acked within a Tor round
+   * trip, but if the app was closed in between, or the note recording the
+   * obligation was written a moment after the ack came back, nothing would ever
+   * ask again — and the item sat at "Delivering now…" for as long as the two
+   * devices stayed connected, which is exactly the wrong way round.
+   *
+   * So this asks again, explicitly. The events go out as a `push` addressed to
+   * one peer, the far side merges them as duplicates, and the receipt that
+   * comes back names them, which is what the sender was waiting for. Cheap by
+   * construction: these are single administrative events, sent only to somebody
+   * currently connected, and only while something is still owed to them.
+   */
+  resend(userId: string, community: string, events: SignedEvent[]): boolean {
+    if (!userId || !events.length) return false;
+
+    let sent = false;
+
+    for (const peer of this.#peers.values()) {
+      if (peer.info.userId !== userId) continue;
+
+      // Deliberately not recorded in `peer.sent`. That set exists to stop
+      // reconciliation re-sending what a peer declines to keep; marking these
+      // would mean a re-offer that gets lost on the wire suppresses the
+      // ordinary path that would have caught it, which is the opposite of what
+      // is wanted for the one kind of event that has to arrive.
+      this.#sendEvents(peer.info.id, "push", community, events, true);
+      sent = true;
+    }
+
+    return sent;
   }
 
   /**
@@ -1705,7 +1779,26 @@ export class Transport extends EventEmitter {
    * Fire and forget: a frame that cannot be written now is worthless a moment
    * later, so there is no queue and no retry.
    */
+  /**
+   * Name the people who are in the call.
+   *
+   * Called by the interface whenever the roster changes, and with an empty list
+   * on leaving. Media is refused in both directions for anyone not on it.
+   */
+  setCallAudience(userIds: readonly string[]): void {
+    this.#audience = new Set((userIds || []).filter(Boolean));
+  }
+
+  /** Whether a peer is in the call this device is in. */
+  #inCall(userId: string | undefined): boolean {
+    return !!userId && this.#audience.has(userId);
+  }
+
   sendAudio(channel: string, seq: number, frame: string): void {
+    // Not in a call, so there is no one to send to. Checked before anything
+    // else so that a bug elsewhere cannot produce a frame on the wire.
+    if (this.#audience.size === 0) return;
+
     // Remembered as already seen, before it goes anywhere.
     //
     // Frames are relayed onward so a call works without everyone being
@@ -1727,7 +1820,8 @@ export class Transport extends EventEmitter {
       }
     }
 
-    for (const [id] of this.#peers) {
+    for (const [id, peer] of this.#peers) {
+      if (!this.#inCall(peer.info.userId)) continue;
       this.#send(id, { t: "audio", channel, from: this.#userId, seq, frame });
     }
   }

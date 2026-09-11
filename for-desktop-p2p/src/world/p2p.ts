@@ -100,6 +100,16 @@ contextBridge.exposeInMainWorld("p2p", {
   netAnnounce: (): Promise<void> => ipcRenderer.invoke("p2p:netAnnounce"),
 
   /**
+   * Name the people in the current call.
+   *
+   * Voice, screen and camera frames are sent only to these user ids, and
+   * accepted only from them. Pass an empty list on leaving; until this is
+   * called, nothing is sent at all.
+   */
+  netCallAudience: (userIds: string[]): Promise<boolean> =>
+    ipcRenderer.invoke("p2p:netCallAudience", userIds),
+
+  /**
    * A whole server in one compressed file.
    *
    * The log is the server, so this is the events — channels, messages, roles,
@@ -145,6 +155,22 @@ contextBridge.exposeInMainWorld("p2p", {
   /** Close the connection to a peer there is no longer a reason to hold. */
   netDrop: (userId: string): Promise<boolean> =>
     ipcRenderer.invoke("p2p:netDrop", userId),
+
+  /**
+   * Offer events this device still owes somebody, again.
+   *
+   * Reconciliation only ever produces a receipt for something the peer did not
+   * already have, so an obligation whose first receipt was missed can never be
+   * retired by ordinary syncing — it stays "delivering" forever against
+   * somebody who has had it all along. This re-offers it to one connected
+   * person, and the receipt that comes back is what settles it.
+   */
+  netResend: (
+    userId: string,
+    community: string,
+    ids: string[],
+  ): Promise<boolean> =>
+    ipcRenderer.invoke("p2p:netResend", userId, community, ids),
 
   /**
    * A peer confirmed it holds these events.

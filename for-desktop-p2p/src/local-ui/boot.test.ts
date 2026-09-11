@@ -1368,5 +1368,43 @@ ck("the segment length is within its bounds",
      rings.indexOf("touchConversation") < rings.length);
 }
 
+// ---- AI characters share the conversation list ---------------------------
+//
+// They are rows in Direct messages beside real people, which means they share
+// the two things a list of conversations has to get right: exactly one row
+// looks selected, and opening one draws it exactly once. Both of these were
+// wrong, and both were wrong in a way that looks like a rendering glitch
+// rather than a bug with a cause.
+{
+  const source = readFileSync(join(process.cwd(), "src/local-ui/index.html"), "utf8");
+
+  const open = source.slice(source.indexOf("async function openAIChat(friend)"));
+  const body = open.slice(0, open.indexOf("function aiRenderComposerState("));
+
+  const awaitAt = body.indexOf("await window.localai.openChat(");
+  const clearAt = body.indexOf('$("aiMessages").innerHTML = ""', awaitAt);
+
+  ck("the message list is cleared after the load, not before it",
+     awaitAt > 0 && clearAt > awaitAt,
+     `await at ${awaitAt}, clear at ${clearAt}`);
+
+  ck("an open that has been overtaken draws nothing",
+     /if \(seq !== aiOpenSeq\) return;/.test(body));
+
+  ck("and clicking the chat you are already reading does not reload it",
+     /aiChat\.friend\.id === friend\.id && aiChat\.loaded/.test(body));
+
+  ck("the transcript that was loaded is the one the interface keeps",
+     /aiChat\.messages = \(res\.messages \|\| \[\]\)/.test(body));
+
+  const side = source.slice(source.indexOf("function renderSide()"));
+  ck("a conversation row is not selected while an AI chat is over it",
+     /function rowSelected\(id\) \{\s*return !aiViewOpen && current === id;/
+       .test(source));
+  ck("and the rows ask it rather than comparing current themselves",
+     side.indexOf("rowSelected(dmIdFor(uid))") > 0 &&
+     side.indexOf("rowSelected(g.id)") > 0);
+}
+
 console.log(f ? "\n" + f + " FAILED" : "\nall passed");
 process.exit(f ? 1 : 0);

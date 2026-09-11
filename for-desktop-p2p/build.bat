@@ -7,8 +7,10 @@ REM
 REM  Serverless build. The interface is compiled into the main process bundle,
 REM  so there is no web client to build first and nothing to point at a server.
 REM
-REM  Produces an installer under out\make\squirrel.windows\ and a portable zip
-REM  under out\make\zip\.
+REM  Produces a Squirrel installer under out\make\squirrel.windows\x64\
+REM  (reaper-setup.exe). The bundled language model keeps this a couple of GB,
+REM  which is under Squirrel's ~4 GB embed limit now that image generation is
+REM  no longer bundled.
 REM
 REM  Usage:
 REM    build.bat                              build
@@ -205,9 +207,14 @@ call pnpm install
 if errorlevel 1 goto :fail
 
 REM --- Build -----------------------------------------------------------------
+REM
+REM PLATFORM is set so the AppX/Deb makers (added only when it is unset) are
+REM skipped on Windows — AppX needs a signing cert and freezes otherwise. That
+REM leaves just the Squirrel installer.
 
 echo.
 echo  [*] Building installer ^(this takes a few minutes^)...
+set "PLATFORM=win"
 call pnpm make
 if errorlevel 1 goto :fail
 
@@ -217,8 +224,7 @@ echo.
 echo  =====================================================
 echo   Build complete.
 echo.
-echo   Installer:  out\make\squirrel.windows\x64\
-echo   Portable:   out\make\zip\win32\x64\
+echo   Installer:  out\make\squirrel.windows\x64\  ^(reaper-setup.exe^)
 echo.
 echo   Serverless. On first run it asks for a username
 echo   and creates a local keypair - no account, no

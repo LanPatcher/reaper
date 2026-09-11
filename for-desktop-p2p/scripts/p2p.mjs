@@ -38,6 +38,7 @@ const TARGETS = {
     "src/p2p/identity-change.test.ts",
     "src/p2p/membership.test.ts",
     "src/p2p/delivery.test.ts",
+    "src/p2p/media.test.ts",
     "src/p2p/backup.test.ts",
     "src/p2p/onion.test.ts",
     "src/p2p/link.test.ts",
@@ -48,12 +49,16 @@ const TARGETS = {
     // nothing was exercising.
     "src/p2p/pair.test.ts",
     "src/p2p/restore.test.ts",
+    "src/local-ai/prompt.test.ts",
+    "src/local-ai/tools.test.ts",
     "src/local-ui/language.test.ts",
     "src/local-ui/appearance.test.ts",
     "src/local-ui/boot.test.ts",
     "src/local-ui/membership-ui.test.ts",
     "src/local-ui/qr.test.ts",
     "src/local-ui/friendcode.test.ts",
+    "src/local-ui/links.test.ts",
+    "src/local-ui/content.test.ts",
   ],
 };
 
@@ -95,7 +100,27 @@ function explainToolchain(error) {
 `);
 }
 
-const out = mkdtempSync(join(tmpdir(), "reaper-p2p-"));
+/**
+ * Where the bundles are written, and why it is not the system temp directory.
+ *
+ * One test leaves `node-llama-cpp` as a real import rather than inlining it, so
+ * the bundle has to sit somewhere Node can resolve a package from — and module
+ * resolution walks up from the file, which from /tmp finds nothing. Writing
+ * inside `node_modules` puts the tree one directory up, exactly where the
+ * resolver already looks.
+ *
+ * Falls back to the temp directory if that is not writable, which costs only
+ * the one test that needs the import.
+ */
+function outputDir() {
+  try {
+    return mkdtempSync(join(process.cwd(), "node_modules", ".reaper-p2p-"));
+  } catch {
+    return mkdtempSync(join(tmpdir(), "reaper-p2p-"));
+  }
+}
+
+const out = outputDir();
 let failed = false;
 
 try {
@@ -105,6 +130,10 @@ try {
     await build({
       entryPoints: [entry],
       bundle: true,
+      // Left as a real import rather than inlined. It is a large tree that
+      // reaches for a native binary, and the one test that touches it wants the
+      // installed package anyway — bundling a copy would be checking the copy.
+      external: ["node-llama-cpp"],
       platform: "node",
       format: "esm",
       outfile: bundle,

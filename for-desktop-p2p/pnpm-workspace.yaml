@@ -18,6 +18,9 @@ allowBuilds:
   electron-forge: false
   electron-winstaller: true
   esbuild: true
+  # Its postinstall fetches the prebuilt llama.cpp binary for this platform;
+  # without it allowed, the model runtime has no native library to load.
+  node-llama-cpp: true
   register-scheme@https://codeload.github.com/devsnek/node-register-scheme/tar.gz/e7cc9a63a1f512565da44cb57316d9fb10750e17: true
   spawn-sync: false
   utf-8-validate: true

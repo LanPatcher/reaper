@@ -1,4 +1,9 @@
-import { generateKeyPairSync } from "node:crypto";
+import {
+  createPrivateKey,
+  createPublicKey,
+  diffieHellman,
+  generateKeyPairSync,
+} from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -134,7 +139,6 @@ const code = api.compactFriendCode() as string;
   // ...and it is still a key Node will agree with, which is the property that
   // actually matters and the one a length check alone does not establish.
   ck("and it still derives the same shared secret", (() => {
-    const { createPublicKey, createPrivateKey, diffieHellman } = require("node:crypto");
     const direct = diffieHellman({
       privateKey: mine.privateKey,
       publicKey: theirs.publicKey,

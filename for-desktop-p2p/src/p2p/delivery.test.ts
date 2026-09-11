@@ -121,6 +121,29 @@ async function main() {
   ck("re-sending something already held is still acknowledged",
      a.delivered.some((d) => d.ids.includes(invite.id)));
 
+  // ---- asking again, once the first receipt has been missed ---------------
+  //
+  // The failure this exists for. The event arrives on the very first push and
+  // the receipt comes straight back — but if nothing was holding an obligation
+  // for it at that moment, there is no second chance: the peer now holds
+  // everything, so reconciliation sends it nothing, so it acknowledges nothing,
+  // and the sender waits forever on somebody who has had it all along.
+  //
+  // `resend` is the way back, and the case it has to survive is exactly the one
+  // reconciliation cannot: a peer that is already completely caught up.
+  a.delivered.length = 0;
+
+  ck("re-offering reports that they were reachable",
+     a.t.resend(bob.userId, "dm1", [invite]));
+  await wait(400);
+
+  ck("a peer that already holds it confirms anyway",
+     a.delivered.some((d) => d.to === bob.userId && d.ids.includes(invite.id)),
+     JSON.stringify(a.delivered));
+
+  ck("re-offering to somebody not connected says so, rather than throwing",
+     !a.t.resend("nobody-here", "dm1", [invite]));
+
   a.t.stop();
   b.t.stop();
   await wait(150);
