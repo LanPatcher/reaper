@@ -40,13 +40,25 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Pairing two of your own devices by scanning the QR code the desktop
-         shows. The @reaper/scanner plugin's own manifest declares this too;
-         it is repeated here so the app's requirement is visible in one place.
-         The camera is requested at runtime by the scanner the moment it opens,
-         and never otherwise. required="false" keeps the app installable on a
-         device without a camera — the sync address can always be typed. -->
+    <!-- Camera. Two uses, both requested only at the moment they happen:
+           - pairing two devices by scanning the QR the desktop shows
+             (@reaper/scanner asks for it through Capacitor before opening);
+           - the camera in a video call, where getUserMedia runs inside the
+             WebView and Capacitor's own WebChromeClient requests it.
+         Neither is asked for at launch, and required="false" keeps the app
+         installable on a device with no camera. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <!-- Microphone, for calls. Voice and video calls both open a mic track
+         with getUserMedia in the WebView; without RECORD_AUDIO in the manifest
+         Capacitor's WebChromeClient auto-denies the request and the call comes
+         up with no audio (or fails to start). MODIFY_AUDIO_SETTINGS lets it
+         route audio to the earpiece/speaker for a call rather than media
+         playback — Capacitor requests it alongside RECORD_AUDIO for audio
+         capture. required="false" so a device without a mic still installs. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 </manifest>

@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Talking to Tor's SOCKS proxy on loopback is still network I/O, so the
+         INTERNET permission is required. The app already declares it; repeated
+         here so the plugin is self-contained and merges cleanly. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

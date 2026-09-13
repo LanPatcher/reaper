@@ -1202,11 +1202,14 @@
        * back — the close was a tidying gesture, not a block, and a closed
        * conversation that hid a new message would be a way to miss one.
        */
-      function reopenConversation(uid) {
+      function reopenConversation(uid, at) {
         if (!closedDMs[uid]) return;
         delete closedDMs[uid];
         if (!window.p2p) return;
-        window.p2p.append(INDEX, "dm.note", { userId: uid, at: Date.now() })
+        // Written at the triggering message's own time, not Date.now(): a note
+        // stamped "now" for an old message replicated during a sync outranks
+        // the close in causal order and silently un-closes the conversation.
+        window.p2p.append(INDEX, "dm.note", { userId: uid, at: at || Date.now() })
           .catch(function () {});
       }
 
@@ -5985,6 +5988,21 @@
           if (!held[item.eventId]) return;
           settle(key);
         });
+
+        // Once the last thing owed to them lands, re-check whether there is any
+        // reason left to stay connected. Unfriending owes them a departure
+        // notice first, so dropIdleConnection at unfriend time saw "owed" and
+        // kept the circuit — and nothing re-ran it after delivery, so a removed
+        // peer stayed connected (and in the Tor menu) indefinitely. settle()
+        // deletes the outbox entry synchronously, so this check is accurate.
+        var stillOwed = Object.keys(outbox).some(function (key) {
+          return outbox[key].to === to;
+        });
+        // Never prune while a call is live — call media rides these
+        // connections, and a receipt settling mid-call must not be able to hang
+        // up on anyone. reasonToStayConnected already protects the call peer;
+        // this makes the whole path inert during a call, for certainty.
+        if (!stillOwed && !inVoice) dropIdleConnection(to);
       }
 
       var farewells = {};
@@ -13594,6 +13612,15 @@
        */
       function learnAddress(userId, onion) {
         if (!userId || !onion || userId === me.userId) return;
+        // Someone deliberately removed stays removed. Old profile.update events
+        // replay on every launch and also arrive live from a peer we are still
+        // connected to, and each one used to re-add the address — writing a
+        // peer.address that outranks the peer.forget and quietly resurrecting a
+        // contact the dial loop then reconnected to. A genuine re-add clears
+        // `unfriended` first (sendRequest, and handleFriendEvent below), so
+        // this only blocks the automatic relearning, never a real one.
+        if (unfriended[userId] &&
+            !friends.some(function (f) { return f.userId === userId; })) return;
         if (peerAddresses[userId] === onion) return;
         if (!/^[a-z2-7]{56}\.onion$/i.test(String(onion).trim())) return;
 
@@ -13624,6 +13651,12 @@
        */
       var dialing = false;
 
+      // Set once the per-conversation request state has been read at startup.
+      // The idle-connection sweep below must not run before then, or a peer
+      // whose only reason to stay is a request still being loaded could be
+      // dropped in the gap.
+      var contactsSettled = false;
+
       async function dialKnownPeers() {
         // One pass at a time. A dial to an offline peer can take most of a
         // minute, so passes launched on a timer would otherwise overlap and
@@ -13641,6 +13674,24 @@
               if (p.userId) connected[p.userId] = true;
             });
           } catch (e) { /* transport not up yet */ }
+
+          // Hang up on anyone there is no longer any reason to be connected to.
+          // Unfriending owes a departure notice first, so the drop at unfriend
+          // time is deferred as "owed" and nothing re-checked afterwards — which
+          // left removed peers connected and showing in the Tor menu forever.
+          // dropIdleConnection re-asks reasonToStayConnected (which keeps
+          // friends, group/server co-members and anyone still owed, and errs
+          // toward keeping on a failed lookup) and only drops + forgets when
+          // truly nothing is left in common, so this also heals connections
+          // that a pre-fix build left behind. Gated until requests are loaded,
+          // and skipped entirely during a call — reasonToStayConnected already
+          // protects the call peer, but there is no reason to be dropping any
+          // connection while a call is live, and this removes all doubt.
+          if (contactsSettled && !inVoice) {
+            Object.keys(connected).forEach(function (uid) {
+              if (uid !== me.userId) dropIdleConnection(uid);
+            });
+          }
 
           var targets = Object.keys(peerAddresses).filter(function (uid) {
             return uid !== me.userId && !connected[uid];
@@ -13858,6 +13909,15 @@
         requests[uid] = "none";
         unfriended[uid] = true;
 
+        // The old request handshake is over. `outgoingNoted`/`incomingNoted`
+        // are durable (friend.outgoing / friend.incoming in the index) and
+        // sendRequest short-circuits on them — so left set, a later attempt to
+        // re-add this person never writes a new friend.request and they never
+        // receive it. Cleared here, in the friend.end handler, in loadRequests,
+        // and on replay of friend.remove so it also holds after a restart.
+        delete outgoingNoted[uid];
+        delete incomingNoted[uid];
+
         // The conversation stays. Ending a friendship is not a decision to
         // lose everything either of you ever said, and the history is on this
         // device either way — hiding it would only make it unreachable.
@@ -13896,6 +13956,15 @@
        */
       async function reasonToStayConnected(uid) {
         if (uid === me.userId) return "self";
+
+        // In a call with them right now. Checked before anything else: call
+        // media (voice, camera, screen) flows over this exact connection, so it
+        // must never be dropped mid-call. Both the post-delivery re-check and
+        // the idle sweep run through here, and neither knew about calls — which
+        // is how a connection-pruning change quietly cut the audio.
+        if (inVoice && (voiceState[inVoice.channelId] || []).indexOf(uid) >= 0) return "call";
+        if (inCallSince[uid]) return "call";
+
         if (friends.some(function (f) { return f.userId === uid; })) return "friend";
 
         // A request in either direction is a conversation in progress.
@@ -14019,8 +14088,12 @@
        * conversation that swallows a message would be a way to miss one.
        */
       async function closeConversation(uid) {
-        closedDMs[uid] = true;
-        await window.p2p.append(INDEX, "dm.close", { userId: uid });
+        // The close time, not just a boolean: a conversation reopens only for a
+        // message that genuinely arrives after it was closed, so history
+        // replicated in from a sibling device cannot resurrect it.
+        var at = Date.now();
+        closedDMs[uid] = at;
+        await window.p2p.append(INDEX, "dm.close", { userId: uid, at: at });
 
         if (current === dmIdFor(uid)) openHome();
         renderRail(); renderSide();
@@ -14310,14 +14383,20 @@
         var changed = false;
 
         Object.keys(voiceState).forEach(function (ch) {
-          var before = (voiceState[ch] || []).length;
+          var removed = [];
           voiceState[ch] = (voiceState[ch] || []).filter(function (uid) {
             if (uid === me.userId) return !!inVoice && inVoice.channelId === ch;
             var seen = voiceSeen[ch + "/" + uid];
-            return seen && seen > cutoff;
+            var keep = seen && seen > cutoff;
+            if (!keep) removed.push(uid);
+            return keep;
           });
 
-          var lost = before - voiceState[ch].length;
+          // Swept for going stale (an app killed mid-call never says goodbye) —
+          // tear down their voice, camera and screen the same as a clean leave.
+          removed.forEach(dropVoice);
+
+          var lost = removed.length;
           if (lost) {
             changed = true;
 
@@ -14373,7 +14452,28 @@
        */
       function syncCallAudience() {
         if (!window.p2p.netCallAudience) return;
+
+        // Presence-based: who has actually announced themselves in this call.
         var who = inVoice ? (voiceState[inVoice.channelId] || []).slice() : [];
+
+        // For a placed call (a "call:" channel, which is only ever a DM or a
+        // group — a server voice channel is a room people wander into and stays
+        // presence-only), the participants ARE the members of the conversation
+        // it was placed in. Include them even before their presence beacon has
+        // arrived: otherwise media is gated off during the seconds the handshake
+        // is in flight, and gated off entirely whenever a stale friends entry
+        // would have hidden the peer. This is the media half of the same fix in
+        // participantsOf above, and it keeps the audience symmetric on both ends
+        // regardless of who is friends with whom right now.
+        if (inVoice && String(inVoice.channelId).indexOf("call:") === 0) {
+          participantsOf(inVoice.community).forEach(function (u) {
+            if (who.indexOf(u) < 0) who.push(u);
+          });
+          // Self, so a second client on this account in the same call is not
+          // silenced — matching the presence list, which includes us too.
+          if (me && me.userId && who.indexOf(me.userId) < 0) who.push(me.userId);
+        }
+
         window.p2p.netCallAudience(who).catch(function () {
           /* the core is not up; nothing is being sent either */
         });
@@ -17249,6 +17349,19 @@
             tile = document.createElement("div");
             tile.className = "camTile";
             var img = document.createElement("img");
+            // Click to fill the screen, the same as a shared screen. The <img>
+            // is reused between frames (see below), so it stays in fullscreen
+            // while the picture keeps updating rather than dropping out of it
+            // every time a new frame arrives.
+            img.style.cursor = "zoom-in";
+            img.title = t("Click for fullscreen");
+            img.onclick = function () {
+              if (document.fullscreenElement) {
+                if (document.exitFullscreen) document.exitFullscreen();
+              } else if (img.requestFullscreen) {
+                img.requestFullscreen().catch(function () {});
+              }
+            };
             tile.appendChild(img);
             var label = document.createElement("span");
             label.className = "camName";
@@ -17686,6 +17799,18 @@
           delete jitter[peerId];
         }
         delete speaking[peerId];
+
+        // Their camera and screen tiles leave with them. Someone who leaves the
+        // call — or whose app was killed and got swept out — never sends the
+        // "stopped sharing" frame, so without this their last frame hangs on the
+        // screen for the rest of the call.
+        var hadShare = screenShares[peerId] || cameraShares[peerId];
+        delete screenShares[peerId];
+        delete cameraShares[peerId];
+        if (hadShare) {
+          try { renderScreenView(); } catch (e) {}
+          try { renderCamStrip(); } catch (e) {}
+        }
       }
 
       function dropAllVoice() {
@@ -18482,10 +18607,27 @@
       function participantsOf(communityId) {
         var out = {};
 
-        var friend = friends.filter(function (f) {
-          return dmIdFor(f.userId) === communityId;
-        })[0];
-        if (friend) out[friend.userId] = 1;
+        // A direct conversation's id is derived deterministically from the two
+        // user ids, so the other party is simply whoever's dmId matches — found
+        // WITHOUT depending on them being a current entry in the friends list.
+        //
+        // This is the whole of the call-fragility bug: an unfriend/refriend, or
+        // an account carried to another device, can leave the friends entry
+        // missing or stale while the conversation — and the person — are still
+        // perfectly real. When that happened, this returned nobody, so the ring
+        // and the "still here" presence beacons were sent to no one, the call
+        // audience never learned the peer, and the transport gated off every
+        // audio/camera/screen frame in both directions while text (which routes
+        // by community membership, not this list) kept working. Scanned across
+        // everyone this device knows of, the peer is recovered from the id
+        // alone, so a call no longer depends on the friendship being pristine.
+        var known = {};
+        friends.forEach(function (f) { known[f.userId] = 1; });
+        Object.keys(profiles || {}).forEach(function (u) { known[u] = 1; });
+        Object.keys(conversations || {}).forEach(function (u) { known[u] = 1; });
+        Object.keys(known).forEach(function (u) {
+          if (u && u !== me.userId && dmIdFor(u) === communityId) out[u] = 1;
+        });
 
         var group = groups.filter(function (g) { return g.id === communityId; })[0];
         if (group) {
@@ -19264,6 +19406,10 @@
           // ended state on the way.
           if (ended) {
             unfriended[uid] = true;
+            // Durable request flags do not survive an ending — otherwise a
+            // re-request after a restart is short-circuited by sendRequest.
+            delete outgoingNoted[uid];
+            delete incomingNoted[uid];
 
             noteConversation(uid);
 
@@ -19378,6 +19524,12 @@
           flash(t("Friend list is full ({n}) — remove someone first", { n: MAX_FRIENDS }));
           return;
         }
+
+        // A deliberate new request to someone previously removed. Drop the
+        // removed-flag now: it gates address relearning and standing, and this
+        // is the moment the relationship is being restarted.
+        delete unfriended[uid];
+
         var id = dmIdFor(uid);
         await window.p2p.open(id);
 
@@ -19522,6 +19674,14 @@
         // a request that appears to come from someone else.
         if (community !== dmIdFor(other)) return;
 
+        // A fresh request or acceptance is the sanctioned way back in after an
+        // unfriend. Clear the removed-flag BEFORE learning their address just
+        // below, or the relearn guard in learnAddress would drop the very
+        // address this event carries and the reply would have nowhere to go.
+        if (e.type === "friend.request" || e.type === "friend.accept") {
+          delete unfriended[other];
+        }
+
         if (e.author !== me.userId && e.payload) {
           if (e.payload.ek) rememberEncKey(e.author, e.payload.ek);
           if (e.payload.at) learnAddress(e.author, e.payload.at);
@@ -19540,6 +19700,10 @@
             friends = friends.filter(function (f) { return f.userId !== other; });
             requests[other] = "none";
             unfriended[other] = true;
+            // See removeFriend: clear the durable "already asked" flags so a
+            // future request to them is not swallowed by sendRequest.
+            delete outgoingNoted[other];
+            delete incomingNoted[other];
             noteConversation(other);
             window.p2p.append(INDEX, "friend.remove", { userId: other })
               .catch(function () {});
@@ -19932,8 +20096,17 @@
         // conversation that receives something comes back rather than
         // silently swallowing it.
         if (community === dmIdFor(e.author)) {
-          touchConversation(e.author, Date.now());
-          reopenConversation(e.author);
+          // The message's own time, not Date.now(): during a device sync the
+          // whole log is replicated, so a closed DM's old messages arrive as
+          // "new to this device". Timestamping the activity by the event keeps
+          // touchConversation from writing a fresh reopening note for them...
+          var at = e.timestamp || Date.now();
+          touchConversation(e.author, at);
+          // ...and the conversation is only reopened by a message that truly
+          // postdates the close, not by replicated history.
+          if (closedDMs[e.author] && at > closedDMs[e.author]) {
+            reopenConversation(e.author, at);
+          }
         }
 
         // Anything from somebody with no standing here is not an interruption.
@@ -21336,7 +21509,16 @@
               friends.push({ userId: p.userId, username: p.username });
             }
           }
-          else if (e.type === "friend.remove") friends = friends.filter(function (f) { return f.userId !== p.userId; });
+          else if (e.type === "friend.remove") {
+            friends = friends.filter(function (f) { return f.userId !== p.userId; });
+            // Replayed in causal order, so a friend.remove cancels the
+            // "already asked" flags an earlier friend.outgoing/incoming set —
+            // and a genuine new request after it re-sets them. Without this the
+            // stale flags returned on every launch and blocked re-adding.
+            delete outgoingNoted[p.userId];
+            delete incomingNoted[p.userId];
+            delete strangers[p.userId];
+          }
           else if (e.type === "note.add") {
             if (p.id && !notes.some(function (n) { return n.id === p.id; })) {
               notes.push({ id: p.id, content: p.content || "", at: p.at || e.timestamp || 0 });
@@ -21372,7 +21554,7 @@
           else if (e.type === "peer.address") peerAddresses[p.userId] = p.onion;
           else if (e.type === "peer.forget") delete peerAddresses[p.userId];
           else if (e.type === "dm.note") {
-            conversations[p.userId] = Math.max(conversations[p.userId] || 0, p.at || 0);
+            conversations[p.userId] = Math.max(conversations[p.userId] || 0, p.at || e.timestamp || 0);
 
             // A note after a close is a reopening.
             //
@@ -21398,9 +21580,18 @@
             // replay is in causal order, so note-then-close closes and
             // close-then-note reopens, which needs no new event type and
             // repairs every log already written.
-            delete closedDMs[p.userId];
+            //
+            // But only a note that genuinely postdates the close reopens. A
+            // note whose time is at or before the close — an old message
+            // replicated from a sibling during a sync — leaves the
+            // conversation closed. `closedDMs` now holds the close *time*, so
+            // this comparison is possible; before, any later note in log order
+            // reopened, which is what brought closed chats back after a sync.
+            if (!closedDMs[p.userId] || (p.at || e.timestamp || 0) > closedDMs[p.userId]) {
+              delete closedDMs[p.userId];
+            }
           }
-          else if (e.type === "dm.close") closedDMs[p.userId] = true;
+          else if (e.type === "dm.close") closedDMs[p.userId] = p.at || e.timestamp || 1;
           else if (e.type === "invite.seen") seenInvites[p.eventId] = true;
           else if (e.type === "peer.enckey") peerEncKeys[p.userId] = p.ek;
           else if (e.type === "community.key") {
@@ -21650,6 +21841,7 @@
             await loadRequests(pending[i]);
           }
           friends.forEach(function (f) { requests[f.userId] = "accepted"; });
+          contactsSettled = true;
 
           loadCachedFaces();
           repaint("side");
@@ -21809,6 +22001,7 @@
         // the index still claims. The list is the stronger statement: it only
         // gets an entry once an acceptance has been seen.
         friends.forEach(function (f) { requests[f.userId] = "accepted"; });
+        contactsSettled = true;
 
         // More faces are nameable now than before those conversations were
         // read, and all of it is still local.

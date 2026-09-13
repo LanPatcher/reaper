@@ -1,6 +1,8 @@
 import { Keepalive } from "@reaper/keepalive";
 import { Notify } from "@reaper/notify";
 import { Scanner } from "@reaper/scanner";
+import { Tor } from "@reaper/tor";
+import { registerPlugin } from "@capacitor/core";
 
 import { isForeground, onForeground } from "./lifecycle";
 import { invoke, subscribe } from "./shim/electron";
@@ -47,6 +49,14 @@ const STREAMS = {
 const METHODS = [
   "identity", "open", "append", "events", "heads", "merge", "stats", "close",
   "netStart", "netConnect", "netPeers", "netInfo", "netSignal", "netAudio",
+  // netCallAudience gates who receives call media (audio/camera/screen) and
+  // whose media we accept. The interface calls it on join/roster-change/leave;
+  // if it is missing from this list window.p2p.netCallAudience is undefined,
+  // the audience stays empty, and the transport silently drops ALL call media
+  // in both directions while text and call setup still work. That is exactly
+  // how it went missing on mobile — this list is hand-maintained, and the
+  // method was a later addition to the desktop surface.
+  "netCallAudience",
   "netAnnounce", "netFocus", "netDrop", "netTune", "netLog", "netStats",
   "netStatsReset", "setKey", "dmKey", "wrapKey", "unwrapKey",
   "exportCommunity", "importCommunity", "communities", "sharedWith", "compact",
@@ -98,6 +108,164 @@ const DURABLE = new Set<string>([
   "importCommunity",
   "compact",
 ]);
+
+/**
+ * `window.links.preview`, the mobile side of link previews.
+ *
+ * On the desktop the renderer is forbidden by CSP from fetching anything, so
+ * the main process fetches the preview image over Tor and hands back a data:
+ * URL. A phone has no main process, so the native `@reaper/preview` plugin does
+ * the fetch through Tor's SOCKS proxy — addressing the host by domain name so
+ * Tor, not the device, resolves it — and this re-checks the URL against the
+ * same allowlist the renderer used before trusting it, follows redirects only
+ * among trusted hosts, and accepts only images. Registered by name rather than
+ * imported, so only the Android project needs the plugin as a dependency.
+ */
+interface PreviewNative {
+  httpGet(options: {
+    url: string;
+    socksPort: number;
+    accept?: string;
+    maxBytes?: number;
+  }): Promise<{
+    status: number;
+    type?: string;
+    location?: string;
+    body: string;
+    truncated: boolean;
+  }>;
+}
+
+const Preview = registerPlugin<PreviewNative>("Preview", {
+  web: () => ({
+    httpGet: async () => {
+      throw new Error("link previews need the app, not a browser");
+    },
+  }),
+});
+
+// Kept in lockstep with the allowlist in for-desktop-p2p/src/native/links.ts.
+// The renderer has already resolved a link to an image URL on one of these
+// hosts before calling in, but the fetcher re-checks anyway: the renderer is
+// not trusted to have decided a URL was acceptable.
+const PREVIEW_TRUSTED = [
+  "cdn.discordapp.com",
+  "encrypted-tbn0.gstatic.com",
+  "i.imgur.com",
+  "i.redd.it",
+  "i.ytimg.com",
+  "lh3.googleusercontent.com",
+  "media.discordapp.net",
+  "media.tenor.com",
+  "upload.wikimedia.org",
+  "youtu.be",
+  "youtube.com",
+];
+const PREVIEW_TYPES = [
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "image/avif",
+  "image/bmp",
+];
+const PREVIEW_MAX_BYTES = 8 * 1024 * 1024;
+const PREVIEW_MAX_REDIRECTS = 3;
+
+function previewHostTrusted(host: string): boolean {
+  const h = host.toLowerCase();
+  return PREVIEW_TRUSTED.some((d) => h === d || h.endsWith("." + d));
+}
+
+interface PreviewResult {
+  ok: boolean;
+  dataUrl?: string;
+  bytes?: number;
+  error?: string;
+}
+
+async function previewOverTor(href: string): Promise<PreviewResult> {
+  let socksPort = 0;
+  try {
+    socksPort = (await Tor.status()).socksPort || 0;
+  } catch {
+    socksPort = 0;
+  }
+  if (!socksPort) return { ok: false, error: "Tor is not ready yet" };
+
+  let target = href;
+
+  for (let hop = 0; hop <= PREVIEW_MAX_REDIRECTS; hop++) {
+    let url: URL;
+    try {
+      url = new URL(target);
+    } catch {
+      return { ok: false, error: "that link cannot be read" };
+    }
+
+    // The same refusals as parseSafeUrl on the desktop: https only, no
+    // embedded credentials, no odd port, a plain ASCII host that is not
+    // punycode, and on the allowlist.
+    const host = url.hostname.toLowerCase();
+    if (
+      url.protocol !== "https:" ||
+      url.username ||
+      url.password ||
+      url.port ||
+      !/^[a-z0-9.-]+$/.test(host) ||
+      host.startsWith("xn--") ||
+      host.includes(".xn--") ||
+      !previewHostTrusted(host)
+    ) {
+      return { ok: false, error: "that link is not one this app will fetch" };
+    }
+
+    let res;
+    try {
+      res = await Preview.httpGet({
+        url: url.toString(),
+        socksPort,
+        accept: "image/*",
+        maxBytes: PREVIEW_MAX_BYTES,
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        error: `could not reach ${host} over Tor (${
+          (error as Error).message || String(error)
+        })`,
+      };
+    }
+
+    if (res.status >= 300 && res.status < 400 && res.location) {
+      try {
+        target = new URL(res.location, url.toString()).toString();
+      } catch {
+        return { ok: false, error: "bad redirect" };
+      }
+      continue;
+    }
+
+    if (res.status !== 200) {
+      return { ok: false, error: `${host} answered ${res.status}` };
+    }
+
+    const type = (res.type || "").split(";")[0].trim().toLowerCase();
+    if (PREVIEW_TYPES.indexOf(type) < 0) {
+      return { ok: false, error: `that is not an image (${type || "unknown"})` };
+    }
+
+    // A half-read image is a broken image, so a read that stopped at the cap
+    // is reported as too large rather than shown as corruption.
+    if (res.truncated) {
+      return { ok: false, error: "that image is too large to show" };
+    }
+
+    return { ok: true, dataUrl: `data:${type};base64,${res.body}` };
+  }
+
+  return { ok: false, error: "too many redirects" };
+}
 
 export function installBridge(): void {
   const p2p: Surface = {};
@@ -291,5 +459,12 @@ export function installNative(): void {
     set: () => {},
     getAutostart: async () => false,
     setAutostart: async () => false,
+  };
+
+  // Link previews. Matches the desktop's window.links: hand over a URL, get
+  // back a data: URL or a reason, never a throw for an ordinary refusal or a
+  // network failure. The fetch happens natively, over Tor. See previewOverTor.
+  (globalThis as Record<string, unknown>).links = {
+    preview: (url: string) => previewOverTor(String(url)),
   };
 }

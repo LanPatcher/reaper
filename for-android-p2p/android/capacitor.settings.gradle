@@ -14,6 +14,9 @@ project(':capacitor-preferences').projectDir = new File('../node_modules/@capaci
 include ':reaper-keepalive'
 project(':reaper-keepalive').projectDir = new File('../../for-ios-p2p/plugins/keepalive/android')
 
+include ':reaper-scanner'
+project(':reaper-scanner').projectDir = new File('../../for-ios-p2p/plugins/scanner/android')
+
 include ':reaper-socket'
 project(':reaper-socket').projectDir = new File('../../for-ios-p2p/plugins/socket/android')
 

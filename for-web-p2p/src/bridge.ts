@@ -31,6 +31,12 @@ const STREAMS = {
 const METHODS = [
   "identity", "open", "append", "events", "heads", "merge", "stats", "close",
   "netStart", "netConnect", "netPeers", "netInfo", "netSignal", "netAudio",
+  // Without this, window.p2p.netCallAudience is undefined in the browser, so
+  // syncCallAudience silently bails, the transport's call audience stays empty,
+  // and every audio/camera/screen frame is gated off in both directions — a
+  // call that connects but carries nothing. This is the "calls only broken on
+  // the website" bug; the desktop and phone surfaces already list it.
+  "netCallAudience",
   "netAnnounce", "netFocus", "netDrop", "netTune", "netLog", "netStats",
   "netStatsReset", "setKey", "dmKey", "wrapKey", "unwrapKey",
   "exportCommunity", "importCommunity", "communities", "sharedWith", "compact",

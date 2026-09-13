@@ -13,6 +13,7 @@ dependencies {
     implementation project(':capacitor-filesystem')
     implementation project(':capacitor-preferences')
     implementation project(':reaper-keepalive')
+    implementation project(':reaper-scanner')
     implementation project(':reaper-socket')
     implementation project(':reaper-tor')
 

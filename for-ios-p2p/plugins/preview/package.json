@@ -1,0 +1,26 @@
+{
+  "name": "@reaper/preview",
+  "version": "0.1.0",
+  "description": "Fetches a link-preview image over Tor, so the interface never touches the network itself.",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist/",
+    "android/"
+  ],
+  "capacitor": {
+    "android": {
+      "src": "android"
+    }
+  },
+  "scripts": {
+    "build": "tsc"
+  },
+  "peerDependencies": {
+    "@capacitor/core": ">=8.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
